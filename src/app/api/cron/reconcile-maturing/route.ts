@@ -44,13 +44,23 @@ export async function POST(req: NextRequest) {
 
   const accounts = await prisma.linkedInAccount.findMany({
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
-    select: { id: true, gologinProfileId: true, maturingStartedAt: true, linkedinUrl: true, notes: true },
+    select: {
+      id: true, gologinProfileId: true, maturingStartedAt: true, linkedinUrl: true, notes: true,
+      status: true, restrictedAt: true, permanentlyRestricted: true,
+      rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
+    },
   });
 
   let started = 0;
   let ended = 0;
   for (const a of accounts) {
-    const isMaturing = !!a.gologinProfileId && maturing.has(a.gologinProfileId);
+    // Rented or restricted accounts are never "maturing" — maturing is paused the
+    // moment an account is rented or restricted, so suppress the flag even if the
+    // engine still carries a stale non-terminal campaign for its profile.
+    const blocked =
+      a.status === "rented" || a.rentals.length > 0 ||
+      !!a.restrictedAt || a.permanentlyRestricted || a.status === "retired";
+    const isMaturing = !blocked && !!a.gologinProfileId && maturing.has(a.gologinProfileId);
     if (isMaturing && !a.maturingStartedAt) {
       await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: new Date() } });
       await logWarmupActivity(
