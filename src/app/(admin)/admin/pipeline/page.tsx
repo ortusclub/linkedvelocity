@@ -130,8 +130,16 @@ export default function PipelineNewPage() {
     setRows((prev) => (prev ? prev.map((r) => (r.id === id ? { ...r, ...patch } : r)) : prev));
     try {
       const res = await fetch(`/api/admin/accounts/${accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `Save failed (${res.status})`);
-      flashSave(true, "Saved ✓"); if (reload) await load();
+      const data: { error?: string; notify?: { sent?: { recipient: string }[]; skipped?: { recipient: string; reason: string }[] } } = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Save failed (${res.status})`);
+      flashSave(true, "Saved ✓");
+      // Report the restricted-notice email outcome when one was requested (restrict + "email now").
+      if (data.notify) {
+        const sent = (data.notify.sent || []).map((x) => x.recipient).join(" + ");
+        const skipped = (data.notify.skipped || []).map((x) => `${x.recipient} (${x.reason})`).join(", ");
+        alert(sent ? `Restriction emailed to: ${sent}.${skipped ? ` Skipped: ${skipped}.` : ""}` : `No one emailed.${skipped ? ` Skipped: ${skipped}.` : ""}`);
+      }
+      if (reload) await load();
     } catch (e) { flashSave(false, e instanceof Error ? e.message : "Save failed — not saved. Please retry."); await load(); }
   };
   const deleteRestrictionEvent = async (accountId: string, at: string) => {
