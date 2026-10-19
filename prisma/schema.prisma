@@ -211,6 +211,7 @@ model LinkedInAccount {
   healthCheckedAt       DateTime?     @map("health_checked_at")
   restrictedAt          DateTime?     @map("restricted_at")  // admin-set: account restricted by LinkedIn, recovering
   warmupStartedAt       DateTime?     @map("warmup_started_at") // set while the account is being warmed up (Ortus app); null = not warming. Orthogonal to status.
+  maturingStartedAt     DateTime?     @map("maturing_started_at") // AUTO (reconcile-maturing cron): set while a live LinkedVelocity maturing campaign is running for this profile; null = not maturing. Drives the 🔥 badge on Inventory + Pipeline. Never set/cleared by hand.
   profileBuild          Json?         @map("profile_build") // Level-4 generated profile (headline/about/2 past PH roles/PH school/US location) to copy-paste into LinkedIn
   // admin-set (from the Replacements workqueue): LinkedIn restriction is permanent — the
   // account can't be recovered. Renters see "Permanently restricted" and can only replace it.
