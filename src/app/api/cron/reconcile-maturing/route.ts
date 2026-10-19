@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
-import { list } from "@/lib/maturing/service.mjs";
+import { list, control } from "@/lib/maturing/service.mjs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -12,6 +12,8 @@ export const maxDuration = 120;
 // into LinkedInAccount.maturingStartedAt so Inventory + Pipeline can show the
 // 🔥 badge without each page call depending on the engine's uptime, and we log
 // the start / stop to the owner's Activity timeline (once per flip, not per tick).
+// When an account is rented or restricted we also STOP its live engine campaign —
+// a running campaign on a rented profile would send requests under the renter.
 const TERMINAL = new Set(["done", "cancelled", "error"]);
 
 export async function POST(req: NextRequest) {
@@ -22,7 +24,7 @@ export async function POST(req: NextRequest) {
   // If the engine is unreachable, do NOTHING. A transient engine outage must
   // never clear everyone's maturing flag — we only ever write on a real flip.
   // list() soft-fails (returns engineError instead of throwing), so check both.
-  let data: { campaigns: { status: string; profileIds: string[]; createdAt?: string }[]; engineError?: string };
+  let data: { campaigns: { id: string; status: string; profileIds: string[]; createdAt?: string }[]; engineError?: string };
   try {
     data = (await list()) as typeof data;
   } catch (e) {
@@ -35,22 +37,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
   }
 
-  // Earliest campaign start per profile (among non-terminal campaigns). We stamp
-  // maturingStartedAt from the engine's real campaign start — NOT "now" — so the
-  // "Nd" badge reflects how long the account has actually been maturing, even for
-  // campaigns that predate this reconcile cron.
-  const startByProfile = new Map<string, Date>();
+  // Per profile: the earliest start among its non-terminal campaigns, plus their
+  // ids (so a blocked account's live campaigns can be stopped, not just hidden).
+  // We stamp maturingStartedAt from the engine's real campaign start — NOT "now" —
+  // so the "Nd" badge reflects how long the account has actually been maturing.
+  const byProfile = new Map<string, { start: Date; ids: string[] }>();
   for (const c of data.campaigns) {
     if (TERMINAL.has(c.status)) continue;
     const t = c.createdAt ? new Date(c.createdAt) : null;
+    const start = t && !isNaN(t.getTime()) ? t : null;
     for (const pid of c.profileIds || []) {
       if (!pid) continue;
-      const cur = startByProfile.get(pid);
-      if (t && !isNaN(t.getTime())) { if (!cur || t < cur) startByProfile.set(pid, t); }
-      else if (!cur) startByProfile.set(pid, new Date());
+      const cur = byProfile.get(pid);
+      if (!cur) byProfile.set(pid, { start: start ?? new Date(), ids: c.id ? [c.id] : [] });
+      else { if (start && start < cur.start) cur.start = start; if (c.id) cur.ids.push(c.id); }
     }
   }
-  const maturing = startByProfile;
 
   const accounts = await prisma.linkedInAccount.findMany({
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
@@ -64,16 +66,35 @@ export async function POST(req: NextRequest) {
   let started = 0;
   let ended = 0;
   let corrected = 0;
+  let stopped = 0;
   for (const a of accounts) {
-    // Rented or restricted accounts are never "maturing" — maturing is paused the
-    // moment an account is rented or restricted, so suppress the flag even if the
-    // engine still carries a stale non-terminal campaign for its profile.
+    const entry = a.gologinProfileId ? byProfile.get(a.gologinProfileId) : undefined;
+    const startAt = entry?.start;
+    // Rented or restricted accounts must not keep maturing: a running campaign on a
+    // rented profile would send connection requests while the renter uses it. So we
+    // actually STOP the engine campaign(s), not just hide the badge.
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
       a.status === "retired" || a.status === "maintenance";
-    const startAt = a.gologinProfileId ? maturing.get(a.gologinProfileId) : undefined;
-    const isMaturing = !blocked && !!startAt;
+
+    if (blocked) {
+      if (entry && entry.ids.length) {
+        // Best-effort stop of every live campaign on this profile. Once stopped the
+        // campaign goes terminal and drops out of byProfile, so this won't repeat.
+        for (const id of entry.ids) { try { await control(id, "stop"); } catch { /* retried next run */ } }
+        const reason =
+          a.status === "rented" || a.rentals.length > 0 ? "account rented"
+          : a.restrictedAt || a.permanentlyRestricted ? "account restricted"
+          : `account ${a.status}`;
+        await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `Maturing stopped (auto) — ${reason}`, "system").catch(() => {});
+        stopped++;
+      }
+      if (a.maturingStartedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: null } });
+      continue;
+    }
+
+    const isMaturing = !!startAt;
     if (isMaturing && !a.maturingStartedAt) {
       await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: startAt } });
       await logWarmupActivity(
@@ -102,7 +123,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, maturing: maturing.size, started, ended, corrected });
+  return NextResponse.json({ ok: true, maturing: byProfile.size, started, ended, corrected, stopped });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
