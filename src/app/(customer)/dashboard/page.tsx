@@ -272,18 +272,21 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
     } catch { setError("Replacement failed — try again."); setSubmitting(false); }
   };
 
-  // A pick pricier than the restricted account's tier is a paid UPGRADE.
-  const isUpgradeOf = (tier: number) => oldPrice != null && tier > oldPrice;
+  // The renter's actual (locked) rate — often discounted below the standard tier price. For a
+  // same-or-lower pick they pay min(locked rate, tier) and never more; an upgrade moves them to
+  // the new tier (no discount above their original band) and charges the prorated difference now.
+  const lockedRate = effectiveRate ?? (typeof rental.price === "number" ? rental.price : oldPrice);
+  // A paid UPGRADE = pricier than BOTH the restricted account's tier and the renter's current
+  // rate. (If their locked rate sits above the restricted tier, a pick at that rate is a free
+  // same-rate swap, not a "+$0 upgrade".)
+  const freeCeiling = Math.max(oldPrice ?? 0, lockedRate ?? 0);
+  const isUpgradeOf = (tier: number) => freeCeiling > 0 && tier > freeCeiling;
   const shown = options.filter((o) =>
     filt === "all" ? true
     : filt === "same" ? (oldPrice != null && o.monthlyPrice === oldPrice)
     : filt === "upgrade" ? isUpgradeOf(o.monthlyPrice)
     : (oldPrice != null && o.monthlyPrice < oldPrice));
   const picked = options.find((o) => o.id === selected);
-  // The renter's actual (locked) rate — often discounted below the standard tier price. For a
-  // same-or-lower pick they pay min(locked rate, tier) and never more; an upgrade moves them to
-  // the new tier (no discount above their original band) and charges the prorated difference now.
-  const lockedRate = effectiveRate ?? (typeof rental.price === "number" ? rental.price : oldPrice);
   const rateOf = (tier: number) => (isUpgradeOf(tier) ? tier : (lockedRate != null ? Math.min(lockedRate, tier) : tier));
   const upgradeDueOf = (tier: number) =>
     isUpgradeOf(tier) && lockedRate != null ? Math.round(((tier - lockedRate) / 30) * remainingDays * 100) / 100 : 0;
@@ -1432,7 +1435,7 @@ function DashboardContent() {
                           <div style={{ height: 4, maxWidth: 170, borderRadius: 4, background: "#fde3cc", overflow: "hidden" }}><div style={{ height: "100%", width: `${progress}%`, background: V.orange }} /></div>
                         )}
                         {canReportProxy && (
-                          <button onClick={() => reportProxy(rental)} title="LinkedIn not loading or acting up in GoLogin? Report the proxy and we'll switch this account to a fresh one." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: "pointer", textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Proxy not working? Report it</button>
+                          <button onClick={() => reportProxy(rental)} disabled={viewAs} title="LinkedIn not loading or acting up in GoLogin? Report the proxy and we'll switch this account to a fresh one." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Proxy not working? Report it</button>
                         )}
                       </div>
                       {/* billing */}
@@ -1452,7 +1455,7 @@ function DashboardContent() {
                           {(!R && !prep && ready && canSeeCreds) ? (
                             <button onClick={() => setOpenCredsId((p) => (p === rental.id ? null : rental.id))} style={{ border: "1px solid #c9d6f5", background: "#fff", color: V.blue, width: 116, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "7px 0", fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>{credsOpen ? "Hide sign-in" : "Sign-in"}</button>
                           ) : (R && eligible && !isWaiting && !perm) ? (
-                            <button onClick={() => { if (viewAs) return; setWaitingIds((p) => new Set(p).add(rental.id)); fetch(`/api/rentals/${rental.id}/wait`, { method: "POST" }).then(() => refreshRentals()).catch(() => {}); }} title="Keep this account. We'll keep trying to recover it, and billing stays paused." style={{ border: "1px solid #f5c39b", background: "#fff", color: "#9a3412", width: 116, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "7px 0", fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>I&apos;ll wait</button>
+                            <button onClick={() => { if (viewAs) return; setWaitingIds((p) => new Set(p).add(rental.id)); fetch(`/api/rentals/${rental.id}/wait`, { method: "POST" }).then(() => refreshRentals()).catch(() => {}); }} disabled={viewAs} title="Keep this account. We'll keep trying to recover it, and billing stays paused." style={{ border: "1px solid #f5c39b", background: "#fff", color: "#9a3412", width: 116, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "7px 0", fontWeight: 700, fontSize: 12.5, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, whiteSpace: "nowrap" }}>I&apos;ll wait</button>
                           ) : null}
                         </div>
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -1558,8 +1561,8 @@ function DashboardContent() {
                           <span style={{ fontWeight: 500, fontSize: 12.5, lineHeight: 1.45, color: "#3b4657" }}>Close and reopen the profile in GoLogin, then load LinkedIn.</span>
                         </div>
                         <div style={{ flex: "none", display: "flex", gap: 8 }}>
-                          <button onClick={() => confirmProxy(rental, false)} style={{ border: "1px solid #d5dbe5", background: "#fff", color: V.text, borderRadius: 8, padding: "8px 13px", fontWeight: 600, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>No, still broken</button>
-                          <button onClick={() => confirmProxy(rental, true)} style={{ border: "none", background: V.green, color: "#fff", borderRadius: 8, padding: "9px 15px", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>Yes, working</button>
+                          <button onClick={() => confirmProxy(rental, false)} disabled={viewAs} style={{ border: "1px solid #d5dbe5", background: "#fff", color: V.text, borderRadius: 8, padding: "8px 13px", fontWeight: 600, fontSize: 13, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, whiteSpace: "nowrap" }}>No, still broken</button>
+                          <button onClick={() => confirmProxy(rental, true)} disabled={viewAs} style={{ border: "none", background: V.green, color: "#fff", borderRadius: 8, padding: "9px 15px", fontWeight: 700, fontSize: 13, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, whiteSpace: "nowrap" }}>Yes, working</button>
                         </div>
                       </div>
                     )}
