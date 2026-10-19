@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   // If the engine is unreachable, do NOTHING. A transient engine outage must
   // never clear everyone's maturing flag — we only ever write on a real flip.
   // list() soft-fails (returns engineError instead of throwing), so check both.
-  let data: { campaigns: { status: string; profileIds: string[] }[]; engineError?: string };
+  let data: { campaigns: { status: string; profileIds: string[]; createdAt?: string }[]; engineError?: string };
   try {
     data = (await list()) as typeof data;
   } catch (e) {
@@ -35,12 +35,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
   }
 
-  const maturing = new Set(
-    data.campaigns
-      .filter((c) => !TERMINAL.has(c.status))
-      .flatMap((c) => c.profileIds || [])
-      .filter(Boolean),
-  );
+  // Earliest campaign start per profile (among non-terminal campaigns). We stamp
+  // maturingStartedAt from the engine's real campaign start — NOT "now" — so the
+  // "Nd" badge reflects how long the account has actually been maturing, even for
+  // campaigns that predate this reconcile cron.
+  const startByProfile = new Map<string, Date>();
+  for (const c of data.campaigns) {
+    if (TERMINAL.has(c.status)) continue;
+    const t = c.createdAt ? new Date(c.createdAt) : null;
+    for (const pid of c.profileIds || []) {
+      if (!pid) continue;
+      const cur = startByProfile.get(pid);
+      if (t && !isNaN(t.getTime())) { if (!cur || t < cur) startByProfile.set(pid, t); }
+      else if (!cur) startByProfile.set(pid, new Date());
+    }
+  }
+  const maturing = startByProfile;
 
   const accounts = await prisma.linkedInAccount.findMany({
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
@@ -53,6 +63,7 @@ export async function POST(req: NextRequest) {
 
   let started = 0;
   let ended = 0;
+  let corrected = 0;
   for (const a of accounts) {
     // Rented or restricted accounts are never "maturing" — maturing is paused the
     // moment an account is rented or restricted, so suppress the flag even if the
@@ -61,9 +72,10 @@ export async function POST(req: NextRequest) {
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
       a.status === "retired" || a.status === "maintenance";
-    const isMaturing = !blocked && !!a.gologinProfileId && maturing.has(a.gologinProfileId);
+    const startAt = a.gologinProfileId ? maturing.get(a.gologinProfileId) : undefined;
+    const isMaturing = !blocked && !!startAt;
     if (isMaturing && !a.maturingStartedAt) {
-      await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: new Date() } });
+      await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: startAt } });
       await logWarmupActivity(
         a.id,
         a.linkedinUrl,
@@ -72,6 +84,11 @@ export async function POST(req: NextRequest) {
         "system",
       ).catch(() => {});
       started++;
+    } else if (isMaturing && a.maturingStartedAt && Math.abs(a.maturingStartedAt.getTime() - startAt!.getTime()) > 60000) {
+      // Correct an earlier stamp (e.g. the first reconcile stamped "now") to the
+      // real campaign start. Silent — not a start/stop event, just a date fix.
+      await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: startAt } });
+      corrected++;
     } else if (!isMaturing && a.maturingStartedAt) {
       await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: null } });
       await logWarmupActivity(
@@ -85,7 +102,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, maturing: maturing.size, started, ended });
+  return NextResponse.json({ ok: true, maturing: maturing.size, started, ended, corrected });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
