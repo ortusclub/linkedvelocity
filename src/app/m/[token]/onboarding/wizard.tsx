@@ -343,6 +343,22 @@ export default function SelfServiceWizard({ token, endpoint: endpointProp, selfM
   const hydratedSession = useRef<string | null>(null);
   function showSession(s: Session) {
     setSession(s);
+    // Pin the active session to the URL so a page refresh (or reopening the tab) resumes HERE
+    // instead of restarting at the owner-details form. The bare /m/<token>/onboarding link
+    // carries no session id, and the step/session live only in React state, so without this a
+    // refresh drops the referrer back to step 0 → empty "Who's the account owner?" even though
+    // all their progress is saved server-side. Referrer path only (selfMode / demo manage their
+    // own URLs); best-effort — resume still works via the step-0 saved list if history is blocked.
+    if (!selfMode && !demo && typeof window !== "undefined" && s.id && s.id !== "demo") {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("session") !== s.id) {
+          url.searchParams.set("session", s.id);
+          url.searchParams.delete("adopt");
+          window.history.replaceState(null, "", url.pathname + url.search);
+        }
+      } catch { /* history API unavailable — resume still works via the saved list */ }
+    }
     if (!selfMode && s.savedDetails && hydratedSession.current !== s.id) {
       const saved = s.savedDetails;
       setForm(previous => ({ ...previous, ...Object.fromEntries(Object.entries(saved).map(([key, value]) => [key, value || ""])) }));
