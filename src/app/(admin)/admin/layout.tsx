@@ -19,6 +19,7 @@ const sections = [
     { href: "/admin/content", label: "Content" },
   ] },
   { name: "Renters", items: [
+    { href: "/admin/renters", label: "Renters v3" },
     { href: "/admin/customers", label: "Renters" },
     { href: "/admin/rentals", label: "Rentals" },
     { href: "/admin/replacements", label: "Replacements" },
