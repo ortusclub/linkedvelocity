@@ -1374,7 +1374,12 @@ function DashboardContent() {
                             <LinkedInChip url={acct.linkedinUrl} />
                             {acct.linkedinVerified && <VerifiedBadge />}
                           </div>
-                          <div style={{ fontWeight: 500, fontSize: 12.5, color: V.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{[acct.linkedinHeadline, rental.price != null ? `$${rental.price}/mo` : null].filter(Boolean).join(" · ")}</div>
+                          {/* Headline truncates, but the price is its own flex-none element so a
+                              long headline can never ellipsize it away — the renter always sees $/mo. */}
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 5, minWidth: 0, fontWeight: 500, fontSize: 12.5, color: V.muted }}>
+                            {acct.linkedinHeadline && <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.linkedinHeadline}</span>}
+                            {rental.price != null && <span style={{ flex: "none", whiteSpace: "nowrap" }}>{acct.linkedinHeadline ? "· " : ""}${rental.price}/mo</span>}
+                          </div>
                           <div style={{ fontWeight: 500, fontSize: 11.5, color: V.faint, whiteSpace: "nowrap" }}>Renting since {formatDate(rental.startDate)} · {humanDuration(rental.startDate)}</div>
                           {replacedAccountName(rental) && (
                             <div style={{ fontWeight: 600, fontSize: 11, color: V.orangeDeep, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>↔ Replaced {replacedAccountName(rental)}{replacementCreditDays(rental) > 0 && <span style={{ color: V.green }}> · {replacementCreditDays(rental)} {replacementCreditDays(rental) === 1 ? "day" : "days"} credited</span>}</div>
