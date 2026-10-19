@@ -47,10 +47,7 @@ function fixture(options = {}) {
   const wallet = {
     getBaseProvider: () => provider,
     getTreasuryAddress: () => process.env.TREASURY_WALLET_ADDRESS,
-    getTreasuryWallet: () => ({ address: process.env.TREASURY_WALLET_ADDRESS, sendTransaction: async tx => {
-      calls.funding.push(tx);
-      return { wait: async () => ({ status: options.gasStatus ?? 1 }) };
-    } }),
+    getTreasuryWallet: () => { throw new Error('Sweeps must never access the receiving wallet private key'); },
     getChildWallet: index => {
       assert.equal(index, 7);
       return { address: options.signerAddress ?? '0xABC' };
@@ -65,12 +62,12 @@ function fixture(options = {}) {
   }) };
 }
 
-test('USDT-only sweep funds gas, records token and preserves USDC tracker', async () => {
-  const f = fixture({ USDT: 50_000_000n, eth: 0n });
+test('USDT-only sweep needs no treasury key and preserves USDC tracker', async () => {
+  const f = fixture({ USDT: 50_000_000n });
   const result = await f.sweepDeposits();
   assert.deepEqual(result, [{ address: '0xabc', amount: '50.0', txHash: 'hash-USDT', token: 'USDT' }]);
   assert.deepEqual(f.calls.sends, [{ symbol: 'USDT', to: process.env.TREASURY_WALLET_ADDRESS, amount: 50_000_000n }]);
-  assert.equal(f.calls.funding[0].value, ethers.parseEther('0.0005'));
+  assert.equal(f.calls.funding.length, 0);
   assert.equal(f.calls.ledger[0].description, 'Swept 50.0 USDT to treasury');
   assert.equal(f.calls.resets.length, 0);
 });
@@ -100,8 +97,8 @@ test('wrong network aborts before transfers', async () => {
   assert.equal(f.calls.sends.length, 0);
 });
 
-test('failed gas funding prevents token transfer', async () => {
-  const f = fixture({ USDT: 50_000_000n, eth: 0n, gasStatus: 0 });
+test('unfunded source is skipped without accessing a treasury signer', async () => {
+  const f = fixture({ USDT: 50_000_000n, eth: 0n });
   assert.deepEqual(await f.sweepDeposits(), []);
   assert.equal(f.calls.sends.length + f.calls.ledger.length, 0);
 });
@@ -176,4 +173,14 @@ test('broadcast hash is journaled before waiting for confirmation', async () => 
  assert.equal(f.calls.journals[0].txHash, 'hash-USDT');
  assert.equal(f.calls.journals[0].description, 'Pending treasury sweep:USDT:deposit');
  assert.equal(f.calls.ledger.length, 0);
+});
+
+test('missing treasury private key does not prevent a funded deposit sweep', async () => {
+ const previous = process.env.TREASURY_PRIVATE_KEY;
+ delete process.env.TREASURY_PRIVATE_KEY;
+ try {
+  const f = fixture({ USDC: 2_000_000n });
+  assert.equal((await f.sweepDeposits()).length, 1);
+  assert.equal(f.calls.sends[0].to, process.env.TREASURY_WALLET_ADDRESS);
+ } finally { if (previous !== undefined) process.env.TREASURY_PRIVATE_KEY = previous; }
 });

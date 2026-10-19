@@ -14,7 +14,7 @@ const treasury = '0x1111111111111111111111111111111111111111';
 const id = '11111111-1111-4111-8111-111111111111';
 process.env.TREASURY_WALLET_ADDRESS = treasury;
 process.env.HD_WALLET_SEED_PHRASE = 'fixture';
-process.env.TREASURY_PRIVATE_KEY = 'fixture';
+delete process.env.TREASURY_PRIVATE_KEY;
 function fixture(options = {}) {
   const calls = [];
   class DepositJobBusy extends Error {}
@@ -70,6 +70,7 @@ test('one selected wallet is swept, and contention or missing wallet cannot swee
 });
 test('read-only listing distinguishes pending credit and unavailable balances', async () => {
   const f = fixture(); const r = await f.GET(request());
+  assert.equal(r.body.signingConfigured, true);
   assert.equal(r.body.rows[0].usdc, '5.0');
   assert.equal(r.body.rows[0].awaitingCredit, true);
   assert.equal(r.headers['Cache-Control'], 'private, no-store');

@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       })));
     }
     const snapshot: DepositSnapshot = { rows, page, hasMore: deposits.length > 20, checkedAt: new Date().toISOString(), treasury: destination(),
-      signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE && !!process.env.TREASURY_PRIVATE_KEY };
+      signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE };
     return reply(snapshot);
   } catch { return reply({ error: "Customer deposit balances could not be loaded. Please retry." }, 503); }
 }
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   const treasury = destination();
   if (!input || typeof input.depositId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.depositId) || input.confirmed !== true) return reply({ error: "Select a deposit and confirm the sweep" }, 400);
   if (!treasury || input.treasury?.toLowerCase() !== treasury.toLowerCase()) return reply({ error: "Treasury destination changed. Refresh and review again." }, 409);
-  if (!process.env.HD_WALLET_SEED_PHRASE || !process.env.TREASURY_PRIVATE_KEY) return reply({ error: "Server wallet signing is not configured." }, 503);
+  if (!process.env.HD_WALLET_SEED_PHRASE) return reply({ error: "Server wallet signing is not configured." }, 503);
   try {
     const result = await withDepositJob(async assertActive => {
       const deposit = await prisma.depositAddress.findUnique({ where: { id: input.depositId } });
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     });
     if (!result) return reply({ error: "Deposit address not found" }, 404);
     return reply({ ...result, message: result.failures.length
-      ? "Some tokens could not be swept. Refresh balances and check wallet activity before retrying; a transaction may still be pending."
+      ? "Some tokens could not be swept. Deposit wallets need ETH on Base for network fees. Refresh balances and check wallet activity before retrying; a transaction may still be pending."
       : result.sweeps.length ? "Sweep confirmed on Base. Funds moved to the main wallet."
       : "No funds were swept. The scheduled job may already have moved them. Refresh balances." });
   } catch (e) {

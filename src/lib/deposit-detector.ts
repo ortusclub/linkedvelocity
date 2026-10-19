@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ethers } from "ethers";
-import { getBaseProvider, getUsdcContract, getUsdtContract, getChildWallet, getTreasuryAddress, getTreasuryWallet, formatUsdc, parseUsdc } from "@/lib/wallet";
+import { getBaseProvider, getUsdcContract, getUsdtContract, getChildWallet, getTreasuryAddress, formatUsdc, parseUsdc } from "@/lib/wallet";
 import { sendTopUpNotification, sendTopUpConfirmation } from "@/services/email";
 
 // Persist broadcast hashes so a timeout can be reconciled before any later credit/sweep.
@@ -103,17 +103,12 @@ export async function detectDeposits(assertActive: () => Promise<void> = async (
   return results;
 }
 
-// Minimum ETH needed in a child address to execute a token transfer
-const SWEEP_GAS_AMOUNT = ethers.parseEther("0.0005");
-
 export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}) {
   const blocked = await reconcilePendingSweeps(assertActive);
   const deposits = await prisma.depositAddress.findMany({ where: depositId ? { id: depositId } : undefined });
   const provider = getBaseProvider();
   const treasury = getTreasuryAddress();
   if (!process.env.TREASURY_WALLET_ADDRESS || !ethers.isAddress(treasury) || treasury === ethers.ZeroAddress) throw new Error("Configure the treasury destination before sweeping");
-  const treasuryWallet = getTreasuryWallet();
-  if (treasuryWallet.address.toLowerCase() !== treasury.toLowerCase()) throw new Error("Treasury signer does not match destination");
   const started = Date.now();
   const tokens = [
     { symbol: "USDC", contract: getUsdcContract, resetsLastSeen: true },
@@ -147,18 +142,11 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
             throw new Error("Cannot sweep a deposit to itself");
           }
 
-          // Send gas ETH from treasury to child address if needed
+          // Only the source wallet signs. The receiving treasury is address-only.
+          // Deposit wallets must already hold ETH on Base for network fees.
           const childEthBalance = await provider.getBalance(deposit.address);
-          if (childEthBalance < SWEEP_GAS_AMOUNT) {
-            const [latest, pending] = await Promise.all([provider.getTransactionCount(treasury, "latest"), provider.getTransactionCount(treasury, "pending")]);
-            if (latest !== pending) throw new Error("Treasury has a pending transaction");
-            await assertActive();
-            const gasTx = await treasuryWallet.sendTransaction({
-              to: deposit.address,
-              value: SWEEP_GAS_AMOUNT - childEthBalance,
-            });
-            const gasReceipt = await gasTx.wait(1, 45_000);
-            if (!gasReceipt || gasReceipt.status !== 1) throw new Error("Gas funding failed");
+          if (childEthBalance === BigInt(0)) {
+            throw new Error("Deposit wallet needs ETH on Base for sweep fees");
           }
 
           const tokenWithSigner = token.contract(childWallet);
