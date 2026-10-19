@@ -72,7 +72,12 @@ export async function POST(
         // charge. Pricier than the restricted account's tier: it's a paid UPGRADE — move to the
         // new tier and collect the prorated rate difference for the days left in the paid
         // period. Shadow renters pay a flat rate, so they can't upgrade.
-        const isUpgrade = newTier > oldPrice;
+        // It's a paid upgrade only when the new tier costs more than BOTH the restricted
+        // account's tier and what they actually pay today — so a pick at or below their current
+        // rate is always a free swap (never a confusing "+$0 upgrade" when their locked rate
+        // happens to sit above the restricted account's tier).
+        const freeCeiling = Math.max(oldPrice, effectiveOld);
+        const isUpgrade = newTier > freeCeiling;
         if (isUpgrade && old.isShadow) throw new Error("TIER");
         const newRate = isUpgrade ? newTier : Math.min(effectiveOld, newTier);
         let upgradeDue = 0;

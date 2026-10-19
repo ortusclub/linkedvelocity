@@ -272,18 +272,21 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
     } catch { setError("Replacement failed — try again."); setSubmitting(false); }
   };
 
-  // A pick pricier than the restricted account's tier is a paid UPGRADE.
-  const isUpgradeOf = (tier: number) => oldPrice != null && tier > oldPrice;
+  // The renter's actual (locked) rate — often discounted below the standard tier price. For a
+  // same-or-lower pick they pay min(locked rate, tier) and never more; an upgrade moves them to
+  // the new tier (no discount above their original band) and charges the prorated difference now.
+  const lockedRate = effectiveRate ?? (typeof rental.price === "number" ? rental.price : oldPrice);
+  // A paid UPGRADE = pricier than BOTH the restricted account's tier and the renter's current
+  // rate. (If their locked rate sits above the restricted tier, a pick at that rate is a free
+  // same-rate swap, not a "+$0 upgrade".)
+  const freeCeiling = Math.max(oldPrice ?? 0, lockedRate ?? 0);
+  const isUpgradeOf = (tier: number) => freeCeiling > 0 && tier > freeCeiling;
   const shown = options.filter((o) =>
     filt === "all" ? true
     : filt === "same" ? (oldPrice != null && o.monthlyPrice === oldPrice)
     : filt === "upgrade" ? isUpgradeOf(o.monthlyPrice)
     : (oldPrice != null && o.monthlyPrice < oldPrice));
   const picked = options.find((o) => o.id === selected);
-  // The renter's actual (locked) rate — often discounted below the standard tier price. For a
-  // same-or-lower pick they pay min(locked rate, tier) and never more; an upgrade moves them to
-  // the new tier (no discount above their original band) and charges the prorated difference now.
-  const lockedRate = effectiveRate ?? (typeof rental.price === "number" ? rental.price : oldPrice);
   const rateOf = (tier: number) => (isUpgradeOf(tier) ? tier : (lockedRate != null ? Math.min(lockedRate, tier) : tier));
   const upgradeDueOf = (tier: number) =>
     isUpgradeOf(tier) && lockedRate != null ? Math.round(((tier - lockedRate) / 30) * remainingDays * 100) / 100 : 0;
