@@ -88,12 +88,25 @@ export async function POST(req: NextRequest) {
       status: { notIn: ["removed", "rented", "retired", "maintenance"] },
       restrictedAt: null,
       permanentlyRestricted: false,
+      // "Verified" isn't enough to run a campaign — a health check that found the
+      // account restricted means it can't (restrictedAt can lag behind health).
+      linkedinAccountHealth: { not: "restricted" },
     },
     select: {
       id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true,
       rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
     },
   });
+
+  // An account with an unresolved security email (a new-device / login challenge
+  // like "verify your new device", or an open incident) is NOT ready — starting a
+  // campaign on it just fails or risks a restriction. Exclude those.
+  const flaggedMail = await prisma.accountMailEvent.findMany({
+    where: { status: { in: ["needs_review", "incident"] } },
+    select: { linkedinAccountId: true },
+    distinct: ["linkedinAccountId"],
+  });
+  const mailFlagged = new Set(flaggedMail.map((m) => m.linkedinAccountId));
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
   function atLevel4(a: (typeof accounts)[number]): boolean {
@@ -106,7 +119,12 @@ export async function POST(req: NextRequest) {
   }
 
   const candidates = accounts.filter(
-    (a) => !!a.gologinProfileId && a.rentals.length === 0 && !hasCampaign.has(a.gologinProfileId) && atLevel4(a),
+    (a) =>
+      !!a.gologinProfileId &&
+      a.rentals.length === 0 &&
+      !mailFlagged.has(a.id) &&
+      !hasCampaign.has(a.gologinProfileId) &&
+      atLevel4(a),
   );
 
   let started = 0;
