@@ -6,7 +6,7 @@ import { selfServiceInput, selfServiceAction, selfServiceHandoff, selfServiceCon
 import { proxyPurchaseLimits } from "@/services/proxy-cheap";
 import { emailSetupConfig, EmailSetupError } from "@/lib/onboarding-email-policy";
 import { requireEmailSetup } from "@/lib/onboarding-email";
-import { OnboardingError, onboardingCountries, onboardingSummary, reserveOnboarding, prepareOnboarding, confirmOnboarding, handoffOnboarding, saveTwoFactorKey, requestOnboardingMeeting, updateOnboardingPayout, undoOnboardingMeeting } from "@/lib/self-service-onboarding";
+import { OnboardingError, onboardingCountries, onboardingSummary, reserveOnboarding, adoptOnboarding, prepareOnboarding, confirmOnboarding, handoffOnboarding, saveTwoFactorKey, requestOnboardingMeeting, updateOnboardingPayout, undoOnboardingMeeting } from "@/lib/self-service-onboarding";
 import { phoneVerificationConfigured } from "@/lib/phone-verification";
 
 export const dynamic = "force-dynamic";
@@ -72,7 +72,16 @@ export async function POST(req: Request, context: Context) {
   try {
     const me = await authenticate(context, req);
     if (!process.env.GOLOGIN_API_TOKEN_KLABBER) throw new OnboardingError("Browser setup is not configured yet.", 503);
-    const parsed = selfServiceInput.safeParse(await req.json());
+    const body = await req.json();
+    // Adopt an existing form signup into a guided onboarding this referrer runs themselves
+    // (reuses the application instead of creating a duplicate).
+    if (body && typeof body === "object" && (body as { action?: string }).action === "adopt") {
+      const appId = (body as { applicationId?: unknown }).applicationId;
+      if (typeof appId !== "string" || !selfServiceAction.shape.id.safeParse(appId).success) return json({ error: "Invalid signup reference." }, 400);
+      const id = await adoptOnboarding(me, appId);
+      return json({ session: await onboardingSummary(id, me.id) });
+    }
+    const parsed = selfServiceInput.safeParse(body);
     if (!parsed.success) return json({ error: parsed.error.issues[0]?.message || "Please check the details." }, 400);
     const id = await reserveOnboarding(me, parsed.data);
     return json({ session: await onboardingSummary(id, me.id) });

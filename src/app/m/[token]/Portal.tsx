@@ -701,7 +701,7 @@ export default function Portal({ token }: { token: string }) {
                   {s.action === "clear" ? (
                     <button onClick={() => setLockName(s.name)} style={{ display: "block", width: "100%", marginTop: 12, font: `700 13.5px ${JAK}`, color: "#fff", background: C.red, border: "none", padding: 13, borderRadius: 11, cursor: "pointer" }}>See how to clear it</button>
                   ) : s.action ? (
-                    <a href={s.action === "resume" && s.resumeSessionId ? `/m/${token}/onboarding?session=${encodeURIComponent(s.resumeSessionId)}` : `/m/${token}/onboarding`} style={{ display: "block", width: "100%", marginTop: 12, textAlign: "center", font: `700 13.5px ${JAK}`, color: "#fff", background: C.dark, padding: 13, borderRadius: 11, textDecoration: "none" }}>{s.action === "resume" ? "Resume onboarding" : "Onboard them now"}</a>
+                    <a href={s.action === "resume" && s.resumeSessionId ? `/m/${token}/onboarding?session=${encodeURIComponent(s.resumeSessionId)}` : `/m/${token}/onboarding?adopt=${encodeURIComponent(s.id)}`} style={{ display: "block", width: "100%", marginTop: 12, textAlign: "center", font: `700 13.5px ${JAK}`, color: "#fff", background: C.dark, padding: 13, borderRadius: 11, textDecoration: "none" }}>{s.action === "resume" ? "Resume onboarding" : "Onboard them now"}</a>
                   ) : null}
                   {/* Get the latest LinkedIn sign-in code for this person, without walking the
                       wizard. Only shown while codes can still flow (pre-onboarding). */}

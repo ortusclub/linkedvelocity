@@ -273,10 +273,22 @@ export default function SelfServiceWizard({ token, endpoint: endpointProp, selfM
   //   (?session=<id>), so they land where they left off. showSession picks the right step.
   useEffect(() => {
     if (!bootstrap || session) return;
-    const resumeParam = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("session") : null;
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const resumeParam = params?.get("session") || null;
+    // ?adopt=<applicationId>: a form referrer switching to run the guided onboarding themselves.
+    // POST adopts their existing application into a session, then we land in the guided flow (not
+    // the details form). Idempotent server-side, so a refresh is safe; swap the URL to ?session=.
+    const adoptParam = params?.get("adopt") || null;
     const target = selfMode ? bootstrap.sessions[0] : (resumeParam ? { id: resumeParam } : undefined);
-    if (!target) return;
-    void run(async () => { showSession((await request("GET", undefined, target.id)).session as Session); });
+    if (target) {
+      void run(async () => { showSession((await request("GET", undefined, target.id)).session as Session); });
+    } else if (!selfMode && adoptParam) {
+      void run(async () => {
+        const s = (await request("POST", { action: "adopt", applicationId: adoptParam })).session as Session;
+        showSession(s);
+        if (typeof window !== "undefined" && s?.id) window.history.replaceState(null, "", `${window.location.pathname}?session=${encodeURIComponent(s.id)}`);
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selfMode, bootstrap, session]);
 
