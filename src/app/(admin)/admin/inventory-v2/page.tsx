@@ -361,13 +361,31 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
     const who = r?.user?.fullName || r?.user?.email || "the current renter";
     return window.confirm(`Mark ${a.linkedinName} restricted?\n\nThis account is rented by ${who}. This pauses their billing and emails them that the account is restricted. Only do this if LinkedIn actually restricted it.`);
   };
+  // After marking restricted, optionally email the account OWNER + REFERRER the "account
+  // restricted / payment suspended" message (login block + 2FA recovery link if a password is
+  // saved). Asked per restriction so it's a deliberate send, not automatic on every click.
+  const confirmNotify = (a: Account): boolean =>
+    window.confirm(`Email the owner + referrer now that ${a.linkedinName} is restricted?\n\nSends the "account restricted / payment suspended" message (includes login details + 2FA recovery link when a password is on file). Cancel just sets the flag without emailing.`);
+  const runNotify = async (a: Account) => {
+    try {
+      const res = await fetch(`/api/admin/accounts/${a.id}/restrict-notify`, { method: "POST" });
+      const d: { error?: string; sent?: { recipient: string }[]; skipped?: { recipient: string; reason: string }[] } = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(`Owner/referrer not emailed: ${d.error || "send failed"}`); return; }
+      const sent = (d.sent || []).map((x) => x.recipient).join(" + ");
+      const skipped = (d.skipped || []).map((x) => `${x.recipient} (${x.reason})`).join(", ");
+      alert(sent ? `Restriction emailed to: ${sent}.${skipped ? ` Skipped: ${skipped}.` : ""}` : `No one emailed.${skipped ? ` Skipped: ${skipped}.` : ""}`);
+    } catch { alert("Owner/referrer notify failed to send."); }
+  };
   // Optimistic: update the row instantly and fire the write in the background, so the
   // ✓/✕ buttons respond on the first click instead of waiting on a full refetch.
   const setRestricted = (a: Account, restricted: boolean) => {
     if (restricted && !confirmRestrict(a)) return;
+    const notify = restricted && confirmNotify(a);
     const now = new Date().toISOString();
     setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, restrictedAt: restricted ? now : null, healthCheckedAt: now, updatedAt: now, linkedinAccountHealth: restricted ? x.linkedinAccountHealth : "active" } : x)));
-    fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted }) }).catch(() => load());
+    fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted }) })
+      .then((res) => { if (notify && res.ok) return runNotify(a); })
+      .catch(() => load());
   };
   const markActive = (a: Account) => {
     const now = new Date().toISOString();
@@ -415,11 +433,13 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   // account Active runs the rental-ready gate (blocked → the server's reason is shown).
   const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "withdrawn") => {
     if (pill === "restricted" && !confirmRestrict(a)) return;
+    const notify = pill === "restricted" && confirmNotify(a);
     const H = { "Content-Type": "application/json" };
     setBusy(a.id);
     try {
       if (pill === "restricted") {
         await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: true }) });
+        if (notify) await runNotify(a);
       } else if (pill === "perm" || pill === "withdrawn") {
         await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state: pill }) });
       } else {
