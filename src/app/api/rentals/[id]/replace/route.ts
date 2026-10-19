@@ -158,8 +158,12 @@ export async function POST(
             // Permanently gone: retire it — it never comes back to inventory.
             await tx.linkedInAccount.update({ where: { id: oldAcct.id }, data: { status: "removed", removedAt: new Date() } });
           } else {
-            // Otherwise free it back but keep it gated by restrictedAt (admin recovers it) + 2FA reset.
-            await tx.linkedInAccount.update({ where: { id: oldAcct.id }, data: { status: "available", twoFactorResetNeeded: true } });
+            // Otherwise free it back but keep it gated by restrictedAt (admin recovers it).
+            // Only flag a 2FA reset if this renter actually had the raw 2FA (credentialAccess) —
+            // standing rule: a normal g.camp profile share never exposes the code, so no rotation
+            // is needed. Flagging it unconditionally would wrongly block the account from
+            // re-listing after recovery (PUBLIC_AVAILABLE_WHERE excludes 2FA-reset accounts).
+            await tx.linkedInAccount.update({ where: { id: oldAcct.id }, data: { status: "available", twoFactorResetNeeded: user.credentialAccess === true } });
           }
         }
         // Shadow rental: leave both accounts' status untouched (shadow never owns the account).
