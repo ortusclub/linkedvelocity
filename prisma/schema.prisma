@@ -102,6 +102,7 @@ model User {
   sessions          Session[]
   transactions      Transaction[]
   depositAddress    DepositAddress?
+  person            Person?
 
   @@map("users")
 }
@@ -687,6 +688,82 @@ model InboundLead {
 
   @@unique([channel, contact])
   @@map("inbound_leads")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Renters v3 — unified "Person" overlay (Phase 1)
+//
+// crm_people is the single front-of-house record spanning lead → signup → renting →
+// dormant. It OVERLAYS, not replaces: `userId` links to the renter/billing spine (User)
+// once they have an account; `inboundLeadId` links to the originating inbound lead so the
+// Telegram/booking ingestion keeps writing inbound_leads untouched and we reconcile here.
+// Renter-operational fields (vetting/cap/sign-in/test) stay single-source on User; the
+// drawer writes them through userId. Conversations replace the comms_log JSON timeline.
+// ─────────────────────────────────────────────────────────────────────────────
+model Company {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  domain        String?  @unique
+  mainContactId String?  @map("main_contact_id") @db.Uuid   // a Person.id
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  people        Person[]
+  @@map("companies")
+}
+
+model Person {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String?   @unique @map("user_id") @db.Uuid          // → User once they have an account
+  inboundLeadId  String?   @unique @map("inbound_lead_id") @db.Uuid  // → originating InboundLead
+  name           String
+  email          String?                                             // nullable: TG-only leads have none
+  channel        String?                                             // 'WA' | 'TG' | null
+  contact        String?                                             // phone or @handle
+  companyId      String?   @map("company_id") @db.Uuid
+  role           String?
+  source         String?
+  pocOwner       String?   @map("poc_owner")                         // 'Ardi'|'Milee'|'Sam'|null
+  followUp       DateTime? @map("follow_up")
+  leadStage      String?   @map("lead_stage")                        // 'warm'|'cold'|null
+  isTest         Boolean   @default(false) @map("is_test")           // leads only; linked persons use User.isTest
+  notes          String?
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at")
+  joinedAt       DateTime  @default(now()) @map("joined_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  company        Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  user           User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  conversations  Conversation[]
+  @@index([companyId])
+  @@index([lastActivityAt])
+  @@map("crm_people")
+}
+
+model Conversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  personId    String   @map("person_id") @db.Uuid
+  type        String   // 'Note'|'Call'|'WhatsApp'|'Telegram'|'Email'
+  text        String
+  direction   String?  // inbound|outbound (carried from legacy comms_log)
+  authorName  String?  @map("author_name")
+  authorEmail String?  @map("author_email")
+  externalId  String?  @map("external_id")  // dedup key = comms_log entry id / notes requestId
+  createdAt   DateTime @default(now()) @map("created_at")
+  person      Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  @@index([personId, createdAt])
+  @@map("conversations")
+}
+
+model DuplicateSuggestion {
+  id          String    @id @default(uuid()) @db.Uuid
+  personAId   String    @map("person_a_id") @db.Uuid
+  personBId   String    @map("person_b_id") @db.Uuid
+  reason      String    // same-name | same-email-localpart | same-phone | same-domain | same-day-signup
+  dismissedAt DateTime? @map("dismissed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  @@unique([personAId, personBId])
+  @@map("duplicate_suggestions")
 }
 
 model BlogPost {
