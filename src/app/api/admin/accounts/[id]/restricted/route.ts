@@ -8,13 +8,17 @@ import { notifyRestrictionOwnerReferrer } from "@/lib/restrict-notify";
 // Admin: mark a rented account as restricted (LinkedIn restricted it, we're recovering)
 // or clear it (recovered). On recover, credit the active rental's downtime by extending
 // currentPeriodEnd by the time it was restricted.
-// Body: { restricted: boolean }
+// Body: { restricted: boolean, notifyOwnerReferrer?: boolean }
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await requireAdmin();
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const restrict = !!body.restricted;
+    // Owner+referrer "restricted / payments suspended" notice fires ONLY when the caller opts
+    // in (the inventory UI asks per restriction). Other restrict paths — PATCH, pipeline carry —
+    // still auto-notify on their own; this flag only gates the /restricted (inventory) path.
+    const notifyOwner = !!body.notifyOwnerReferrer;
     const note = typeof body.note === "string" ? body.note.trim() : "";
 
     const account = await prisma.linkedInAccount.findUnique({ where: { id } });
@@ -38,7 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // Newly restricted (was clear, now set): tell any real renter(s) their billing is paused,
-    // and auto-notify the account owner + referrer with the restricted notice.
+    // and (only if the caller opted in) notify the account owner + referrer.
     let notify: Awaited<ReturnType<typeof notifyRestrictionOwnerReferrer>> | null = null;
     if (restrict && !account.restrictedAt && updated.restrictedAt) {
       const renters = await prisma.rental.findMany({
@@ -51,8 +55,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         seen.add(r.userId);
         await notifyBillingPaused(r.userId, { trigger: "restricted", highlightAccount: account.linkedinName });
       }
-      // Owner + referrer notice (best-effort; must not fail the restrict).
-      try { notify = await notifyRestrictionOwnerReferrer(id); } catch (e) { console.error("restrict owner/referrer notify failed", e); }
+      // Owner + referrer notice — only when explicitly requested (best-effort; must not fail the restrict).
+      if (notifyOwner) {
+        try { notify = await notifyRestrictionOwnerReferrer(id); } catch (e) { console.error("restrict owner/referrer notify failed", e); }
+      }
     }
 
     return NextResponse.json({ restrictedAt: updated.restrictedAt, creditedDays: fields.creditedDays ?? 0, restrictionLog: updated.restrictionLog, notify });
