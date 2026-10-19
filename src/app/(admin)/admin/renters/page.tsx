@@ -97,6 +97,22 @@ function daysAgo(iso: string) {
 }
 function money(n: number) { return n ? `$${Math.round(n).toLocaleString()}` : "—"; }
 function localPart(email?: string | null) { return email ? email.split("@")[0].toLowerCase() : ""; }
+// Comms entries are often raw template emails (booking confirmations etc.) with HTML
+// markup — strip the tags/entities so they read as plain text, then the UI clamps length.
+const CONV_CLAMP = 180;
+function cleanCommText(raw: string): string {
+  return (raw || "")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/p\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&#0?39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export default function RentersV3Page() {
   const [people, setPeople] = useState<Person[]>([]);
@@ -505,6 +521,8 @@ function PersonDrawer(props: {
   const isLead = s === "Warm" || s === "Cold";
   const [showAll, setShowAll] = useState(false);
   const shownConv = showAll ? p.conversations : p.conversations.slice(0, 3);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleEntry = (id: string) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const rid = p.userId || "";
   const links = [
     { label: "Rentals", val: `${p.liveRentals} live · ${p.totalRentals} total`, href: `/admin/rentals?renter=${rid}` },
@@ -601,12 +619,12 @@ function PersonDrawer(props: {
             </div>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {p.conversations.length === 0 && <div style={{ font: `500 12.5px ${F}`, color: MUT, padding: "4px 0" }}>Nothing logged yet.</div>}
-              {shownConv.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; return (
+              {shownConv.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; const clean = cleanCommText(h.text); const long = clean.length > CONV_CLAMP + 24; const open = expanded.has(h.id); const shownText = open || !long ? clean : clean.slice(0, CONV_CLAMP).trimEnd() + "…"; return (
                 <div key={h.id} style={{ display: "grid", gridTemplateColumns: "14px 1fr", gap: 10 }}>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ flex: "none", width: 12, height: 12, borderRadius: "50%", border: `2.5px solid ${c.fg}`, background: "#fff", marginTop: 3 }} /><span style={{ flex: 1, width: 2, background: LINE }} /></div>
                   <div style={{ paddingBottom: 14, display: "flex", flexDirection: "column", gap: 5 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}><span style={{ font: `800 9.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 5, background: c.bg, color: c.fg }}>{h.type}</span><span style={{ font: `500 11.5px ${F}`, color: MUT }}>{[h.author, h.meta].filter(Boolean).join(" · ")}</span></div>
-                    <div style={{ font: `500 13px/1.5 ${F}`, color: "#1e293b" }}>{h.text}</div>
+                    <div style={{ font: `500 13px/1.5 ${F}`, color: "#1e293b", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{shownText}{long && <button onClick={() => toggleEntry(h.id)} style={{ marginLeft: 6, border: "none", background: "none", color: BLUE, font: `700 12px ${F}`, cursor: "pointer", padding: 0 }}>{open ? "less" : "more"}</button>}</div>
                   </div>
                 </div>
               ); })}
