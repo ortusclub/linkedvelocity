@@ -1377,7 +1377,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
             {/* Column 2 — Log in */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
               <Card pad="14px">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl>{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><a href={`/admin/accounts/${r.id}`} target="_blank" rel="noreferrer" title="Open the full editor — login/personal/work email, password, GoLogin, pricing… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>Edit account ↗</a>{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
                 <Totp accountId={r.id} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Login email (work)</Lbl><Copyable value={r.loginEmail} /></div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Personal email</Lbl><Copyable value={r.personalEmail} /></div>
