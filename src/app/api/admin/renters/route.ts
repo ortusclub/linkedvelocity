@@ -344,8 +344,10 @@ export async function GET() {
     }
     const companies = [] as { id: string; domain: string; name: string; memberIds: string[]; mainContactId: string | null }[];
     for (const [domain, members] of byDomain) {
-      if (members.length < 2) continue;
-      // name from the first member's email local-part fallback → domain label
+      // A business email domain IS the company most of the time (e.g. eyal@getagent360.com
+      // → GetAgent360), so every non-free domain forms a company — even a solo contact.
+      // Free providers (gmail/outlook/…) were already excluded upstream (companyDomain = null).
+      // name derived from the domain label (editable once persisted in Phase 1)
       const label = domain.split(".")[0].replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
       const main = members.find((m) => m.liveRentals > 0) || members[0];
       companies.push({ id: `co:${domain}`, domain, name: label, memberIds: members.map((m) => m.id), mainContactId: main.id });
