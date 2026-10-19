@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
     select: {
       id: true, gologinProfileId: true, maturingStartedAt: true, linkedinUrl: true, notes: true,
-      status: true, restrictedAt: true, permanentlyRestricted: true,
+      status: true, restrictedAt: true, permanentlyRestricted: true, linkedinAccountHealth: true,
       rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
     },
   });
@@ -76,7 +76,8 @@ export async function POST(req: NextRequest) {
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
-      a.status === "retired" || a.status === "maintenance";
+      a.status === "retired" || a.status === "maintenance" ||
+      a.linkedinAccountHealth === "restricted";
 
     if (blocked) {
       if (entry && entry.ids.length) {
