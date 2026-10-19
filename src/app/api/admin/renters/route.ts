@@ -189,6 +189,10 @@ export async function GET() {
       lastActivityAt: string;
       companyDomain: string | null;
       conversations: { id: string; type: string; text: string; meta: string; author: string | null; ts: string }[];
+      // AI running summary of the conversation thread (cached on the lead), + whether
+      // a newer touchpoint arrived since it was generated (so the UI can offer a refresh).
+      commsSummary: string | null;
+      commsSummaryStale: boolean;
       // vettingReview raw (for writing back via existing PATCH)
       vettingReviewRaw: string | null;
     };
@@ -237,6 +241,8 @@ export async function GET() {
         lastActivityAt: u.updatedAt.toISOString(),
         companyDomain: (() => { const d = domainOf(u.email); return d && !FREE_EMAIL_DOMAINS.has(d) ? d : null; })(),
         conversations: [],
+        commsSummary: null,
+        commsSummaryStale: false,
         vettingReviewRaw: u.vettingReview,
       };
       people.push(p);
@@ -273,6 +279,10 @@ export async function GET() {
         if (match.leadStage === null) match.leadStage = leadStageFrom(l.stage);
         if (!match.channel) match.channel = channelFromInbound(l.channel);
         match.conversations.push(...comms);
+        if (match.leadId === l.id) {
+          match.commsSummary = l.commsSummary ?? null;
+          match.commsSummaryStale = !l.commsSummary || !l.commsSummaryAt || l.commsSummaryAt < l.lastContactAt;
+        }
         const lts = l.lastContactAt.toISOString();
         if (lts > match.lastActivityAt) match.lastActivityAt = lts;
         continue;
@@ -312,6 +322,8 @@ export async function GET() {
         lastActivityAt: l.lastContactAt.toISOString(),
         companyDomain: d && !FREE_EMAIL_DOMAINS.has(d) ? d : null,
         conversations: comms,
+        commsSummary: l.commsSummary ?? null,
+        commsSummaryStale: comms.length ? (!l.commsSummary || !l.commsSummaryAt || l.commsSummaryAt < l.lastContactAt) : false,
         vettingReviewRaw: null,
       };
       people.push(p);
