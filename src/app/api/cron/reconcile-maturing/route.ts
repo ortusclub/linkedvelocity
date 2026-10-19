@@ -59,7 +59,8 @@ export async function POST(req: NextRequest) {
     // engine still carries a stale non-terminal campaign for its profile.
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
-      !!a.restrictedAt || a.permanentlyRestricted || a.status === "retired";
+      !!a.restrictedAt || a.permanentlyRestricted ||
+      a.status === "retired" || a.status === "maintenance";
     const isMaturing = !blocked && !!a.gologinProfileId && maturing.has(a.gologinProfileId);
     if (isMaturing && !a.maturingStartedAt) {
       await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: new Date() } });

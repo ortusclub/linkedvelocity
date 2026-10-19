@@ -14,8 +14,12 @@ export async function engine(path, body) {
   return data;
 }
 export async function accounts(db=prisma) {
+  // `unavailable` here means "not maturable" and covers ONLY the maintenance
+  // status. Accounts with status 'unavailable' (not listed for rent, but fine to
+  // warm up) CAN be matured — maturing is exactly what you do to an account that
+  // isn't rental-ready yet, so they must appear in the picker and be startable.
   const rows=await db.linkedInAccount.findMany({where:{status:{not:'removed'}},select:{id:true,gologinProfileId:true,gologinAccount:true,loginEmail:true,linkedinName:true,linkedinUrl:true,connectionCount:true,status:true,restrictedAt:true,permanentlyRestricted:true,notes:true,rentals:{where:{status:{in:['active','pending_access','payment_failed']},isShadow:false},select:{id:true},take:1}}});
-  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:['unavailable','maintenance'].includes(a.status)}));
+  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:a.status==='maintenance'}));
 }
 export async function owned(id){
   if(!/^[\w-]{1,100}$/.test(id))throw new MaturingError('Invalid campaign ID.');
