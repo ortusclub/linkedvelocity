@@ -353,9 +353,18 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
     try { const res = await fetch(`/api/admin/accounts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (res.ok && reload) await load(); return res; }
     finally { setBusy(null); }
   };
+  // Marking a RENTED account restricted pauses the renter's billing and emails them right
+  // away, so a stray ✕/pill click is costly. Require an explicit confirm naming the renter.
+  const confirmRestrict = (a: Account): boolean => {
+    const r = (a.rentals || []).find((x) => x.status === "active" || x.status === "pending_access" || x.status === "payment_failed");
+    if (a.status !== "rented" && !r) return true;
+    const who = r?.user?.fullName || r?.user?.email || "the current renter";
+    return window.confirm(`Mark ${a.linkedinName} restricted?\n\nThis account is rented by ${who}. This pauses their billing and emails them that the account is restricted. Only do this if LinkedIn actually restricted it.`);
+  };
   // Optimistic: update the row instantly and fire the write in the background, so the
   // ✓/✕ buttons respond on the first click instead of waiting on a full refetch.
   const setRestricted = (a: Account, restricted: boolean) => {
+    if (restricted && !confirmRestrict(a)) return;
     const now = new Date().toISOString();
     setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, restrictedAt: restricted ? now : null, healthCheckedAt: now, updatedAt: now, linkedinAccountHealth: restricted ? x.linkedinAccountHealth : "active" } : x)));
     fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted }) }).catch(() => load());
@@ -405,6 +414,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   // billing-paused logic in one place); Perm./Withdrawn through /state; and listing an unrented
   // account Active runs the rental-ready gate (blocked → the server's reason is shown).
   const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "withdrawn") => {
+    if (pill === "restricted" && !confirmRestrict(a)) return;
     const H = { "Content-Type": "application/json" };
     setBusy(a.id);
     try {
