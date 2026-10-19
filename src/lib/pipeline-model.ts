@@ -100,6 +100,7 @@ export interface Row {
   proxyLocation: string | null;
   accountRestrictedAt: string | null;
   warmupStartedAt: string | null;
+  maturingStartedAt: string | null;
   profileBuild: ProfileBuild | null;
   profilePhotoUrl: string | null;
   linkedinJoinedAt: string | null;

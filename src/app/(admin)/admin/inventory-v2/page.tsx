@@ -58,6 +58,7 @@ interface Account {
   proxyHost: string | null;
   proxyLocation: string | null;
   warmupStartedAt: string | null;
+  maturingStartedAt: string | null;
   healthCheckedAt: string | null;
   linkedinAccountHealth: string | null;
   twoFactor: string | null;
@@ -737,6 +738,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     const linkedArmy = false;     // no per-account LinkedArmy marker yet (inventoryPool is all "main")
                     const retired = canonicalStatus(r) === "Permanently restricted/Inaccessible";
                     const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
+                    // Auto maturing flag (reconcile-maturing cron): a live LinkedVelocity warm/cold campaign is running.
+                    const matDays = r.maturingStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.maturingStartedAt).getTime()) / 86400000)) : null;
                     // Recently recovered: not currently restricted, last restriction-log event was a recovery <=30d ago.
                     const recovered = !r.restrictedAt && (() => { const log = Array.isArray(r.restrictionLog) ? r.restrictionLog : []; const last = log[log.length - 1]; return !!last && last.event === "recovered" && (nowMs - new Date(last.at).getTime()) <= 30 * 86400000; })();
                     const isConstruction = r.status === "under_construction" || r.status === "construction_immature";
@@ -773,7 +776,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (proxyDown) flags.push({ l: "Proxy down", ...RP, tip: "GoLogin proxy check failed" });
                     if (proxyExpiring) flags.push({ l: "Proxy expiring", bg: "#fffbeb", fg: "#92400e", tip: "Proxy plan expires within 7 days" });
                     if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: "Running LinkedArmy campaigns" });
-                    if (warmDays != null && isConstruction) flags.push({ l: `🔥 ${warmDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Days in warm-up" });
+                    if (matDays != null) flags.push({ l: `🔥 Maturing${matDays ? ` · ${matDays}d` : ""}`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
+                    else if (warmDays != null && isConstruction) flags.push({ l: `🔥 ${warmDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Days in warm-up" });
                     if (recovered) flags.push({ l: "Recovered", bg: "#fffbeb", fg: "#92400e", tip: "Recently restricted, now recovered" });
                     if (r.shadowRenter) flags.push({ l: `◐ Shadow · ${shadowName(r.shadowRenter)}`, bg: "#eff4ff", fg: "#2563eb", tip: `Shadow supply (${shadowName(r.shadowRenter)}) — still available to rent` });
                     if (r.hasSalesNav) flags.push({ l: "+SN", bg: "#eff4ff", fg: "#2563eb", tip: "Has Sales Navigator" });
@@ -1288,6 +1292,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
           { k: "withdrawn", l: "Withdrawn", bg: "#f1f3f6", fg: "#5b6779" },
         ];
         const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
+        const matDays = r.maturingStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.maturingStartedAt).getTime()) / 86400000)) : null;
         return (
           <div style={{ background: "#fff", border: `1px solid #e6e9ee`, borderRadius: 12, padding: "11px 14px", margin: "4px 0 10px", display: "flex", alignItems: "center", gap: "12px 28px", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1301,7 +1306,9 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
               <span style={{ font: `500 11.5px ${F}`, color: MUT }}>{r.healthCheckedAt ? `Last checked ${fmtDY(r.healthCheckedAt)}` : "Not yet checked"}</span>
               <button onClick={recheck} disabled={busy} style={{ border: `1px solid #dde1e8`, background: "#fff", color: SUB, borderRadius: 999, padding: "3px 10px", font: `700 11px ${F}`, cursor: "pointer" }}>↻ Re-check</button>
             </div>
-            {warmDays !== null && (r.status === "under_construction" || r.status === "construction_immature") && <span style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {warmDays}d</span>}
+            {matDays !== null
+              ? <span title="Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 Maturing{matDays ? ` · ${matDays}d` : ""}</span>
+              : warmDays !== null && (r.status === "under_construction" || r.status === "construction_immature") && <span style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {warmDays}d</span>}
           </div>
         );
       })()}
