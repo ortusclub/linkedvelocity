@@ -8,10 +8,11 @@ import { canReplaceNow } from "@/lib/replacement";
 import { grantRentalAccess, revokeRentalAccess } from "@/lib/rental-access";
 import { PUBLIC_AVAILABLE_WHERE } from "@/lib/public-inventory";
 
-// Self-serve replacement: swap a RESTRICTED rental for an equivalent available account.
-// Ends the old rental (status "replaced"), starts a new one that carries the old locked price,
-// billing date + a downtime credit, links the two via replacesRentalId, and grants GoLogin.
-// No charge, and exempt from the daily rental cap.
+// Self-serve replacement: swap a RESTRICTED rental for an available account.
+// Ends the old rental (status "replaced"), starts a new one that carries the billing date + a
+// downtime credit, links the two via replacesRentalId, and grants GoLogin. Same tier or lower
+// keeps the locked price with no charge; a pricier pick is a paid upgrade that collects the
+// prorated rate difference from the wallet. Exempt from the daily rental cap.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -53,9 +54,9 @@ export async function POST(
     // carriedPeriodEnd inherits the old renewal date that those days were already added to.
     const carriedCreditDays = (old.downtimeCreditDays ?? 0) + Math.round(downtimeMs / 86400000);
 
-    let newRentalId: string;
+    let swap: { id: string; charged: number };
     try {
-      newRentalId = await prisma.$transaction(async (tx) => {
+      swap = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${newAccountId}))`;
 
         // Re-validate the chosen account is still genuinely available (shared definition:
@@ -66,11 +67,34 @@ export async function POST(
         });
         if (!picked) throw new Error("UNAVAILABLE");
         const newTier = monthlyRentalPrice(picked);
-        if (newTier > oldPrice) throw new Error("TIER");
-        // Rate drops to the cheaper account: new locked price = min(their current effective
-        // rate, the new account's tier). Never higher than what they paid before.
         const effectiveOld = old.lockedPrice ? Number(old.lockedPrice) : oldPrice;
-        const newRate = Math.min(effectiveOld, newTier);
+        // Same tier or lower: keep their rate (pay min of locked rate and the new tier), no
+        // charge. Pricier than the restricted account's tier: it's a paid UPGRADE — move to the
+        // new tier and collect the prorated rate difference for the days left in the paid
+        // period. Shadow renters pay a flat rate, so they can't upgrade.
+        const isUpgrade = newTier > oldPrice;
+        if (isUpgrade && old.isShadow) throw new Error("TIER");
+        const newRate = isUpgrade ? newTier : Math.min(effectiveOld, newTier);
+        let upgradeDue = 0;
+        if (isUpgrade) {
+          const dayMs = 86400000;
+          const remainingDays = old.currentPeriodEnd
+            ? Math.max(0, Math.ceil((new Date(old.currentPeriodEnd).getTime() - Date.now()) / dayMs))
+            : 0;
+          // Prorated difference between the new rate and what they pay today, over the days
+          // left in the already-paid period (credited downtime days are free, so excluded).
+          upgradeDue = Math.round(((newTier - effectiveOld) / 30) * remainingDays * 100) / 100;
+          if (upgradeDue > 0) {
+            // Atomic, race-safe: deduct only if the wallet still covers it (a concurrent
+            // renewal could have drawn it down). No silent card charge — a short wallet blocks
+            // the upgrade and the renter is asked to top up first.
+            const paid = await tx.user.updateMany({
+              where: { id: user.id, usdcBalance: { gte: new Prisma.Decimal(upgradeDue) } },
+              data: { usdcBalance: { decrement: new Prisma.Decimal(upgradeDue) } },
+            });
+            if (paid.count === 0) throw new Error(`FUNDS:${upgradeDue}`);
+          }
+        }
 
         // Guard against a double-replace: re-read the old rental's status inside the lock.
         const stillOld = await tx.rental.findFirst({ where: { id: old.id, status: { in: ["active", "pending_access", "payment_failed"] } }, select: { id: true } });
@@ -107,6 +131,19 @@ export async function POST(
           select: { id: true },
         });
 
+        // Record the prorated upgrade charge against the new rental (negative = debit).
+        if (upgradeDue > 0) {
+          await tx.transaction.create({
+            data: {
+              userId: user.id,
+              type: "rental_payment",
+              amount: new Prisma.Decimal(upgradeDue).negated(),
+              rentalId: created.id,
+              description: `Upgrade to ${picked.linkedinName} (prorated difference)`,
+            },
+          });
+        }
+
         await tx.rental.update({ where: { id: old.id }, data: { status: "replaced", waitingForRecovery: false, waitChosenAt: null, notes: old.notes ? `${old.notes} · Replaced by ${picked.linkedinName}` : `Replaced by ${picked.linkedinName}` } });
 
         if (!old.isShadow) {
@@ -122,16 +159,25 @@ export async function POST(
         }
         // Shadow rental: leave both accounts' status untouched (shadow never owns the account).
 
-        return created.id;
+        return { id: created.id, charged: upgradeDue };
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (msg === "UNAVAILABLE") return NextResponse.json({ error: "That account was just taken. Pick another." }, { status: 409 });
-      if (msg === "TIER") return NextResponse.json({ error: "That account is a higher tier than the one you're replacing." }, { status: 400 });
+      if (msg === "TIER") return NextResponse.json({ error: "Upgrades aren't available on this rental." }, { status: 400 });
+      if (msg.startsWith("FUNDS:")) {
+        const due = Number(msg.slice(6)) || 0;
+        return NextResponse.json(
+          { error: `You need $${due.toFixed(2)} in your wallet to upgrade. Add funds and try again.`, due, balance: Number(user.usdcBalance ?? 0) },
+          { status: 402 }
+        );
+      }
       if (msg === "ALREADY") return NextResponse.json({ error: "This rental was already replaced." }, { status: 409 });
       if (msg === "SHADOWHELD") return NextResponse.json({ error: "That account is already held. Pick another." }, { status: 409 });
       throw e;
     }
+    const newRentalId = swap.id;
+    const charged = swap.charged;
 
     // Stop billing the dead account (card renters). Wallet rentals have no Stripe sub.
     if (old.stripeSubscriptionId) {
@@ -149,7 +195,7 @@ export async function POST(
       catch (e) { console.error("replace: grant new access failed (cron will retry):", newRentalId, e instanceof Error ? e.message : e); }
     }
 
-    return NextResponse.json({ newRentalId });
+    return NextResponse.json({ newRentalId, charged });
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

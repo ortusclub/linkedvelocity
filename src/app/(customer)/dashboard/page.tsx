@@ -192,10 +192,16 @@ const FULL_KEY_STORAGE = "lv_full_roster_key";
 function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; onClose: () => void; onReplaced: () => void }) {
   const [options, setOptions] = useState<ReplacementOption[]>([]);
   const [oldPrice, setOldPrice] = useState<number | null>(null);
+  // Upgrade support: what they pay now, days left to prorate over, whether upgrades are allowed
+  // (non-shadow), and their wallet balance (upgrades are wallet-funded).
+  const [effectiveRate, setEffectiveRate] = useState<number | null>(null);
+  const [remainingDays, setRemainingDays] = useState(0);
+  const [canUpgrade, setCanUpgrade] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [filt, setFilt] = useState<"all" | "same" | "lower">("all");
+  const [filt, setFilt] = useState<"all" | "same" | "lower" | "upgrade">("all");
   const [submitting, setSubmitting] = useState(false);
   // Full-roster gate (mirrors the catalogue): without the password the picker only offers
   // the public slice; the password lifts it to the whole roster. Reload via reloadTick.
@@ -222,6 +228,10 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
         setError(null);
         setOptions(data.options || []);
         setOldPrice(typeof data.oldPrice === "number" ? data.oldPrice : null);
+        setEffectiveRate(typeof data.effectiveRate === "number" ? data.effectiveRate : null);
+        setRemainingDays(typeof data.remainingDays === "number" ? data.remainingDays : 0);
+        setCanUpgrade(!!data.canUpgrade);
+        setWalletBalance(typeof data.walletBalance === "number" ? data.walletBalance : 0);
         setFullList(!!data.fullList);
         // A supplied key that didn't unlock the roster is wrong — flag it and forget it.
         if (key && !data.fullList) { setKeyErr(true); try { sessionStorage.removeItem(FULL_KEY_STORAGE); } catch { /* ignore */ } }
@@ -262,19 +272,35 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
     } catch { setError("Replacement failed — try again."); setSubmitting(false); }
   };
 
-  const shown = options.filter((o) => filt === "all" ? true : filt === "same" ? (oldPrice != null && o.monthlyPrice === oldPrice) : (oldPrice != null && o.monthlyPrice < oldPrice));
+  // A pick pricier than the restricted account's tier is a paid UPGRADE.
+  const isUpgradeOf = (tier: number) => oldPrice != null && tier > oldPrice;
+  const shown = options.filter((o) =>
+    filt === "all" ? true
+    : filt === "same" ? (oldPrice != null && o.monthlyPrice === oldPrice)
+    : filt === "upgrade" ? isUpgradeOf(o.monthlyPrice)
+    : (oldPrice != null && o.monthlyPrice < oldPrice));
   const picked = options.find((o) => o.id === selected);
-  // The renter's actual (locked) rate — often discounted below the standard tier price. They
-  // never pay more than this, so the rate they'd pay on any pick is min(locked rate, its tier).
-  const lockedRate = typeof rental.price === "number" ? rental.price : oldPrice;
-  const effOf = (tier: number) => (lockedRate != null ? Math.min(lockedRate, tier) : tier);
+  // The renter's actual (locked) rate — often discounted below the standard tier price. For a
+  // same-or-lower pick they pay min(locked rate, tier) and never more; an upgrade moves them to
+  // the new tier (no discount above their original band) and charges the prorated difference now.
+  const lockedRate = effectiveRate ?? (typeof rental.price === "number" ? rental.price : oldPrice);
+  const rateOf = (tier: number) => (isUpgradeOf(tier) ? tier : (lockedRate != null ? Math.min(lockedRate, tier) : tier));
+  const upgradeDueOf = (tier: number) =>
+    isUpgradeOf(tier) && lockedRate != null ? Math.round(((tier - lockedRate) / 30) * remainingDays * 100) / 100 : 0;
   const isDiscounted = lockedRate != null && oldPrice != null && lockedRate < oldPrice;
+  const pickedDue = picked ? upgradeDueOf(picked.monthlyPrice) : 0;
+  const shortBy = Math.max(0, Math.round((pickedDue - walletBalance) * 100) / 100);
   const summary = picked
-    ? (isDiscounted
-        ? `You keep your discounted rate: $${effOf(picked.monthlyPrice)}/mo (standard $${picked.monthlyPrice}). Billing date unchanged.`
+    ? (isUpgradeOf(picked.monthlyPrice)
+        ? (shortBy > 0
+            ? `Upgrade costs $${pickedDue.toFixed(2)} now — add $${shortBy.toFixed(2)} to your wallet to continue (balance $${walletBalance.toFixed(2)}).`
+            : `Pay $${pickedDue.toFixed(2)} now (prorated for ${remainingDays} ${remainingDays === 1 ? "day" : "days"} left), then $${picked.monthlyPrice}/mo from your next billing. Billing date unchanged.`)
+        : isDiscounted
+        ? `You keep your discounted rate: $${rateOf(picked.monthlyPrice)}/mo (standard $${picked.monthlyPrice}). Billing date unchanged.`
         : (oldPrice != null && picked.monthlyPrice < oldPrice ? `New rate $${picked.monthlyPrice}/mo from your next billing (was $${oldPrice}).` : `Same rate, $${oldPrice}/mo.`))
     : "Pick an account to continue.";
-  const chip = (k: "all" | "same" | "lower", label: string) => (
+  const blockUpgrade = !!picked && isUpgradeOf(picked.monthlyPrice) && shortBy > 0;
+  const chip = (k: "all" | "same" | "lower" | "upgrade", label: string) => (
     <button onClick={() => setFilt(k)} style={{ borderRadius: 999, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", border: `1px solid ${filt === k ? V.text : "#d5dbe5"}`, background: filt === k ? V.text : "#fff", color: filt === k ? "#fff" : V.text }}>{label}</button>
   );
 
@@ -288,12 +314,12 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
           </div>
           <span style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: V.muted }}>
             {isDiscounted ? (
-              <>You&apos;re on a discounted rate of <b style={{ color: V.green }}>${lockedRate}/mo</b> <span style={{ textDecoration: "line-through", color: V.faint }}>${oldPrice}</span>. Pick any account at the same tier or lower — you&apos;ll keep paying ${lockedRate}/mo. Your billing date stays the same and you keep the downtime credit.</>
+              <>You&apos;re on a discounted rate of <b style={{ color: V.green }}>${lockedRate}/mo</b> <span style={{ textDecoration: "line-through", color: V.faint }}>${oldPrice}</span>. Same tier or lower keeps you at ${lockedRate}/mo, billing date unchanged.{canUpgrade && <> Want a premium account? <b>Upgrade</b> and just pay the prorated difference now.</>}</>
             ) : (
-              <>Pick any account at ${oldPrice ?? "—"}/mo or lower. Your billing date stays the same and you keep the downtime credit.</>
+              <>Same tier or lower stays ${oldPrice ?? "—"}/mo, billing date unchanged.{canUpgrade && <> Want a premium account? <b>Upgrade</b> and just pay the prorated difference now.</>}</>
             )}
           </span>
-          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>{chip("all", "All")}{chip("same", "Same price")}{chip("lower", "Lower price")}</div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>{chip("all", "All")}{chip("same", "Same price")}{chip("lower", "Lower price")}{canUpgrade && chip("upgrade", "Upgrade ↑")}</div>
           {/* Full-roster gate — same password mechanism as the catalogue. */}
           {fullList ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, background: "#FFF7E6", border: "1px solid #F3D9A4", borderRadius: 9, padding: "7px 11px" }}>
@@ -332,7 +358,17 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
                   <div style={{ fontWeight: 500, fontSize: 12, color: V.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{[o.linkedinHeadline, `${o.connectionCount.toLocaleString()} connections`, o.location].filter(Boolean).join(" · ")}</div>
                 </div>
                 {(() => {
-                  const eff = effOf(o.monthlyPrice);
+                  const up = isUpgradeOf(o.monthlyPrice);
+                  if (up) {
+                    const due = upgradeDueOf(o.monthlyPrice);
+                    return (
+                      <span style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
+                        <span style={{ fontWeight: 800, fontSize: 13.5, color: V.text }}>${o.monthlyPrice}<span style={{ fontWeight: 500, color: V.faint }}>/mo</span></span>
+                        <span style={{ fontWeight: 700, fontSize: 11, color: V.blue, whiteSpace: "nowrap" }}>+${due.toFixed(2)} now</span>
+                      </span>
+                    );
+                  }
+                  const eff = rateOf(o.monthlyPrice);
                   const disc = lockedRate != null && eff < o.monthlyPrice;
                   return disc ? (
                     <span style={{ flex: "none", display: "flex", alignItems: "baseline", gap: 5 }}>
@@ -352,7 +388,7 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
         <div style={{ padding: "14px 22px", borderTop: `1px solid ${V.line}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ flex: "1 1 200px", fontWeight: 500, fontSize: 12.5, lineHeight: 1.45, color: error && options.length > 0 ? "#b91c1c" : V.muted }}>{error && options.length > 0 ? error : summary}</span>
           <button onClick={onClose} style={{ border: "1px solid #d5dbe5", background: "#fff", color: V.text, borderRadius: 9, padding: "9px 14px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
-          <button onClick={confirm} disabled={!picked || submitting} style={{ border: "none", background: picked && !submitting ? V.blue : "#a9c0f7", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: picked ? "pointer" : "default" }}>{submitting ? "Switching…" : "Confirm replacement"}</button>
+          <button onClick={confirm} disabled={!picked || submitting || blockUpgrade} style={{ border: "none", background: picked && !submitting && !blockUpgrade ? V.blue : "#a9c0f7", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: picked && !blockUpgrade ? "pointer" : "default" }}>{submitting ? "Switching…" : blockUpgrade ? `Add $${shortBy.toFixed(2)} to upgrade` : picked && pickedDue > 0 ? `Pay $${pickedDue.toFixed(2)} & upgrade` : "Confirm replacement"}</button>
         </div>
       </div>
     </div>
@@ -1296,7 +1332,7 @@ function DashboardContent() {
         {restrictedCount > 0 && (
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "11px 14px", background: V.warnBg, border: `1px solid ${V.warnBorder}`, borderRadius: 11, fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: "#7c2d12", marginBottom: 12 }}>
             <span style={{ flex: "none", width: 18, height: 18, borderRadius: "50%", background: V.orange, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 11, marginTop: 1 }}>!</span>
-            <span><b>{restrictedCount === 1 ? "1 account is restricted." : `${restrictedCount} accounts are restricted.`}</b> Billing is paused and you get those days added back to your rental while we try to recover it (up to 2 days). If we can&apos;t, replace it with any account at the same price or lower.</span>
+            <span><b>{restrictedCount === 1 ? "1 account is restricted." : `${restrictedCount} accounts are restricted.`}</b> Billing is paused and you get those days added back to your rental while we try to recover it (up to 2 days). If we can&apos;t, replace it with any account at the same price or lower — or upgrade to a premium one and just pay the prorated difference.</span>
           </div>
         )}
 
@@ -1641,7 +1677,7 @@ function DashboardContent() {
         <ReplacementPicker
           rental={replacingRental}
           onClose={() => setReplacingRental(null)}
-          onReplaced={() => { setReplacingRental(null); refreshRentals(); }}
+          onReplaced={() => { setReplacingRental(null); refreshRentals(); fetch(vqs("/api/wallet/balance")).then((r) => r.json()).then((d) => { if (d.balance != null) setUsdcBalance(d.balance); }).catch(() => {}); }}
         />
       )}
 
