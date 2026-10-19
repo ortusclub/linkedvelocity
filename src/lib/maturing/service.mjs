@@ -25,7 +25,15 @@ export async function owned(id){
 }
 export function summary(c){return {id:c.id,name:c.name,status:c.status,profileIds:c.profile_ids||[],createdAt:c.created_at,updatedAt:c.updated_at,live:!!c.live,kind:c.config?.matureKind||(c.name?.endsWith(' · Cold')?'cold':'warm')};}
 export async function list(){
-  const [inventory,data]=await Promise.all([accounts(),engine('/api/campaign/list')]);
+  // Load our own inventory and the engine's campaigns independently: a cloud-engine
+  // outage must not blank the whole page. If the engine fails we still return the
+  // account list plus an engineError flag so the UI can show a soft banner and stay
+  // usable, instead of surfacing a raw "timeout exceeded when trying to connect".
+  const [inventory,data]=await Promise.all([
+    accounts(),
+    engine('/api/campaign/list').catch(e=>({__error:e instanceof Error?e.message:String(e)})),
+  ]);
+  if(data&&data.__error)return {accounts:inventory,campaigns:[],engineError:data.__error,updatedAt:new Date().toISOString()};
   return {accounts:inventory,campaigns:(data.campaigns||[]).filter(visible).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)).map(summary),updatedAt:new Date().toISOString()};
 }
 export async function detail(id){

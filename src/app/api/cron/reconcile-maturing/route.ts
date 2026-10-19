@@ -21,7 +21,8 @@ export async function POST(req: NextRequest) {
 
   // If the engine is unreachable, do NOTHING. A transient engine outage must
   // never clear everyone's maturing flag — we only ever write on a real flip.
-  let data: { campaigns: { status: string; profileIds: string[] }[] };
+  // list() soft-fails (returns engineError instead of throwing), so check both.
+  let data: { campaigns: { status: string; profileIds: string[] }[]; engineError?: string };
   try {
     data = (await list()) as typeof data;
   } catch (e) {
@@ -29,6 +30,9 @@ export async function POST(req: NextRequest) {
       { ok: false, skipped: "engine_unavailable", error: e instanceof Error ? e.message : String(e) },
       { status: 200 },
     );
+  }
+  if (data.engineError) {
+    return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
   }
 
   const maturing = new Set(
