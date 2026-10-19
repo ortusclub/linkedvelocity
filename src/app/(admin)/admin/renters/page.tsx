@@ -114,6 +114,23 @@ function cleanCommText(raw: string): string {
     .trim();
 }
 
+// Auto-generated booking-confirmation entries ("Call booked: <iso> 30 min with LinkedVelocity…
+// Join with Google Meet: …") are pure template noise. Collapse them to a one-line marker so
+// only the real conversation reads. Human-written notes pass through unchanged.
+function condenseEntry(text: string): string {
+  const m = text.match(/^Call book(?:ed|ing updated):\s*(\S+)?\s*(\d+\s*min)?/i);
+  if (m) {
+    const iso = m[1] || "";
+    const d = /\d{4}-\d{2}-\d{2}/.test(iso) ? new Date(iso) : null;
+    const when = d && !isNaN(d.getTime())
+      ? d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      : "";
+    const dur = m[2] ? " · " + m[2].replace(/\s+/g, "") : "";
+    return `📅 Call booked${when ? " — " + when : ""}${dur}`;
+  }
+  return text;
+}
+
 export default function RentersV3Page() {
   const [people, setPeople] = useState<Person[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -619,7 +636,7 @@ function PersonDrawer(props: {
             </div>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {p.conversations.length === 0 && <div style={{ font: `500 12.5px ${F}`, color: MUT, padding: "4px 0" }}>Nothing logged yet.</div>}
-              {shownConv.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; const clean = cleanCommText(h.text); const long = clean.length > CONV_CLAMP + 24; const open = expanded.has(h.id); const shownText = open || !long ? clean : clean.slice(0, CONV_CLAMP).trimEnd() + "…"; return (
+              {shownConv.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; const clean = condenseEntry(cleanCommText(h.text)); const long = clean.length > CONV_CLAMP + 24; const open = expanded.has(h.id); const shownText = open || !long ? clean : clean.slice(0, CONV_CLAMP).trimEnd() + "…"; return (
                 <div key={h.id} style={{ display: "grid", gridTemplateColumns: "14px 1fr", gap: 10 }}>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ flex: "none", width: 12, height: 12, borderRadius: "50%", border: `2.5px solid ${c.fg}`, background: "#fff", marginTop: 3 }} /><span style={{ flex: 1, width: 2, background: LINE }} /></div>
                   <div style={{ paddingBottom: 14, display: "flex", flexDirection: "column", gap: 5 }}>
