@@ -190,6 +190,63 @@ export async function reserveOnboarding(referrer: { id: string; slug: string; na
   }, { timeout: 15000 });
 }
 
+// A referrer who originally only took a FORM signup can switch to running the guided
+// onboarding themselves (it pays more). Starting the normal wizard would re-enter the same
+// person and be REJECTED by the duplicate guard in reserveOnboarding, so instead we ADOPT
+// their existing application: reuse it (and its account if any), move it onto the
+// self-service track, acquire a proxy, and create the onboarding session around it — mirroring
+// reserveOnboarding's provisioning. Idempotent: re-adopting returns the existing session.
+export async function adoptOnboarding(referrer: { id: string; slug: string; name: string; type?: string }, applicationId: string) {
+  const cfg = currencyConfig(referrer.slug);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(69100901)`;
+    const app = await tx.ambassadorApplication.findUnique({ where: { id: applicationId } });
+    if (!app || (app.referredBy || "").trim() !== referrer.slug) throw new OnboardingError("We couldn't find that signup.", 404);
+    if (app.status === "onboarded" || app.paidAt) throw new OnboardingError("This account is already onboarded.", 409);
+    if (!app.email || !app.linkedinUrl) throw new OnboardingError("This signup is missing an email or LinkedIn URL — add it before onboarding.", 409);
+    // Idempotent: if this application already has a session, resume it instead of duplicating.
+    const existing = await tx.selfServiceOnboarding.findFirst({ where: { applicationId: app.id }, orderBy: { createdAt: "desc" } });
+    if (existing) return existing.id;
+    const country = countryCode(app.location) || "PH";
+    const urlSlug = app.linkedinUrl.split("/in/")[1]?.split(/[?#/]/)[0];
+    // Reuse an inventory account already tied to this person; else create one (form signups
+    // usually have none yet).
+    const existingAcc = await tx.linkedInAccount.findFirst({ where: {
+      status: { notIn: ["removed", "retired"] },
+      OR: [
+        { personalEmail: { equals: app.email, mode: "insensitive" } },
+        { loginEmail: { equals: app.email, mode: "insensitive" } },
+        ...(urlSlug ? [{ linkedinUrl: { contains: `/in/${urlSlug}`, mode: "insensitive" as const } }] : []),
+      ],
+    } });
+    const proxy = reusableProxy(await availableProxies(tx), country, existingAcc?.linkedinVerified ?? false);
+    if (!proxy && !proxyPurchaseLimits().enabled) throw new OnboardingError("No dedicated proxy is available for this country yet. Ask the team to add one, then try again.", 409);
+    const now = new Date();
+    const acc = existingAcc ?? await tx.linkedInAccount.create({ data: {
+      linkedinName: app.fullName, linkedinUrl: app.linkedinUrl, personalEmail: app.email,
+      location: country, gologinAccount: "klabber", status: "under_construction", listed: false,
+      inventoryPool: referrer.type === "ortus" ? "ortus" : referrer.type === "apex" ? "apex" : "main",
+      linkedinVerified: false, ambassadorPayment: cfg.monthlyAmount,
+      proxyHost: proxy?.host, proxyPort: proxy?.port, proxyUsername: proxy?.username, proxyPassword: proxy?.password, proxyLocation: proxy?.country,
+      notes: `Owner: ${app.email}\nSelf-service onboarding via ${referrer.slug} (switched from form). Awaiting owner login confirmation.`,
+    } });
+    if (existingAcc && proxy && !existingAcc.proxyHost) {
+      await tx.linkedInAccount.update({ where: { id: existingAcc.id }, data: { proxyHost: proxy.host, proxyPort: proxy.port, proxyUsername: proxy.username, proxyPassword: proxy.password, proxyLocation: proxy.country } });
+    }
+    // Move the form application onto the guided/self-service track so the portal shows it as
+    // "Guided" with a Resume link and the DIY payout tier applies.
+    await tx.ambassadorApplication.update({ where: { id: app.id }, data: {
+      referralSource: "self-service", status: "onboarding", ownerStatus: "onboarding",
+      onboardingStartedAt: app.onboardingStartedAt ?? now,
+    } });
+    const session = await tx.selfServiceOnboarding.create({ data: {
+      referrerId: referrer.id, applicationId: app.id, accountId: acc.id,
+      proxyId: proxy?.id, proxySlot: proxy?.slot, email: app.email, linkedinUrl: app.linkedinUrl, consentAt: now,
+    } });
+    return session.id;
+  }, { timeout: 15000 });
+}
+
 // Called under the allocation lock, including immediately before reserving a purchase.
 async function reuseProxy(tx: Prisma.TransactionClient, id: string, referrerId: string, country: string) {
   const current = await tx.selfServiceOnboarding.findFirstOrThrow({ where: { id, referrerId }, include: { account: { select: { linkedinVerified: true } } } });
