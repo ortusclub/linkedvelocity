@@ -341,7 +341,8 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: 
       // is on, and returns who was emailed (surfaced by patchAccount).
       if (key === "restricted") {
         const name = r.fullName || "this account";
-        if (!window.confirm(`Mark ${name} restricted?\n\nOnly do this if LinkedIn actually restricted the account. It pauses any renter's billing.`)) return;
+        const rented = r.accountStatus === "rented";
+        if (!window.confirm(`Mark ${name} restricted?\n\nOnly do this if LinkedIn actually restricted the account.${rented ? " It pauses the renter's billing." : ""}`)) return;
         const notifyOwnerReferrer = window.confirm(`Email the owner + referrer now that ${name} is restricted?\n\nSends the "account restricted / payment suspended" message (includes their login details + 2FA recovery link when a password is on file) and logs it on the account. Cancel just marks it restricted without emailing.`);
         onAccount({ restrictedAt: new Date().toISOString(), notifyOwnerReferrer, ...undead }, true);
         return;
