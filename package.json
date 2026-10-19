@@ -11,6 +11,7 @@
     "test:wise": "node --test tests/wise-readonly.test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
     "@auth/prisma-adapter": "^2.11.1",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",

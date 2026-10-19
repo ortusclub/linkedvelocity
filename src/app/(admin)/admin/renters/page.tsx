@@ -67,6 +67,7 @@ type Person = {
   liveRentals: number; totalRentals: number; mrr: number; txnCount: number; paidTotal: number;
   replacementCount: number; discount: string | null; joinedAt: string; lastActivityAt: string;
   companyId: string | null; companyDomain: string | null; vettingReviewRaw: string | null;
+  commsSummary: string | null; commsSummaryStale: boolean;
   conversations: { id: string; type: string; text: string; meta: string; author: string | null; ts: string }[];
 };
 type Company = { id: string; domain: string; name: string; memberIds: string[]; mainContactId: string | null };
@@ -502,6 +503,8 @@ function PersonDrawer(props: {
   const { p, draft, companies } = props;
   const s = statusOf(p);
   const isLead = s === "Warm" || s === "Cold";
+  const [showAll, setShowAll] = useState(false);
+  const shownConv = showAll ? p.conversations : p.conversations.slice(0, 3);
   const rid = p.userId || "";
   const links = [
     { label: "Rentals", val: `${p.liveRentals} live · ${p.totalRentals} total`, href: `/admin/rentals?renter=${rid}` },
@@ -585,6 +588,7 @@ function PersonDrawer(props: {
 
           {/* conversations */}
           <Section title={`Notes & conversations · ${p.conversations.length}`}>
+            <ConvSummary p={p} />
             <div style={{ display: "flex", flexDirection: "column", gap: 8, background: INPUT, border: `1px solid ${LINE}`, borderRadius: 12, padding: 10 }}>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {typeChips.map((t) => { const on = props.noteType === t; const c = CONV_TYPE[t]; return <button key={t} onClick={() => props.setNoteType(t)} style={{ border: `1.5px solid ${on ? c.fg : LINE3}`, background: on ? c.bg : "#fff", color: on ? c.fg : SUB, borderRadius: 999, padding: "3px 10px", font: `700 11.5px ${F}`, cursor: "pointer" }}>{t}</button>; })}
@@ -597,7 +601,7 @@ function PersonDrawer(props: {
             </div>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {p.conversations.length === 0 && <div style={{ font: `500 12.5px ${F}`, color: MUT, padding: "4px 0" }}>Nothing logged yet.</div>}
-              {p.conversations.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; return (
+              {shownConv.map((h) => { const c = CONV_TYPE[h.type] || CONV_TYPE.Note; return (
                 <div key={h.id} style={{ display: "grid", gridTemplateColumns: "14px 1fr", gap: 10 }}>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ flex: "none", width: 12, height: 12, borderRadius: "50%", border: `2.5px solid ${c.fg}`, background: "#fff", marginTop: 3 }} /><span style={{ flex: 1, width: 2, background: LINE }} /></div>
                   <div style={{ paddingBottom: 14, display: "flex", flexDirection: "column", gap: 5 }}>
@@ -606,6 +610,11 @@ function PersonDrawer(props: {
                   </div>
                 </div>
               ); })}
+              {p.conversations.length > 3 && (
+                <button onClick={() => setShowAll((v) => !v)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: BLUE, font: `700 12px ${F}`, cursor: "pointer", padding: "2px 0" }}>
+                  {showAll ? "Show less" : `Show all ${p.conversations.length} messages`}
+                </button>
+              )}
             </div>
           </Section>
 
@@ -724,4 +733,43 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label style={{ display: "flex", flexDirection: "column", gap: 5, font: `600 12px ${F}`, color: BODY }}>{label}{children}</label>;
+}
+
+// AI running summary of the conversation thread — one concise line so the timeline below
+// stops being "always too long". Cached on the lead; Refresh re-generates after new messages.
+function ConvSummary({ p }: { p: Person }) {
+  const [summary, setSummary] = useState<string | null>(p.commsSummary);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [refreshed, setRefreshed] = useState(false);
+  // Nothing to summarise unless this person has a CRM thread (a linked inbound lead).
+  if (!p.leadId || p.conversations.length === 0) return null;
+  const stale = p.commsSummaryStale && !refreshed;
+
+  async function run(force: boolean) {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch("/api/admin/inbound/summarise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadId: p.leadId, force }) });
+      const data = await res.json();
+      if (res.ok) { setSummary(data.summary || "No summary — thread is empty."); setRefreshed(true); }
+      else if (res.status === 503) setErr("Add ANTHROPIC_API_KEY on the server to enable AI summaries.");
+      else setErr(data.error || "Couldn't summarise.");
+    } catch { setErr("Couldn't summarise."); } finally { setLoading(false); }
+  }
+
+  return (
+    <div style={{ background: "#f6f4ff", border: "1px solid #e4defa", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ font: `800 9.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#7c3aed", background: "#f3e8ff", borderRadius: 5, padding: "2px 7px" }}>AI summary</span>
+        {stale && summary && <span style={{ font: `600 10.5px ${F}`, color: "#a16207", background: "#fff7e0", borderRadius: 999, padding: "1px 7px" }}>new messages since</span>}
+        <div style={{ flex: 1 }} />
+        <button onClick={() => run(!!summary)} disabled={loading} style={{ border: "none", background: "none", color: BLUE, font: `700 12px ${F}`, cursor: loading ? "default" : "pointer", padding: 0, opacity: loading ? 0.6 : 1 }}>
+          {loading ? "Summarising…" : summary ? "Refresh" : "Summarise thread"}
+        </button>
+      </div>
+      {summary && <div style={{ font: `500 13px/1.5 ${F}`, color: "#1e293b" }}>{summary}</div>}
+      {!summary && !err && <div style={{ font: `500 12.5px ${F}`, color: MUT }}>Condense this {p.conversations.length}-message thread into one line.</div>}
+      {err && <div style={{ font: `500 12px ${F}`, color: "#b91c1c" }}>{err}</div>}
+    </div>
+  );
 }

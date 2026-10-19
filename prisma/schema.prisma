@@ -674,6 +674,11 @@ model InboundLead {
   stage          String   @default("new")                    // CRM pipeline: new | warm | active | cold | lost
   ownerEmail     String?  @map("owner_email")                 // who on the team owns this relationship
   commsLog       Json?    @map("comms_log")                   // timestamped touchbase timeline: [{ ts, channel, body }]
+  // AI running summary of the comms_log — one concise paragraph ("what happened + where it
+  // stands"), regenerated when there's a newer touchpoint than commsSummaryAt. Keeps the CRM /
+  // Renters timeline scannable instead of a long per-message dump. See src/lib/crm-summary.ts.
+  commsSummary   String?  @map("comms_summary")
+  commsSummaryAt DateTime? @map("comms_summary_at")
   messageCount   Int      @default(1)  @map("message_count")
   firstContactAt DateTime @default(now()) @map("first_contact_at")
   lastContactAt  DateTime @default(now()) @map("last_contact_at")
