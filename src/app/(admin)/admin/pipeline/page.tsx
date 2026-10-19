@@ -312,7 +312,7 @@ export default function PipelineNewPage() {
       if (turnF !== "all" && t.turn !== turnF) return false;
       if (whoF !== "all") { const p = (r.poc || "").trim(); if (whoF === "__unassigned" ? p !== "" : whoF === "__me" ? p !== me : p !== whoF) return false; }
       if (levelF !== "all" && levelKey(r) !== levelF) return false;
-      if (healthF !== "all") { if (healthF === "restricted") { if (!isRestricted(r)) return false; } else if (healthOf(r) !== healthF) return false; }
+      if (healthF !== "all") { if (healthF === "maturing") { if (!r.maturingStartedAt) return false; } else if (healthF === "restricted") { if (!isRestricted(r)) return false; } else if (healthOf(r) !== healthF) return false; }
       if (typeF !== "all" && effectiveTypeKey(r) !== typeF) return false;
       if (!q) return true;
       return [r.fullName, r.email, r.contactNumber, r.loginEmail, r.personalEmail, r.linkedinEmail, r.referredBy, r.poc, ...(r.outreachLog || []).map((x) => x.text)].some((v) => (v || "").toLowerCase().includes(q));
@@ -409,6 +409,7 @@ export default function PipelineNewPage() {
           <select value={healthF} onChange={(e) => setHealthF(e.target.value)} style={{ ...inputCss, width: "auto", cursor: "pointer" }}>
             <option value="all">Any status</option>
             <option value="restricted">Restricted</option>
+            <option value="maturing">🔥 Maturing</option>
             {HEALTH_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
           <select value={typeF} onChange={(e) => setTypeF(e.target.value)} style={{ ...inputCss, width: "auto", cursor: "pointer" }}>
@@ -499,7 +500,7 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
             {r.linkedinUrl && <a href={r.linkedinUrl.startsWith("http") ? r.linkedinUrl : `https://${r.linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="Open LinkedIn profile ↗" style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 2, font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--blue-chip-bg,#e8f0fe)", color: "var(--blue-chip-text,#1a56db)", textDecoration: "none" }}>in ↗</a>}
             {restricted && <span style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--st-cancel-bg,#fdecea)", color: "var(--st-cancel-fg,#c0392b)" }}>Restricted</span>}
             {r.maturingStartedAt
-              ? <span title={`Currently maturing — a LinkedVelocity warm/cold campaign is running (auto) · since ${fmtDate(r.maturingStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 Maturing{ageDays(r.maturingStartedAt) ? ` · ${ageDays(r.maturingStartedAt)}d` : ""}</span>
+              ? <span title={`Currently maturing — a LinkedVelocity warm/cold campaign is running (auto) · since ${fmtDate(r.maturingStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 {ageDays(r.maturingStartedAt)}d</span>
               : r.warmupStartedAt && <span title={`Warming up since ${fmtDate(r.warmupStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 {ageDays(r.warmupStartedAt)}d</span>}
             {r.linkedinVerified && <span style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--blue-chip-bg,#e8f0fe)", color: "var(--blue-chip-text,#1a56db)" }}>✓</span>}
             {isLikelyTestEmail(r.email) && <span style={{ flex: "none", font: `700 9px ${F_SANS}`, padding: "2px 6px", borderRadius: 5, background: "var(--test-bg,#fde68a)", color: "var(--test-fg,#92400e)" }}>TEST</span>}

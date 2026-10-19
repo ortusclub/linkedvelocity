@@ -278,6 +278,7 @@ export default function InventoryV2Page() {
   const [sort, setSort] = useState("upd");
   const [poc, setPoc] = useState("all");
   const [needs, setNeeds] = useState("all");
+  const [matOnly, setMatOnly] = useState(false);
   const [groupFilter, setGroupFilter] = useState("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<Record<string, "account" | "mail" | "activity" | "overview">>({});
@@ -516,10 +517,11 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (supply === "unverified" && !(canonicalStatus(a) === "Available" && !a.rentalReady)) return false;
       if (supply === "shadow" && !a.shadowRenter) return false;
       if (needs !== "all") { const fl = attention(a); if (needs === "attention" ? !ATTN_ACTIONABLE.some((k) => fl.has(k)) : !fl.has(needs as AttnKey)) return false; }
+      if (matOnly && !a.maturingStartedAt) return false;
       if (ql) { const hay = [a.linkedinName, a.loginEmail, a.ownerName, a.rentals[0]?.user?.fullName, a.location, a.industry].join(" ").toLowerCase(); if (!hay.includes(ql)) return false; }
       return true;
     }).map((x) => x.a);
-  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, needs, q]);
+  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, needs, matOnly, q]);
 
   // Live counts per attention flag (over the whole inventory) — shown in the filter so you can see
   // how many unverified / mail / overdue there are before drilling in.
@@ -583,8 +585,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   }, [withGroup, accounts]);
 
   const totalShown = sorted.length;
-  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || supply !== "all" || needs !== "all" || poc !== "all" || groupFilter !== "all";
-  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSupply("all"); setNeeds("all"); setPoc("all"); setGroupFilter("all"); };
+  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || supply !== "all" || needs !== "all" || matOnly || poc !== "all" || groupFilter !== "all";
+  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setPoc("all"); setGroupFilter("all"); };
 
   const inp: React.CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: INK, outline: "none" };
   const headCols = "minmax(0,2.2fr) 78px 64px minmax(0,1.3fr) 104px minmax(0,1.2fr) 100px 92px 52px 56px 16px";
@@ -682,6 +684,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
               {ATTN_OPTS.map((o) => { const n = attnCounts[o.key] || 0; return <option key={o.key} value={o.key} disabled={n === 0}>{o.label}{n ? ` (${n})` : ""}</option>; })}
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={inp}><option value="upd">Last updated</option><option value="price">Price, high → low</option><option value="conn">Connections, most first</option><option value="age">Age, oldest first</option><option value="name">Name A–Z</option></select>
+            {(() => { const n = accounts.filter((a) => a.maturingStartedAt).length; return <button onClick={() => setMatOnly((v) => !v)} title="Show only accounts currently maturing" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(matOnly ? { borderColor: "#f59e0b", background: "#fff7ed", color: "#c2410c", fontWeight: 700 } : {}) }}>🔥 Maturing{n ? ` (${n})` : ""}</button>; })()}
             {hasFilters && <button onClick={clearAll} style={{ border: "none", background: "none", color: BLUE, font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filters</button>}
           </div>
         </div>
@@ -806,7 +809,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (proxyDown) flags.push({ l: "Proxy down", ...RP, tip: "GoLogin proxy check failed" });
                     if (proxyExpiring) flags.push({ l: "Proxy expiring", bg: "#fffbeb", fg: "#92400e", tip: "Proxy plan expires within 7 days" });
                     if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: "Running LinkedArmy campaigns" });
-                    if (matDays != null) flags.push({ l: `🔥 Maturing${matDays ? ` · ${matDays}d` : ""}`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
+                    if (matDays != null) flags.push({ l: `🔥 ${matDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
                     else if (warmDays != null && isConstruction) flags.push({ l: `🔥 ${warmDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Days in warm-up" });
                     if (recovered) flags.push({ l: "Recovered", bg: "#fffbeb", fg: "#92400e", tip: "Recently restricted, now recovered" });
                     if (r.shadowRenter) flags.push({ l: `◐ Shadow · ${shadowName(r.shadowRenter)}`, bg: "#eff4ff", fg: "#2563eb", tip: `Shadow supply (${shadowName(r.shadowRenter)}) — still available to rent` });
@@ -1337,7 +1340,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
               <button onClick={recheck} disabled={busy} style={{ border: `1px solid #dde1e8`, background: "#fff", color: SUB, borderRadius: 999, padding: "3px 10px", font: `700 11px ${F}`, cursor: "pointer" }}>↻ Re-check</button>
             </div>
             {matDays !== null
-              ? <span title="Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 Maturing{matDays ? ` · ${matDays}d` : ""}</span>
+              ? <span title="Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {matDays}d</span>
               : warmDays !== null && (r.status === "under_construction" || r.status === "construction_immature") && <span style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {warmDays}d</span>}
           </div>
         );
