@@ -44,6 +44,11 @@ const updateSchema = z.object({
   // string to mark it, or null to clear. Held accounts are excluded from the
   // owner's setup/monthly payouts on the Account Owners view.
   restrictedAt: z.string().nullable().optional(),
+  // Not a model column — consumed below, then stripped before the update. When true AND this
+  // edit newly restricts the account, also email the owner + referrer the restricted notice
+  // (login block + 2FA recovery link when a password is saved). Off by default so a restrict
+  // is never a silent credential send; the pipeline sets it from a one-tap confirm.
+  notifyOwnerReferrer: z.boolean().optional(),
   // Warming-up flag: pass an ISO string to mark the account as currently warming up (Ortus
   // app), or null to clear. Orthogonal to status — an account can warm up while onboarding,
   // unavailable, or even rented.
@@ -109,6 +114,10 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
     const data = updateSchema.parse(body);
+    // Opt-in owner/referrer restricted-notice email (one-tap confirm on the pipeline). Not a
+    // model column — pull it out and strip it before the DB write.
+    const notifyOwnerReferrer = data.notifyOwnerReferrer === true;
+    delete (data as Record<string, unknown>).notifyOwnerReferrer;
 
     // Capture the pre-update login email so we can detect a change and keep the
     // GoLogin profile name in sync (admin is the source of truth for emails).
@@ -307,7 +316,9 @@ export async function PATCH(
       try { await logWarmupActivity(id, account.linkedinUrl, account.notes, warmupChange, admin.fullName || admin.email); } catch (e) { console.error("warmup activity log failed", e); }
     }
 
-    // Newly restricted via this edit: tell any real renter(s) their billing is paused.
+    // Newly restricted via this edit: tell any real renter(s) their billing is paused, and
+    // (when the caller opted in) email the owner + referrer the restricted notice.
+    let notify: Awaited<ReturnType<typeof notifyRestrictionOwnerReferrer>> | null = null;
     if (newlyRestricted && account.restrictedAt) {
       const renters = await prisma.rental.findMany({
         where: { linkedinAccountId: id, isShadow: false, status: { in: ["active", "pending_access", "payment_failed"] } },
@@ -319,8 +330,11 @@ export async function PATCH(
         seen.add(r.userId);
         await notifyBillingPaused(r.userId, { trigger: "restricted", highlightAccount: account.linkedinName });
       }
-      // Auto-notify the account owner + referrer (best-effort; must not fail the edit).
-      try { await notifyRestrictionOwnerReferrer(id); } catch (e) { console.error("restrict owner/referrer notify failed", e); }
+      // Owner + referrer restricted notice — only when the caller opted in (one-tap confirm),
+      // so a restrict is never a silent credential send. Best-effort; must not fail the edit.
+      if (notifyOwnerReferrer) {
+        try { notify = await notifyRestrictionOwnerReferrer(id); } catch (e) { console.error("restrict owner/referrer notify failed", e); }
+      }
     }
 
     // If this edit just made the account runnable (a GoLogin was set/changed), advance
@@ -417,7 +431,7 @@ export async function PATCH(
     // Return decrypted secrets so the admin UI shows the real values, not ciphertext.
     account.accountPassword = decryptSecret(account.accountPassword);
     account.twoFactor = decryptSecret(account.twoFactor);
-    return NextResponse.json({ account });
+    return NextResponse.json({ account, ...(notify ? { notify } : {}) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

@@ -335,7 +335,18 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: 
   const apply = (key: "active" | "restricted" | "retired" | "withdrawn") => {
     if (key === "active" && r.restrictionReport) onApp({ setRestrictionReport: null, restrictionReport: null });
     if (hasAcct) {
-      const patch: Record<string, unknown> = key === "active" ? { restrictedAt: null, ...undead } : key === "restricted" ? { restrictedAt: new Date().toISOString(), ...undead } : key === "retired" ? { status: "retired", restrictedAt: new Date().toISOString() } : { status: "removed" };
+      // Marking restricted: confirm, then offer to email the owner + referrer the restricted
+      // notice (login details + 2FA recovery link) — a deliberate one-tap choice so a restrict
+      // is never a silent credential send. The account route notifies + logs it when the flag
+      // is on, and returns who was emailed (surfaced by patchAccount).
+      if (key === "restricted") {
+        const name = r.fullName || "this account";
+        if (!window.confirm(`Mark ${name} restricted?\n\nOnly do this if LinkedIn actually restricted the account. It pauses any renter's billing.`)) return;
+        const notifyOwnerReferrer = window.confirm(`Email the owner + referrer now that ${name} is restricted?\n\nSends the "account restricted / payment suspended" message (includes their login details + 2FA recovery link when a password is on file) and logs it on the account. Cancel just marks it restricted without emailing.`);
+        onAccount({ restrictedAt: new Date().toISOString(), notifyOwnerReferrer, ...undead }, true);
+        return;
+      }
+      const patch: Record<string, unknown> = key === "active" ? { restrictedAt: null, ...undead } : key === "retired" ? { status: "retired", restrictedAt: new Date().toISOString() } : { status: "removed" };
       if (key === "active" && restrictIssue) patch.accountIssue = null;
       onAccount(patch, true);
     } else {
