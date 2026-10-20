@@ -1381,7 +1381,11 @@ function DashboardContent() {
                 // end (install + sign in with the exact email we share to). We keep auto-granting
                 // every ~30 min, so this clears itself once they've signed in — but until then we
                 // show them exactly what to do instead of a dead "awaiting access" label.
-                const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !ready;
+                // Show the GoLogin install walkthrough only for genuinely-new renters (no active
+                // rental yet). Established renters get the self-serve "Open in GoLogin" link
+                // directly (ready), so they don't need the walkthrough. The public link is now
+                // available in pending too, so access no longer waits on the grant cron.
+                const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !renterHasGoLogin;
                 const setupEmail = rental.gologinLoginEmail || "";
 
                 const cDays = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
@@ -1395,8 +1399,11 @@ function DashboardContent() {
                 } else if (prep) { sc = V.faint; sl = "Being prepared"; ss = "We'll email you at handover"; }
                 else if (rental.paused) { sc = V.faint; sl = "Paused"; ss = "Access paused"; }
                 else if (rental.status === "payment_failed") { sc = "#b91c1c"; sl = "Payment issue"; ss = "Update your balance or card"; }
-                else if (ready) { sc = V.green; sl = "Active"; ss = "Ready in GoLogin"; }
-                else if (pendingSetup) { sc = V.blue; sl = "Setting up access"; ss = renterHasGoLogin ? "Unlocking in GoLogin shortly" : "Finish GoLogin setup to go live"; }
+                else if (pendingSetup) { sc = V.blue; sl = "Setting up access"; ss = "Finish GoLogin setup to go live"; }
+                else if (ready) {
+                  if (rental.status === "pending_access") { sc = V.blue; sl = "Setting up access"; ss = "Open it in GoLogin now"; }
+                  else { sc = V.green; sl = "Active"; ss = "Ready in GoLogin"; }
+                }
                 else { sc = V.faint; sl = "Awaiting access"; ss = "Share link not available yet"; }
 
                 const billL = R ? "Billing" : prep ? "Billing" : rental.autoRenew ? "Renews" : "Ends";
@@ -1474,14 +1481,19 @@ function DashboardContent() {
                             )
                           ) : prep ? (
                             <span style={{ width: 132, boxSizing: "border-box", textAlign: "center", border: "1px dashed #d5dbe5", color: V.faint, borderRadius: 8, padding: "7px 0", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>After handover</span>
-                          ) : ready ? (
-                            <button onClick={() => setOpenLinkId((p) => (p === rental.id ? null : rental.id))} style={{ border: "none", background: V.blue, color: "#fff", width: 132, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>{linkOpen ? "Hide link" : "Open in GoLogin"}</button>
                           ) : pendingSetup ? (
-                            renterHasGoLogin ? (
-                              <span style={{ width: 132, boxSizing: "border-box", textAlign: "center", fontWeight: 600, fontSize: 12, color: V.blue, whiteSpace: "nowrap" }}>Unlocking…</span>
-                            ) : (
-                              <a href="https://gologin.com/download" target="_blank" rel="noopener noreferrer" style={{ border: "none", background: V.blue, color: "#fff", width: 132, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 12.5, textDecoration: "none", whiteSpace: "nowrap" }}>Get GoLogin ↗</a>
-                            )
+                            <a href="https://gologin.com/download" target="_blank" rel="noopener noreferrer" style={{ border: "none", background: V.blue, color: "#fff", width: 132, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 12.5, textDecoration: "none", whiteSpace: "nowrap" }}>Get GoLogin ↗</a>
+                          ) : ready ? (
+                            <button onClick={() => {
+                              if (linkOpen) { setOpenLinkId(null); return; }
+                              setOpenLinkId(rental.id);
+                              // Self-serve grant: fire the server share (captures the share id +
+                              // flips this rental to Active) so access doesn't wait on the cron.
+                              // Idempotent + graceful; the public link shows regardless. Skip under view-as.
+                              if (!viewAs && rental.status === "pending_access") {
+                                fetch(`/api/rentals/${rental.id}/access`, { method: "POST" }).then(() => refreshRentals()).catch(() => {});
+                              }
+                            }} style={{ border: "none", background: V.blue, color: "#fff", width: 132, boxSizing: "border-box", textAlign: "center", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>{linkOpen ? "Hide link" : "Open in GoLogin"}</button>
                           ) : (
                             <span style={{ width: 132, boxSizing: "border-box", textAlign: "center", fontWeight: 600, fontSize: 12, color: V.faint, whiteSpace: "nowrap" }}>Not ready yet</span>
                           )}
@@ -1489,19 +1501,10 @@ function DashboardContent() {
                       </div>
                     </div>
 
-                    {/* Established renter (already runs GoLogin) — a quiet one-line note; their
-                        new profile auto-shares to their existing GoLogin, no install walkthrough. */}
-                    {pendingSetup && renterHasGoLogin && (
-                      <div style={{ margin: "0 18px 16px", padding: "11px 14px", background: "#f5f8ff", border: "1px solid #dfe7fb", borderRadius: 12, display: "flex", gap: 9, alignItems: "flex-start" }}>
-                        <span aria-hidden style={{ fontSize: 13, lineHeight: 1.4, color: V.blue }}>⏳</span>
-                        <span style={{ fontWeight: 500, fontSize: 12.5, lineHeight: 1.5, color: "#3b4657" }}>
-                          Setting up access — this profile will appear in GoLogin automatically{setupEmail ? <> (signed in as <span style={{ fontWeight: 700 }}>{setupEmail}</span>)</> : ""}, usually within ~30 min. Nothing to do. Need it on a different GoLogin email? Email <span style={{ fontWeight: 700 }}>info@linkedvelocity.com</span>.
-                        </span>
-                      </div>
-                    )}
-
-                    {/* New renter — the full install + sign-in walkthrough. */}
-                    {pendingSetup && !renterHasGoLogin && (
+                    {/* New renter (no active rental yet) — the full install + sign-in walkthrough.
+                        They also get the "Open in GoLogin" action, so they can open the shared
+                        profile themselves once GoLogin is installed — no wait on the grant cron. */}
+                    {pendingSetup && (
                       <div style={{ margin: "0 18px 16px", padding: 16, background: "#f5f8ff", border: "1px solid #dfe7fb", borderRadius: 12, display: "flex", flexDirection: "column", gap: 13 }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                           <span style={{ fontWeight: 700, fontSize: 14, color: "#1f2b45" }}>Two quick steps to go live — then you&apos;re set</span>
