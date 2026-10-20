@@ -69,6 +69,49 @@ function companyLabel(domain: string): string {
 }
 function localPart(email?: string | null) { return email ? email.split("@")[0].toLowerCase() : ""; }
 
+// Generic shared mailboxes — many different people use these, so a local-part match on them
+// is noise, not a duplicate. (info@a.com and info@b.com are not the same person.)
+const GENERIC_LOCALPARTS = new Set([
+  "info", "admin", "administrator", "contact", "hello", "hi", "hey", "sales", "support",
+  "team", "office", "mail", "mailer", "noreply", "no-reply", "accounts", "account",
+  "billing", "help", "service", "services", "enquiries", "inquiries", "marketing",
+  "hr", "jobs", "careers", "ceo", "founder", "owner", "me", "name", "user",
+]);
+function normName(s?: string | null): string { return (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+function sameDay(a: Date, b: Date): boolean { return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10); }
+
+type DupItem = { id: string; name: string; email: string | null; contact: string | null; joinedAt: Date };
+
+// Real duplicate signals only: same full name (≥2 tokens), same phone/handle, or same
+// NON-generic email local-part signed up the same day. Drops the "everyone on info@" noise.
+export function computeDuplicatePairs(items: DupItem[]): { aId: string; bId: string; reason: string }[] {
+  const out: { aId: string; bId: string; reason: string }[] = [];
+  const seen = new Set<string>();
+  const add = (a: string, b: string, reason: string) => {
+    if (a === b) return;
+    const k = [a, b].sort().join("|");
+    if (seen.has(k)) return; seen.add(k);
+    out.push({ aId: a, bId: b, reason });
+  };
+  const byName = new Map<string, DupItem[]>();
+  for (const p of items) {
+    const tokens = (p.name || "").trim().split(/\s+/).filter(Boolean);
+    const n = normName(p.name);
+    if (n && tokens.length >= 2) (byName.get(n) || byName.set(n, []).get(n)!).push(p);
+  }
+  for (const arr of byName.values()) for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) add(arr[i].id, arr[j].id, "same-name");
+
+  const byContact = new Map<string, DupItem[]>();
+  for (const p of items) { const nc = normaliseContact(p.contact); if (nc && nc.length >= 6) (byContact.get(nc) || byContact.set(nc, []).get(nc)!).push(p); }
+  for (const arr of byContact.values()) for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) add(arr[i].id, arr[j].id, "same-phone");
+
+  const byLocal = new Map<string, DupItem[]>();
+  for (const p of items) { const lp = localPart(p.email); if (lp && !GENERIC_LOCALPARTS.has(lp)) (byLocal.get(lp) || byLocal.set(lp, []).get(lp)!).push(p); }
+  for (const arr of byLocal.values()) for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) if (sameDay(arr[i].joinedAt, arr[j].joinedAt)) add(arr[i].id, arr[j].id, "same-email-localpart");
+
+  return out;
+}
+
 type CommEntry = { id?: string; ts?: string; channel?: string; body?: string; direction?: string; authorName?: string; authorEmail?: string };
 
 export type ComposedConversation = {
@@ -194,23 +237,10 @@ export async function composePeople(prisma: PrismaClient): Promise<Composed> {
     companies.push({ domain, name: companyLabel(domain), memberKeys: members.map((m) => m.key), mainContactKey: main.key });
   }
 
-  // Duplicate suggestions: same email local-part (conservative seed).
-  const dupes: { aKey: string; bKey: string; reason: string }[] = [];
-  const byLocal = new Map<string, ComposedPerson[]>();
-  for (const p of people) {
-    const lp = localPart(p.email);
-    if (!lp) continue;
-    (byLocal.get(lp) || byLocal.set(lp, []).get(lp)!).push(p);
-  }
-  const seen = new Set<string>();
-  for (const arr of byLocal.values()) {
-    if (arr.length < 2) continue;
-    for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
-      const key = [arr[i].key, arr[j].key].sort().join("|");
-      if (seen.has(key)) continue; seen.add(key);
-      dupes.push({ aKey: arr[i].key, bKey: arr[j].key, reason: "same-email-localpart" });
-    }
-  }
+  // Duplicate suggestions — real signals only (see computeDuplicatePairs).
+  const dupes = computeDuplicatePairs(
+    people.map((p) => ({ id: p.key, name: p.name, email: p.email, contact: p.contact, joinedAt: p.joinedAt }))
+  ).map((d) => ({ aKey: d.aId, bKey: d.bId, reason: d.reason }));
 
   return { people, companies, dupes };
 }

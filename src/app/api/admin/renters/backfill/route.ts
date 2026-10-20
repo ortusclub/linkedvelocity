@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { composePeople } from "@/lib/crm-compose";
+import { composePeople, computeDuplicatePairs } from "@/lib/crm-compose";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase-1 backfill. POST { mode: "dry" | "run", force?: boolean }
@@ -43,6 +43,16 @@ export async function POST(req: Request) {
   try {
     await requireAdmin();
     const { mode = "dry", force = false } = await req.json().catch(() => ({}));
+
+    // Recompute duplicate suggestions against the PERSISTED people (keeps real person ids;
+    // does not rebuild anything else). Use after tightening the dupe rule.
+    if (mode === "reseed-dupes") {
+      const persisted = await prisma.person.findMany({ select: { id: true, name: true, email: true, contact: true, joinedAt: true } });
+      const pairs = computeDuplicatePairs(persisted);
+      await prisma.duplicateSuggestion.deleteMany({});
+      if (pairs.length) await prisma.duplicateSuggestion.createMany({ data: pairs.map((p) => ({ id: randomUUID(), personAId: p.aId, personBId: p.bId, reason: p.reason })), skipDuplicates: true });
+      return NextResponse.json({ mode: "reseed-dupes", duplicateSuggestions: pairs.length });
+    }
 
     const { people, companies, dupes } = await composePeople(prisma);
     const convTotal = people.reduce((s, p) => s + p.conversations.length, 0);
