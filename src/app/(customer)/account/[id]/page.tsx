@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatNumber, formatCurrency, SALES_NAV_MONTHLY } from "@/lib/utils";
 import { blogFontVars } from "@/lib/blog-fonts";
+import { toIndustryBucket } from "@/lib/industry";
 
 const POP = "var(--font-poppins)", INT = "var(--font-inter)", MONO = "var(--font-jbmono)";
 const CALENDAR_URL = "https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ1he_qAS5s8faJzrAIjTJi8KIX9xvPhGbC4Ipn38lPTLzkfSuoyMIiqUrB0viY2jpXr_W_zLSdq";
@@ -130,7 +131,7 @@ export default function AccountDetailPage() {
 
       {/* breadcrumb */}
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 40px 0" }}>
-        <div style={{ fontSize: 13.5, color: "#8A93A2" }}><Link href="/catalogue" style={{ color: "#0A66C2", textDecoration: "none" }}>Browse Accounts</Link>{account.industry ? ` · ${account.industry}` : ""} · {name}</div>
+        <div style={{ fontSize: 13.5, color: "#8A93A2" }}><Link href="/catalogue" style={{ color: "#0A66C2", textDecoration: "none" }}>Browse Accounts</Link>{toIndustryBucket(account.industry) ? ` · ${toIndustryBucket(account.industry)}` : ""} · {name}</div>
       </div>
 
       <div className="ac-grid">
@@ -161,7 +162,7 @@ export default function AccountDetailPage() {
                   {account.connectionCount > 0 && <span style={chip("#0B1220", "#F1F5FA", "#E4E9F0")}><span style={{ color: "#0A66C2", font: `700 13px ${POP}` }}>{formatNumber(account.connectionCount)}</span>connections</span>}
                   {ageLabel && <span style={chip("#946011", "#FBF0DA", "#F0E1BE")}>{ageLabel} on LinkedIn</span>}
                   {account.hasSalesNav && <span style={chip("#5747C9", "#EDEBFB", "#E0DCF7")}>Sales Navigator</span>}
-                  {account.industry && <span style={chip("#0E7C74", "#DEF3F1", "#CDECE9")}>{account.industry}</span>}
+                  {toIndustryBucket(account.industry) && <span style={chip("#0E7C74", "#DEF3F1", "#CDECE9")}>{toIndustryBucket(account.industry)}</span>}
                 </div>
                 {account.profileScreenshotUrl && <div style={{ marginTop: 18, overflow: "hidden", borderRadius: 12, border: "1px solid #EDEFF2" }}><img src={account.profileScreenshotUrl} alt="" style={{ width: "100%", display: "block" }} /></div>}
                 {account.linkedinUrl && (
@@ -241,7 +242,7 @@ export default function AccountDetailPage() {
             {[
               ["Connections", formatNumber(account.connectionCount), undefined],
               ...(ageLabel ? [["Account age", ageLabel, undefined] as const] : []),
-              ...(account.industry ? [["Industry", account.industry, undefined] as const] : []),
+              ...(toIndustryBucket(account.industry) ? [["Industry", toIndustryBucket(account.industry)!, undefined] as const] : []),
               ...(account.location ? [["Location", account.location, undefined] as const] : []),
               ["Sales Navigator", account.hasSalesNav ? "Included" : (addSalesNav && salesNavEligible ? `Added (+${formatCurrency(SALES_NAV_MONTHLY)}/mo)` : "—"), account.hasSalesNav ? "#00A150" : (addSalesNav && salesNavEligible ? "#5747C9" : undefined)],
               ["Status", account.status.charAt(0).toUpperCase() + account.status.slice(1), account.status === "available" ? "#00A150" : undefined],
