@@ -45,6 +45,27 @@ const WILL_CFG: CatalogueConfig = {
   snAddon: 70,
 };
 
+// Martin Perak — NY real-estate renter testing with Alta. Full-pipeline catalogue on the Agent360
+// pattern, standard per-account website tier price (by connections + age, +$10 verified), no Sales
+// Navigator (not offered to new renters). First-come Rent link ON: his self-serve checkout prices
+// off the tier with no SN, so it can't undercharge, and it maps to the "pick one from the website"
+// flow we agreed with him.
+const MARTIN_SLUG = "iv-martin-perak-3n8k2w5xqp";
+const MARTIN_PASSWORD = "PerakLV2026";
+const martinPrice = (a: PriceInput) => tierPricing(a.connectionCount, a.accountAgeMonths, false, a.linkedinVerified).monthly;
+const MARTIN_CFG: CatalogueConfig = {
+  forLabel: "Martin Perak",
+  storageKey: "martinperak",
+  heroBlurb: "Aged, warmed LinkedIn profiles, plus everything currently in warm-up. Each account is priced by tier (connections and age), starting at $45/mo, with +$10 if verified. Open any profile to review it, then hit Rent to take one.",
+  legend: [
+    { cls: "u", label: "By tier", value: "from $45/mo" },
+    { cls: "v", label: "✓ Verified", value: "+$10/mo" },
+  ],
+  showRent: true,
+  showAge: true,
+  snAddon: null,
+};
+
 // Build the full-pipeline rows (available now + shadow-held "soon" + built/maturing "coming soon")
 // for a password-gated catalogue (Agent360, Will Cura). `priceFn` sets the per-card price (pricing
 // differs per catalogue). Admin-held accounts (heldUntil set) are excluded from "available now".
@@ -207,6 +228,12 @@ export default async function PartnerInventoryPage({ params }: { params: Promise
   if (key === WILL_SLUG) {
     const rows = await pipelineRows(willPrice);
     return <Agent360Catalogue rows={rows} password={WILL_PASSWORD} cfg={WILL_CFG} />;
+  }
+
+  // Martin Perak: full-pipeline catalogue, first-come Rent, standard tier price, no SN.
+  if (key === MARTIN_SLUG) {
+    const rows = await pipelineRows(martinPrice);
+    return <Agent360Catalogue rows={rows} password={MARTIN_PASSWORD} cfg={MARTIN_CFG} />;
   }
 
   if (key !== SLUG) notFound();
