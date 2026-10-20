@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNumber, formatCurrency, formatName } from "@/lib/utils";
+import { toIndustryBucket } from "@/lib/industry";
 
 interface Account {
   id: string;
@@ -386,8 +387,9 @@ function Verified() {
 }
 
 function IndustryTag({ industry }: { industry: string }) {
-  const c = INDUSTRY_COLORS[industry] || "#0A66C2";
-  return <span style={{ font: `500 11px ${MONO}`, letterSpacing: "0.04em", color: c, background: c + "14", borderRadius: 6, padding: "4px 9px" }}>{industry}</span>;
+  const label = toIndustryBucket(industry) || industry;
+  const c = INDUSTRY_COLORS[label] || "#0A66C2";
+  return <span style={{ font: `500 11px ${MONO}`, letterSpacing: "0.04em", color: c, background: c + "14", borderRadius: 6, padding: "4px 9px" }}>{label}</span>;
 }
 
 function Actions({ a, isArmy }: { a: Account; isArmy: boolean }) {

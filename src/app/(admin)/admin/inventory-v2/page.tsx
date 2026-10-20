@@ -1405,10 +1405,12 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
                 <label style={{ display: "flex", flexDirection: "column", gap: 4 }}><Lbl>Headline</Lbl><textarea value={headlineV} onChange={(e) => setHeadlineV(e.target.value)} rows={2} placeholder="e.g. B2B Business Development | SaaS | Pipeline & revenue growth" style={{ ...fieldStyle, resize: "vertical", lineHeight: 1.4 }} /></label>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10 }}>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}><Lbl>Location</Lbl><input value={locationV} onChange={(e) => setLocationV(e.target.value)} placeholder="e.g. New York, NY, USA" style={fieldStyle} /></label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}><Lbl>Industry</Lbl><input value={industryV} onChange={(e) => setIndustryV(e.target.value)} list="inv2-industries" placeholder="e.g. Computer Software" style={fieldStyle} /></label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}><Lbl>Industry</Lbl><input value={industryV} onChange={(e) => setIndustryV(e.target.value)} list="inv2-industries" placeholder="e.g. Technology" style={fieldStyle} /></label>
                 </div>
+                {/* Catalogue buckets — keep these in sync with the public filter row + colors
+                    (catalogue-view.tsx) and src/lib/industry.ts. Short, uniform, filterable. */}
                 <datalist id="inv2-industries">
-                  <option value="Information Technology & Services" /><option value="Computer Software" /><option value="Marketing & Advertising" /><option value="Business Consulting & Services" /><option value="Financial Services" /><option value="Staffing & Recruiting" />
+                  <option value="Sales" /><option value="Marketing" /><option value="Technology" /><option value="Operations" /><option value="Finance" />
                 </datalist>
                 <button onClick={saveCatalogue} disabled={busy || !catDirty} style={{ border: "1px solid #dde1e8", background: "#fff", color: INK, borderRadius: 9, padding: 9, font: `700 12.5px ${F}`, cursor: catDirty ? "pointer" : "default", opacity: catDirty ? 1 : 0.5 }}>{catDirty ? "Save catalogue details" : "✓ Saved"}</button>
               </Card>

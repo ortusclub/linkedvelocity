@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { generateProfile, shortHeadline, PROFILE_LANES, type ProfileLane, type ProfileBuild } from "@/lib/profile-generator";
+import { toIndustryBucket } from "@/lib/industry";
 
 // Level-4 profile builder. Two actions:
 //  generate — roll a fresh draft (curated pools, no AI) and save it to profileBuild. Does NOT
@@ -34,7 +35,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: {
           profileBuild: applied as unknown as Prisma.InputJsonValue,
           linkedinHeadline: shortHeadline(build.headline),
-          industry: build.industry,
+          // The draft keeps LinkedIn's official industry (for pasting into the profile);
+          // the catalogue column stores the short bucket so the site stays uniform.
+          industry: toIndustryBucket(build.industry),
           location: build.location,
         },
       });

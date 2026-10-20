@@ -6,6 +6,7 @@ import Link from "next/link";
 import { formatNumber, formatCurrency, SALES_NAV_MONTHLY } from "@/lib/utils";
 import { blogFontVars } from "@/lib/blog-fonts";
 import { discountedPrice, type AppliedDiscount } from "@/lib/discount-utils";
+import { toIndustryBucket } from "@/lib/industry";
 
 const POP = "var(--font-poppins)", INT = "var(--font-inter)", MONO = "var(--font-jbmono)";
 const INDUSTRY_COLORS: Record<string, string> = { Sales: "#5747C9", Marketing: "#B23150", Technology: "#0E7C74", Operations: "#0A66C2", Finance: "#946011" };
@@ -281,7 +282,8 @@ function CheckoutContent() {
             {accounts.map((a) => {
               const price = isShadow ? SHADOW_MONTHLY_PRICE : Number(a.monthlyPrice);
               const name = shortName(a.linkedinName);
-              const ic = a.industry ? (INDUSTRY_COLORS[a.industry] || "#0A66C2") : "#0A66C2";
+              const ind = toIndustryBucket(a.industry);
+              const ic = ind ? (INDUSTRY_COLORS[ind] || "#0A66C2") : "#0A66C2";
               return (
                 <div key={a.id} style={{ padding: "14px 18px", borderTop: "1px solid #F1F3F6" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -301,7 +303,7 @@ function CheckoutContent() {
                     <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12.5, color: "#8A93A2" }}>{formatNumber(a.connectionCount)} connections</span>
                       <span style={{ fontSize: 11.5, fontWeight: 600, borderRadius: 6, padding: "2px 8px", ...(a.hasSalesNav ? { color: "#5747C9", background: "#EDEBFB" } : { color: "#96A0AD", background: "#F2F4F7" }) }}>{a.hasSalesNav ? "Sales Nav" : "No Sales Nav"}</span>
-                      {a.industry && <span style={{ font: `500 10.5px ${MONO}`, letterSpacing: "0.04em", color: ic, background: ic + "14", borderRadius: 6, padding: "2px 8px" }}>{a.industry}</span>}
+                      {ind && <span style={{ font: `500 10.5px ${MONO}`, letterSpacing: "0.04em", color: ic, background: ic + "14", borderRadius: 6, padding: "2px 8px" }}>{ind}</span>}
                     </div>
                   </div>
                   </a>
