@@ -8,6 +8,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/proxy-health",
+      "schedule": "0 7 * * *"
+    },
+    {
       "path": "/api/cron/release-holds",
       "schedule": "*/15 * * * *"
     },
