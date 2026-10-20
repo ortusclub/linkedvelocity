@@ -230,6 +230,11 @@ model LinkedInAccount {
   // visible (restrictedAt only holds the CURRENT open one and is wiped on recover).
   // Array of { at: ISO, event: "restricted" | "recovered", note?, creditedDays? }.
   restrictionLog        Json?         @map("restriction_log")
+  // Recovery-helper QR: a screenshot of LinkedIn's in-app verification QR the team captures
+  // from the GoLogin session and relays to the owner via the /recover owner link, so a
+  // non-techy owner can scan it on their phone instead of parsing emailed instructions.
+  recoveryQrUrl         String?       @map("recovery_qr_url")
+  recoveryQrAt          DateTime?     @map("recovery_qr_at")
   trialEndsAt           DateTime?     @map("trial_ends_at")   // set when status=trial: a 3-day inventory hold; past this = "trial expired", awaiting admin mark-back
   // Short-term reservation: while heldUntil is in the future the account is hidden from every
   // catalogue (public + unlisted) and the normal checkout, so it can't be snagged. Status stays

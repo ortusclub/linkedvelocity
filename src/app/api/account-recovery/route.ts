@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { startPrimaryRecovery, verifyPrimaryRecovery } from "@/lib/primary-email-recovery";
 import { ownerSignInCode, privateOwnerSignInCode } from "@/lib/owner-sign-in-code";
+import { ownerRecoveryInfo } from "@/lib/owner-recovery";
 import { EmailSetupError } from "@/lib/onboarding-email-policy";
 export const runtime = "nodejs";
 const token = z.string().regex(/^[a-f0-9]{64}$/);
 const loginEmail = z.string().trim().email().max(254).transform(s => s.toLowerCase());
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("private_code"), access: z.string().min(20).max(1000), loginEmail }),
+  z.object({ action: z.literal("recovery_info"), access: z.string().min(20).max(1000) }),
   z.object({ action: z.literal("start"), email: z.string().trim().email().max(254).transform(s => s.toLowerCase()), consent: z.literal(true) }),
   z.object({ action: z.literal("verify"), token, loginEmail, code: z.string().regex(/^\d{6}$/) }),
   z.object({ action: z.literal("code"), token, loginEmail }),
@@ -21,6 +23,7 @@ export async function POST(req: Request) {
     if (raw.length > 2000) return json({ error: "Request too large" }, 413);
     const input = schema.parse(JSON.parse(raw));
     if (input.action === "private_code") return json(await privateOwnerSignInCode(input.access, input.loginEmail));
+    if (input.action === "recovery_info") return json(await ownerRecoveryInfo(input.access));
     if (input.action === "start") return json(await startPrimaryRecovery(input.email, req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() || "unknown", "restriction"));
     if (input.action === "verify") await verifyPrimaryRecovery(input.token, input.code);
     return json(await ownerSignInCode(input.token, input.loginEmail));
