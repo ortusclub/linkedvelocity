@@ -9,8 +9,14 @@ export function onboardingEmailFrom() {
 }
 
 export function emailSetupConfig() {
-  const domains = (process.env.ONBOARDING_EMAIL_DOMAINS || "").split(",").map(s => s.trim().toLowerCase()).filter(s => /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(s));
-  return { domains: [...new Set(domains)], enabled: process.env.ONBOARDING_EMAIL_ENABLED === "true",
+  const parseDomains = (v?: string) => (v || "").split(",").map(s => s.trim().toLowerCase()).filter(s => /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(s));
+  const domains = parseDomains(process.env.ONBOARDING_EMAIL_DOMAINS);
+  // Extra domains we CAPTURE inbound LinkedIn mail from but never assign NEW onboarding emails
+  // on — e.g. a deprecated domain (islandcorrespondence.lol) whose existing accounts we still
+  // want to watch, without allocateOnboardingAddress round-robining new accounts onto it. Only
+  // the capture gate reads captureDomains; assignment + "is this ours" checks stay on `domains`.
+  const captureDomains = [...new Set([...domains, ...parseDomains(process.env.ONBOARDING_CAPTURE_EXTRA_DOMAINS)])];
+  return { domains: [...new Set(domains)], captureDomains, enabled: process.env.ONBOARDING_EMAIL_ENABLED === "true",
     ready: process.env.ONBOARDING_EMAIL_ENABLED === "true" && domains.length > 0 && !!process.env.RESEND_API_KEY && !!onboardingEmailFrom() && !!process.env.RESEND_INBOUND_WEBHOOK_SECRET && !!process.env.ONBOARDING_EMAIL_CODE_SECRET };
 }
 

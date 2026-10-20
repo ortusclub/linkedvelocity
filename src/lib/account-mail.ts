@@ -169,7 +169,7 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
   if (msg.to.length !== 1) return { stored: false, reason: "fanout" };
   const toAddr = msg.to[0].trim().toLowerCase();
   const domain = toAddr.split("@")[1] || "";
-  if (!cfg.domains.includes(domain)) return { stored: false, reason: "foreign_domain" };
+  if (!cfg.captureDomains.includes(domain)) return { stored: false, reason: "foreign_domain" };
   if (!linkedinSender(msg.from)) return { stored: false, reason: "not_linkedin" };
 
   const accountId = await resolveAccountId(toAddr);
