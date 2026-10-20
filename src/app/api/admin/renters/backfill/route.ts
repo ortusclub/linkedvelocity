@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { composePeople, computeDuplicatePairs } from "@/lib/crm-compose";
+import { composePeople, computeDuplicatePairs, loadAccountHolders, isAccountHolder } from "@/lib/crm-compose";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase-1 backfill. POST { mode: "dry" | "run", force?: boolean }
@@ -52,6 +52,25 @@ export async function POST(req: Request) {
       await prisma.duplicateSuggestion.deleteMany({});
       if (pairs.length) await prisma.duplicateSuggestion.createMany({ data: pairs.map((p) => ({ id: randomUUID(), personAId: p.aId, personBId: p.bId, reason: p.reason })), skipDuplicates: true });
       return NextResponse.json({ mode: "reseed-dupes", duplicateSuggestions: pairs.length });
+    }
+
+    // Remove ambassador/account-owner rows that slipped in as 0-rental "signups" (they hold a
+    // LinkedIn account by name/email but never rented), then reseed dupes. Surgical — leaves
+    // real renters + edits intact.
+    if (mode === "prune-ambassadors") {
+      const persons = await prisma.person.findMany({ where: { NOT: { userId: null } }, select: { id: true, name: true, email: true, user: { select: { _count: { select: { rentals: true } } } } } });
+      const holders = await loadAccountHolders(prisma);
+      const targetIds = persons.filter((p) => (p.user?._count.rentals ?? 0) === 0 && isAccountHolder(p.name, p.email, holders)).map((p) => p.id);
+      if (targetIds.length) {
+        await prisma.duplicateSuggestion.deleteMany({ where: { OR: [{ personAId: { in: targetIds } }, { personBId: { in: targetIds } }] } });
+        await prisma.company.updateMany({ where: { mainContactId: { in: targetIds } }, data: { mainContactId: null } });
+        await prisma.person.deleteMany({ where: { id: { in: targetIds } } });
+      }
+      const survivors = await prisma.person.findMany({ select: { id: true, name: true, email: true, contact: true, joinedAt: true } });
+      const pairs = computeDuplicatePairs(survivors);
+      await prisma.duplicateSuggestion.deleteMany({});
+      if (pairs.length) await prisma.duplicateSuggestion.createMany({ data: pairs.map((p) => ({ id: randomUUID(), personAId: p.aId, personBId: p.bId, reason: p.reason })), skipDuplicates: true });
+      return NextResponse.json({ mode: "prune-ambassadors", removed: targetIds.length, duplicateSuggestions: pairs.length });
     }
 
     const { people, companies, dupes } = await composePeople(prisma);

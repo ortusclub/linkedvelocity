@@ -112,6 +112,26 @@ export function computeDuplicatePairs(items: DupItem[]): { aId: string; bId: str
   return out;
 }
 
+// Ambassadors / account owners sometimes have a customer-role User row (portal login,
+// legacy onboarding) with no rentals — they are NOT clients and must not show in Renters.
+// They can't always be found via ambassador_applications, so we also match the holder of
+// any LinkedIn account by name or by the account's login/personal/work/poc emails.
+export async function loadAccountHolders(prisma: PrismaClient): Promise<{ names: Set<string>; emails: Set<string> }> {
+  const accounts = await prisma.linkedInAccount.findMany({ select: { linkedinName: true, loginEmail: true, personalEmail: true, workEmail: true, poc: true } });
+  const names = new Set<string>();
+  const emails = new Set<string>();
+  for (const a of accounts) {
+    if (a.linkedinName) names.add(a.linkedinName.trim().toLowerCase());
+    for (const e of [a.loginEmail, a.personalEmail, a.workEmail, a.poc]) if (e) emails.add(e.trim().toLowerCase());
+  }
+  return { names, emails };
+}
+export function isAccountHolder(name: string | null, email: string | null, holders: { names: Set<string>; emails: Set<string> }): boolean {
+  if (name && holders.names.has(name.trim().toLowerCase())) return true;
+  if (email && holders.emails.has(email.trim().toLowerCase())) return true;
+  return false;
+}
+
 type CommEntry = { id?: string; ts?: string; channel?: string; body?: string; direction?: string; authorName?: string; authorEmail?: string };
 
 export type ComposedConversation = {
@@ -160,6 +180,7 @@ export async function composePeople(prisma: PrismaClient): Promise<Composed> {
     ? await prisma.ambassadorApplication.findMany({ where: { email: { in: emails } }, select: { email: true } })
     : [];
   const ambEmails = new Set(ambApps.map((a) => a.email));
+  const holders = await loadAccountHolders(prisma);
   const adminPoc = new Map<string, "Ardi" | "Milee" | "Sam" | null>();
   for (const a of adminUsers) adminPoc.set(a.email.toLowerCase(), normalisePoc(a.fullName) || normalisePoc(a.email));
 
@@ -168,7 +189,9 @@ export async function composePeople(prisma: PrismaClient): Promise<Composed> {
   const byContact = new Map<string, ComposedPerson>();
 
   for (const u of users) {
-    if (!(u.rentals.length > 0 || !ambEmails.has(u.email))) continue; // drop pure ambassadors
+    // Drop non-renters: pure ambassadors (ambassador_application) + account owners (hold a
+    // LinkedIn account by name/email), unless they actually rent (then they stay).
+    if (u.rentals.length === 0 && (ambEmails.has(u.email) || isAccountHolder(u.fullName, u.email, holders))) continue;
     const { channel, contact } = channelFromContactNumber(u.contactNumber);
     const lvPoc = u.rentals.map((r) => r.lvPoc).find(Boolean) ?? null;
     const p: ComposedPerson = {
