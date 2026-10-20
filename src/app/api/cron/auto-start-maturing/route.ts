@@ -17,20 +17,30 @@ export const maxDuration = 180;
 const DISQUALIFYING_APP_STATUS = new Set(["onboarded", "rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
-// Aggressive warm-only ramp for the ~1-week maturation hold. Warm connections get
-// accepted (other LV profiles), so a higher pace is low-restriction-risk vs cold.
-// ~124 connections over 7 days. Tune here.
-function autoWarmPlan(gid: string, name: string, linkedinUrl: string | null) {
+// Warm-only ramps. Warm connections get accepted (other LV profiles), so a higher
+// pace is low-restriction-risk vs cold. Two profiles:
+//  - AGGRESSIVE (default): 10→18→25/day over 7 days (~124) for clean, never-recently-
+//    restricted accounts.
+//  - GENTLE: 2→5→8/day over 14 days (~73) for accounts restricted/recovered in the last
+//    30 days — they're fragile, so we warm them slowly per the restriction-avoidance SOP.
+// Tune here.
+const AGGRESSIVE_STAGES = [
+  { id: "warm", name: "Warm connections", fromDay: 1, toDay: 2, warmDaily: 10, coldDaily: 0, likesDaily: 0 },
+  { id: "ramp", name: "Ramp warm connections", fromDay: 3, toDay: 5, warmDaily: 18, coldDaily: 0, likesDaily: 0 },
+  { id: "push", name: "Push warm connections", fromDay: 6, toDay: 7, warmDaily: 25, coldDaily: 0, likesDaily: 0 },
+];
+const GENTLE_STAGES = [
+  { id: "warm", name: "Warm connections", fromDay: 1, toDay: 4, warmDaily: 2, coldDaily: 0, likesDaily: 0 },
+  { id: "ramp", name: "Ramp warm connections", fromDay: 5, toDay: 9, warmDaily: 5, coldDaily: 0, likesDaily: 0 },
+  { id: "push", name: "Ease up warm connections", fromDay: 10, toDay: 14, warmDaily: 8, coldDaily: 0, likesDaily: 0 },
+];
+function autoWarmPlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean) {
   const p = newMaturePlan() as Record<string, unknown>;
   p.warmEnabled = true;
   p.coldEnabled = false;
   p.warmPool = "linkedvelocity_owned";
   p.warmUntilExhausted = true;
-  p.stages = [
-    { id: "warm", name: "Warm connections", fromDay: 1, toDay: 2, warmDaily: 10, coldDaily: 0, likesDaily: 0 },
-    { id: "ramp", name: "Ramp warm connections", fromDay: 3, toDay: 5, warmDaily: 18, coldDaily: 0, likesDaily: 0 },
-    { id: "push", name: "Push warm connections", fromDay: 6, toDay: 7, warmDaily: 25, coldDaily: 0, likesDaily: 0 },
-  ];
+  p.stages = gentle ? GENTLE_STAGES : AGGRESSIVE_STAGES;
   p.targetProfileIds = [gid];
   p.accounts = { [gid]: { name, linkedinUrl } };
   return p;
@@ -93,10 +103,19 @@ export async function POST(req: NextRequest) {
       linkedinAccountHealth: { not: "restricted" },
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true,
       rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
     },
   });
+
+  // Recently restricted/recovered accounts (any restriction-log event in the last 30
+  // days, matching the warm-up SOP window) are fragile — give them the GENTLE ramp,
+  // not the aggressive one, so maturing doesn't tip them back into a restriction.
+  const RESTR_WINDOW_MS = 30 * 86400000;
+  function recentlyRestricted(a: { restrictionLog: unknown }): boolean {
+    const log = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string }[]) : [];
+    return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
+  }
 
   // An account with an unresolved security email (a new-device / login challenge
   // like "verify your new device", or an open incident) is NOT ready — starting a
@@ -128,21 +147,24 @@ export async function POST(req: NextRequest) {
   );
 
   let started = 0;
+  let gentleStarted = 0;
   const errors: { account: string; error: string }[] = [];
   for (const a of candidates.slice(0, cap)) {
+    const gentle = recentlyRestricted(a);
     try {
       await start(
-        { accountId: a.id, launchId: randomUUID(), plan: autoWarmPlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl), timezone: "Asia/Manila" },
+        { accountId: a.id, launchId: randomUUID(), plan: autoWarmPlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, "🔥 Maturing auto-started (Level 4 / passed QC) — aggressive warm ramp", "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-started (Level 4 / passed QC) — ${gentle ? "gentle warm ramp (recently restricted)" : "aggressive warm ramp"}`, "system").catch(() => {});
+      if (gentle) gentleStarted++;
       started++;
     } catch (e) {
       errors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, started, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, started, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
