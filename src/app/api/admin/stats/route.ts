@@ -80,7 +80,15 @@ export async function GET(req: NextRequest) {
 
     const activeRentals = activeRentalsList.length;
     const rentedAccounts = activeRentals; // a test-held account doesn't inflate this
-    const mrr = activeRentalsList.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice ?? 0), 0);
+    // MRR also counts pending_access rentals (paid up front, awaiting GoLogin setup) — keep in
+    // sync with computeCoreMetrics (src/lib/metrics.ts). activeRentals/rentedAccounts stay active-only.
+    const pendingMrrList = await prisma.rental.findMany({
+      where: { status: "pending_access", ...liveRental },
+      select: { lockedPrice: true, linkedinAccount: { select: { monthlyPrice: true } } },
+    });
+    const mrr =
+      activeRentalsList.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice ?? 0), 0) +
+      pendingMrrList.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice ?? 0), 0);
     // Payouts (money out) = what we ACTUALLY paid out in the selected month — ambassador
     // setup fees + logged monthly payouts + referral/marketer fees. Real cash out (only
     // people actually paid), not a run-rate over every onboarded ambassador. Computed from

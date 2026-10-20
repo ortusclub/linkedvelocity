@@ -42,15 +42,17 @@ function isRealAccount(a: { notes: string | null; linkedinName: string }) {
 
 // Live (non-test) figures — what "Live" mode on the dashboard shows.
 export async function computeCoreMetrics(): Promise<CoreMetrics> {
-  const [inventoryAccounts, totalCustomers, activeRentalsList] = await Promise.all([
+  const [inventoryAccounts, totalCustomers, paidRentals] = await Promise.all([
     prisma.linkedInAccount.findMany({
       where: { status: { notIn: ["removed", "retired"] } },
       select: { status: true, notes: true, linkedinName: true, restrictedAt: true },
     }),
     prisma.user.count({ where: { role: "customer", status: "active", isTest: false, rentals: { some: {} } } }),
+    // MRR counts paid, committed rentals: active AND pending_access (paid up front, just
+    // awaiting GoLogin setup). We keep pending_access out of the activeRentals count below.
     prisma.rental.findMany({
-      where: { status: "active", user: { isTest: false } },
-      select: { lockedPrice: true, linkedinAccount: { select: { monthlyPrice: true } } },
+      where: { status: { in: ["active", "pending_access"] }, user: { isTest: false } },
+      select: { status: true, lockedPrice: true, linkedinAccount: { select: { monthlyPrice: true } } },
     }),
   ]);
 
@@ -60,9 +62,10 @@ export async function computeCoreMetrics(): Promise<CoreMetrics> {
   const offlineAccounts = realAccounts.filter((a) => a.status === "unavailable" || a.status === "maintenance").length;
   const restrictedAccounts = realAccounts.filter((a) => a.restrictedAt).length;
 
-  const activeRentals = activeRentalsList.length;
+  const activeRentals = paidRentals.filter((r) => r.status === "active").length;
   const rentedAccounts = activeRentals;
-  const mrr = activeRentalsList.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice ?? 0), 0);
+  // MRR = active + pending_access (both paid); the counts above stay active-only.
+  const mrr = paidRentals.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice ?? 0), 0);
   // Money out = what we ACTUALLY paid out this calendar month (ambassador setup + monthly +
   // referral/marketer fees), not a run-rate over all onboarded ambassadors. Stored in PHP →
   // convert to USD to net against the USD mrr.
