@@ -16,7 +16,11 @@ const incomingEmail = z.object({
 
 export type MailType =
   | "new_login" | "location_change" | "password_changed" | "email_changed"
-  | "name_changed" | "photo_changed" | "restriction" | "email_verify" | "other";
+  | "name_changed" | "photo_changed" | "restriction" | "email_verify" | "other"
+  // LinkedIn appeal / recovery case correspondence — responses to the restriction appeals
+  // WE file (from messages-noreply@linkedin.com, not a security sender). appeal_update carries
+  // the outcome (reinstated / rejected); appeal_intake is LinkedIn asking us for more info.
+  | "appeal_update" | "appeal_intake" | "recovery_appeal" | "id_verification";
 export type MailSeverity = "benign" | "review" | "danger";
 
 // Recommended-response checklist shown when an email is flagged "Wasn't us" (incident). Keyed by
@@ -49,6 +53,11 @@ export const INCIDENT_STEPS: Record<string, string[]> = {
     "Pause renter access until the appeal clears.",
     "Log the restriction on the account record.",
   ],
+  appeal_intake: [
+    "LinkedIn is asking for more info to process the appeal — reply identity-first (offer ID, never mention a VPN).",
+    "Note the Case # on the account so replies stay on the same thread.",
+    "Keep renter access paused until the appeal clears.",
+  ],
 };
 export const INCIDENT_STEPS_DEFAULT = [
   "Change the password and sign out of all other sessions.",
@@ -61,6 +70,8 @@ export const MAIL_TYPE_LABEL: Record<string, string> = {
   new_login: "New login", location_change: "Location change", password_changed: "Password changed",
   email_changed: "Email changed", name_changed: "Name changed", photo_changed: "Photo changed",
   restriction: "Restriction", email_verify: "Email verify", other: "Security email",
+  appeal_update: "Appeal update", appeal_intake: "Appeal — info needed",
+  recovery_appeal: "Recovery appeal", id_verification: "ID verification",
 };
 export const mailTypeLabel = (type: string): string => MAIL_TYPE_LABEL[type] ?? "Security email";
 
@@ -82,6 +93,15 @@ export function classifyAccountMail(subject: string, body: string): { type: Mail
   const newPlace = has(s, /new (device|location|place)/) || has(b, /new (device|location|place)|didn.?t recognize|don.?t recognize|was this you/);
 
   if (has(s, /restrict|account (has been|was) (restricted|suspended)|we.?ve restricted|temporarily restricted|unusual activity on your account/)) return { type: "restriction", severity: "danger", location };
+  // Appeal / recovery case mail (responses to OUR appeals). These come from a non-security
+  // LinkedIn sender, so without these branches they'd be dropped as "not_security". The Case #
+  // lives in the subject (intake/recovery/id) or body, so it stays queryable from what we store.
+  if (has(s, /appeals? intake|request for (more|additional) information|additional information needed/)) return { type: "appeal_intake", severity: "review", location };
+  if (has(s, /account recovery appeal/)) return { type: "recovery_appeal", severity: "review", location };
+  if (has(s, /(two.?step authentication|2fa|two.?factor).*(id )?verification|id verification update/)) return { type: "id_verification", severity: "review", location };
+  // Outcome of an appeal. "update on your appeal" is unambiguous; "update on your request" is
+  // generic, so require appeal/recovery context in the body before claiming it.
+  if (has(s, /an update on your appeal/) || (has(s, /an update on your request/) && has(b, /appeal|reinstat|restrict|verif(y|ied|ication)|cooperation in verifying|case\b/))) return { type: "appeal_update", severity: "review", location };
   // Password change/reset — allow intervening words ("password was successfully reset", "we reset
   // your password"), and LinkedIn's forced-reset prompt ("Account security alert — create a new
   // password"), rather than requiring the verb to butt right up against "password".
