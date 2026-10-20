@@ -346,7 +346,7 @@ export default function Agent360Catalogue({ rows, password, cfg = DEFAULT_CFG }:
               {filtersActive
                 ? <>{shownCount} of {rows.length} accounts match &middot; {buckets.now.length} available now, {buckets.soon.length} within a week, {buckets.warm.length} in warm-up.</>
                 : <>{rows.length} accounts total &middot; {buckets.now.length} available now, {buckets.soon.length} within a week, {buckets.warm.length} in warm-up.</>}<br />
-              Prices per account / month. {cfg.showRent ? "Earmark what you’d like and we’ll reserve them." : "Tick the ones you’d like and we’ll set them up with Sales Navigator."}
+              Prices per account / month. {cfg.showRent ? "Rent available accounts directly; earmark anything not yet available and we’ll reserve it for you." : "Tick the ones you’d like and we’ll set them up with Sales Navigator."}
             </p>
           </main>
           <div className="bar">
