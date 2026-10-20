@@ -367,15 +367,14 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   // saved). Asked per restriction so it's a deliberate send, not automatic on every click.
   const confirmNotify = (a: Account): boolean =>
     window.confirm(`Email the owner + referrer now that ${a.linkedinName} is restricted?\n\nSends the "account restricted / payment suspended" message (includes login details + 2FA recovery link when a password is on file). Cancel just sets the flag without emailing.`);
-  const runNotify = async (a: Account) => {
-    try {
-      const res = await fetch(`/api/admin/accounts/${a.id}/restrict-notify`, { method: "POST" });
-      const d: { error?: string; sent?: { recipient: string }[]; skipped?: { recipient: string; reason: string }[] } = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(`Owner/referrer not emailed: ${d.error || "send failed"}`); return; }
-      const sent = (d.sent || []).map((x) => x.recipient).join(" + ");
-      const skipped = (d.skipped || []).map((x) => `${x.recipient} (${x.reason})`).join(", ");
-      alert(sent ? `Restriction emailed to: ${sent}.${skipped ? ` Skipped: ${skipped}.` : ""}` : `No one emailed.${skipped ? ` Skipped: ${skipped}.` : ""}`);
-    } catch { alert("Owner/referrer notify failed to send."); }
+  // Report the owner/referrer notify result the /restricted route returns when we opt in.
+  type NotifyResult = { ok: boolean; sent?: { recipient: string }[]; skipped?: { recipient: string; reason: string }[]; error?: string } | null;
+  const reportNotify = (n: NotifyResult) => {
+    if (!n) return;
+    if (n.error) { alert(`Owner/referrer not emailed: ${n.error}`); return; }
+    const sent = (n.sent || []).map((x) => x.recipient).join(" + ");
+    const skipped = (n.skipped || []).map((x) => `${x.recipient} (${x.reason})`).join(", ");
+    alert(sent ? `Restriction emailed to: ${sent}.${skipped ? ` Skipped: ${skipped}.` : ""}` : `No one emailed.${skipped ? ` Skipped: ${skipped}.` : ""}`);
   };
   // Optimistic: update the row instantly and fire the write in the background, so the
   // ✓/✕ buttons respond on the first click instead of waiting on a full refetch.
@@ -384,8 +383,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
     const notify = restricted && confirmNotify(a);
     const now = new Date().toISOString();
     setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, restrictedAt: restricted ? now : null, healthCheckedAt: now, updatedAt: now, linkedinAccountHealth: restricted ? x.linkedinAccountHealth : "active" } : x)));
-    fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted }) })
-      .then((res) => { if (notify && res.ok) return runNotify(a); })
+    fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted, notifyOwnerReferrer: notify }) })
+      .then(async (res) => { if (notify && res.ok) { const d = await res.json().catch(() => ({})); reportNotify(d.notify ?? null); } })
       .catch(() => load());
   };
   const markActive = (a: Account) => {
@@ -439,8 +438,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
     setBusy(a.id);
     try {
       if (pill === "restricted") {
-        await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: true }) });
-        if (notify) await runNotify(a);
+        const res = await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: true, notifyOwnerReferrer: notify }) });
+        if (notify && res.ok) { const d = await res.json().catch(() => ({})); reportNotify(d.notify ?? null); }
       } else if (pill === "perm" || pill === "withdrawn") {
         await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state: pill }) });
       } else {
