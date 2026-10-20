@@ -46,14 +46,18 @@ function pickChat(method?: string | null, handle?: string | null, contacts?: unk
   return normChat(m, h);
 }
 
-// Most-recent chat touch (WhatsApp/Telegram/Viber) from an outreach_log, so the page can show
-// "already messaged on <channel> <date>". Ignores non-chat entries (pipeline notes, email, etc.).
+// Most-recent REFERRAL-PROGRAM chat touch (WhatsApp/Telegram/Viber) from an outreach_log, so the
+// page shows "already messaged about the referral program on <channel> <date>". Deliberately
+// ignores chats about anything else (onboarding/pipeline follow-ups) and email. Referral touches
+// are tagged by the /log endpoint: id "referral:…" and text "Referral program invite sent …".
 const CHAT_CH = new Set(["whatsapp", "telegram", "viber"]);
 function lastChat(log: unknown): { ch: "whatsapp" | "telegram" | "viber"; at: string } | null {
   if (!Array.isArray(log)) return null;
   let best: { ch: "whatsapp" | "telegram" | "viber"; at: string } | null = null;
-  for (const e of log as Array<{ ch?: string; at?: string }>) {
+  for (const e of log as Array<{ id?: string; ch?: string; at?: string; text?: string }>) {
     if (!e || !e.at || !CHAT_CH.has(String(e.ch))) continue;
+    const isReferral = String(e.id || "").startsWith("referral:") || /^Referral program invite sent/i.test(String(e.text || ""));
+    if (!isReferral) continue;
     if (!best || e.at > best.at) best = { ch: e.ch as "whatsapp" | "telegram" | "viber", at: String(e.at) };
   }
   return best;
