@@ -70,7 +70,7 @@ type Person = {
   commsSummary: string | null; commsSummaryStale: boolean;
   conversations: { id: string; type: string; text: string; meta: string; author: string | null; ts: string }[];
 };
-type Company = { id: string; domain: string; name: string; memberIds: string[]; mainContactId: string | null };
+type Company = { id: string; domain: string; name: string; notes?: string | null; memberIds: string[]; mainContactId: string | null };
 
 function initials(name: string) {
   const parts = name.replace(/[@]/g, "").trim().split(/\s+/).filter(Boolean);
@@ -96,7 +96,6 @@ function daysAgo(iso: string) {
   const m = Math.floor(d / 30); return m < 12 ? `${m}mo ago` : `${Math.floor(m / 12)}y ago`;
 }
 function money(n: number) { return n ? `$${Math.round(n).toLocaleString()}` : "—"; }
-function localPart(email?: string | null) { return email ? email.split("@")[0].toLowerCase() : ""; }
 // Comms entries are often raw template emails (booking confirmations etc.) with HTML
 // markup — strip the tags/entities so they read as plain text, then the UI clamps length.
 const CONV_CLAMP = 180;
@@ -149,6 +148,7 @@ export default function RentersV3Page() {
   const [noteType, setNoteType] = useState("Note");
   const [confirmDel, setConfirmDel] = useState(false);
 
+  const [serverDupes, setServerDupes] = useState<{ id: string; aId: string; bId: string; reason: string }[]>([]);
   const flash = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600); }, []);
 
   const load = useCallback(async () => {
@@ -156,7 +156,7 @@ export default function RentersV3Page() {
     try {
       const res = await fetch("/api/admin/renters");
       const data = await res.json();
-      if (res.ok) { setPeople(data.people || []); setCompanies(data.companies || []); }
+      if (res.ok) { setPeople(data.people || []); setCompanies(data.companies || []); setServerDupes(data.dupes || []); }
       else flash(data.error || "Failed to load");
     } catch { flash("Failed to load"); } finally { setLoading(false); }
   }, [flash]);
@@ -165,30 +165,18 @@ export default function RentersV3Page() {
   const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
   const personById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
-  // duplicate suggestions (client-side preview): share normalised email local-part or
-  // same company domain with a same-ish signup window. Keep it conservative.
+  // duplicate suggestions come from the server (duplicate_suggestions table).
   const dupes = useMemo(() => {
-    const out: { a: Person; b: Person; why: string }[] = [];
-    const seen = new Set<string>();
-    const byLocal = new Map<string, Person[]>();
-    for (const p of people) {
-      const lp = localPart(p.email);
-      if (!lp) continue;
-      (byLocal.get(lp) || byLocal.set(lp, []).get(lp)!).push(p);
-    }
-    for (const arr of byLocal.values()) {
-      if (arr.length < 2) continue;
-      for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
-        const key = [arr[i].id, arr[j].id].sort().join("|");
-        if (seen.has(key)) continue; seen.add(key);
-        out.push({ a: arr[i], b: arr[j], why: "same email name" });
-      }
+    const out: { id: string; a: Person; b: Person; why: string }[] = [];
+    for (const d of serverDupes) {
+      const a = personById.get(d.aId); const b = personById.get(d.bId);
+      if (a && b) out.push({ id: d.id, a, b, why: d.reason.replace(/-/g, " ") });
     }
     return out;
-  }, [people]);
+  }, [serverDupes, personById]);
   const dupePartner = useMemo(() => {
-    const m = new Map<string, { other: Person; why: string }>();
-    for (const d of dupes) { m.set(d.a.id, { other: d.b, why: d.why }); m.set(d.b.id, { other: d.a, why: d.why }); }
+    const m = new Map<string, { other: Person; why: string; dupeId: string }>();
+    for (const d of dupes) { m.set(d.a.id, { other: d.b, why: d.why, dupeId: d.id }); m.set(d.b.id, { other: d.a, why: d.why, dupeId: d.id }); }
     return m;
   }, [dupes]);
 
@@ -275,57 +263,80 @@ export default function RentersV3Page() {
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
 
-  // ── real writes to existing endpoints ──
-  async function patchUser(userId: string, body: Record<string, unknown>) {
-    const res = await fetch("/api/admin/customers", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: userId, ...body }) });
-    if (!res.ok) { flash("Save failed"); return false; }
-    return true;
-  }
+  // ── persistence (Phase 1: crm_people overlay) ──
   function patchLocal(id: string, patch: Partial<Person>) {
     setPeople((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }
+  async function patchPerson(id: string, body: Record<string, unknown>) {
+    const res = await fetch("/api/admin/renters", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
+    if (!res.ok) { flash("Save failed"); return false; }
+    return true;
+  }
   async function setVetting(p: Person, label: keyof typeof VET) {
-    patchLocal(p.id, { vetting: label });
-    setDraft((d) => ({ ...d, vetting: label }));
-    if (!p.userId) { flash("Vetting saves in v3 for leads"); return; }
-    const map: Record<string, string> = { Verified: "verified", "Needs review": "flagged", "Not vetted": "pending" };
-    await patchUser(p.userId, { vettingReview: map[label] });
+    patchLocal(p.id, { vetting: label }); setDraft((d) => ({ ...d, vetting: label }));
+    if (!p.userId) { flash("Vetting applies once they have an account"); return; }
+    await patchPerson(p.id, { vetting: label });
   }
   async function toggleSignin(p: Person) {
     const v = !p.signInAccess; patchLocal(p.id, { signInAccess: v }); setDraft((d) => ({ ...d, signInAccess: v }));
-    if (!p.userId) { flash("Sign-in access saves in v3 for leads"); return; }
-    await patchUser(p.userId, { credentialAccess: v });
+    if (!p.userId) { flash("Sign-in access needs an account"); return; }
+    await patchPerson(p.id, { signInAccess: v });
   }
   async function setCap(p: Person, cap: number) {
     const v = Math.max(1, Math.min(50, cap)); patchLocal(p.id, { dailyCap: v }); setDraft((d) => ({ ...d, dailyCap: v }));
-    if (!p.userId) { flash("Daily cap saves in v3 for leads"); return; }
-    await patchUser(p.userId, { dailyRentalLimit: v });
+    if (!p.userId) { flash("Daily cap needs an account"); return; }
+    await patchPerson(p.id, { dailyCap: v });
   }
   async function toggleTest(p: Person) {
     const v = !p.isTest; patchLocal(p.id, { isTest: v });
-    if (!p.userId) { flash("Test flag saves in v3 for leads"); return; }
-    await patchUser(p.userId, { isTest: v });
+    await patchPerson(p.id, { isTest: v });
     flash(v ? "Marked as test" : "Unmarked test");
   }
   async function del(p: Person) {
-    if (!p.userId) { flash("Lead delete saves in v3"); return; }
     if (!confirmDel) { setConfirmDel(true); return; }
-    const res = await fetch("/api/admin/customers", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.userId }) });
-    if (res.ok) { setOpenPerson(null); flash("Renter deleted"); load(); } else flash("Delete failed");
+    const res = await fetch("/api/admin/renters", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id }) });
+    if (res.ok) { setOpenPerson(null); flash("Deleted"); load(); } else flash("Delete failed");
   }
   async function addConversation(p: Person) {
     const text = noteText.trim(); if (!text) return;
-    const chMap: Record<string, string> = { Note: "note", Call: "call", WhatsApp: "whatsapp", Telegram: "telegram", Email: "email" };
-    const entry = { id: crypto.randomUUID(), type: noteType, text, meta: "just now", author: "you", ts: new Date().toISOString() };
-    patchLocal(p.id, { conversations: [entry, ...p.conversations], lastActivityAt: entry.ts });
     setNoteText("");
-    if (p.leadId) {
-      const res = await fetch("/api/admin/inbound/notes", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: p.leadId, channel: chMap[noteType], text, requestId: entry.id }) });
-      if (!res.ok) flash("Note logged locally — save failed"); else flash("Conversation logged");
-    } else {
-      flash("Logged in preview — conversations persist in v3");
-    }
+    const res = await fetch("/api/admin/renters/conversation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ personId: p.id, type: noteType, text }) });
+    const data = await res.json();
+    if (res.ok && data.conversation) {
+      patchLocal(p.id, { conversations: [data.conversation, ...p.conversations], lastActivityAt: data.conversation.ts });
+      flash("Conversation logged");
+    } else flash(data.error || "Failed to log");
+  }
+  async function saveDetails(p: Person) {
+    const d = draft;
+    const ok = await patchPerson(p.id, {
+      name: d.name, email: d.email, channel: d.channel, contact: d.contact, role: d.role,
+      source: d.source, pocOwner: d.pocOwner ?? "", followUp: d.followUp, leadStage: d.leadStage,
+      notes: d.notes, companyId: d.companyId ?? "",
+    });
+    if (ok) { flash("Saved"); load(); }
+  }
+  async function mergeInto(intoId: string, fromId: string) {
+    const res = await fetch("/api/admin/renters/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge", intoId, fromId }) });
+    if (res.ok) { flash("Merged"); load(); } else flash("Merge failed");
+  }
+  async function groupDupe(aId: string, bId: string) {
+    const res = await fetch("/api/admin/renters/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "group", aId, bId }) });
+    if (res.ok) { flash("Grouped into a company"); load(); } else flash("Failed");
+  }
+  async function dismissDupe(dupeId: string) {
+    const res = await fetch("/api/admin/renters/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "dismiss", dupeId }) });
+    if (res.ok) { flash("Dismissed"); load(); } else flash("Failed");
+  }
+  async function companyOp(body: Record<string, unknown>) {
+    const res = await fetch("/api/admin/renters/company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.ok) { load(); return true; } flash("Company save failed"); return false;
+  }
+  async function addPerson() {
+    const name = window.prompt("New contact name?")?.trim(); if (!name) return;
+    const res = await fetch("/api/admin/renters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const data = await res.json();
+    if (res.ok) { await load(); setOpenPerson(data.id); flash("Added — fill in details"); } else flash(data.error || "Failed");
   }
 
   const colGrid = "minmax(240px,2.6fr) 128px minmax(150px,1fr) 78px 86px 118px 26px";
@@ -359,7 +370,7 @@ export default function RentersV3Page() {
               <span style={{ marginLeft: 8, font: `700 11px ${F}`, color: "#7c3aed", background: "#f3e8ff", borderRadius: 999, padding: "2px 8px" }}>PREVIEW</span>
             </p>
           </div>
-          <button onClick={() => flash("Add renter saves in v3 — preview reads live data")} style={{ border: "none", background: INK, color: "#fff", borderRadius: 10, padding: "9px 14px", font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add renter</button>
+          <button onClick={addPerson} style={{ border: "none", background: INK, color: "#fff", borderRadius: 10, padding: "9px 14px", font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add renter</button>
         </div>
 
         {/* duplicate banner */}
@@ -507,9 +518,12 @@ export default function RentersV3Page() {
         p={cur} draft={draft} setDraft={setDraft} companies={companies} companyById={companyById}
         dupe={dupePartner.get(cur.id)} noteText={noteText} setNoteText={setNoteText} noteType={noteType} setNoteType={setNoteType}
         confirmDel={confirmDel}
-        onClose={() => setOpenPerson(null)} onSave={() => flash("Details save in v3 — access + conversations are live now")}
+        onClose={() => setOpenPerson(null)} onSave={() => saveDetails(cur)}
         onVet={(l) => setVetting(cur, l)} onSignin={() => toggleSignin(cur)} onCap={(c) => setCap(cur, c)}
         onTest={() => toggleTest(cur)} onDel={() => del(cur)} onAddConv={() => addConversation(cur)}
+        onMerge={() => { const d = dupePartner.get(cur.id); if (d) mergeInto(cur.id, d.other.id); }}
+        onGroup={() => { const d = dupePartner.get(cur.id); if (d) groupDupe(cur.id, d.other.id); }}
+        onDismiss={() => { const d = dupePartner.get(cur.id); if (d) dismissDupe(d.dupeId); }}
         onViewAs={() => cur.userId ? window.open(`/dashboard?view_as=${cur.userId}`, "_blank") : flash("View-as needs an account")}
       />}
 
@@ -517,7 +531,13 @@ export default function RentersV3Page() {
       {openCompany && (() => {
         const c = companyById.get(openCompany); if (!c) return null;
         const members = people.filter((p) => p.companyId === c.id);
-        return <CompanyDrawer c={c} members={members} onClose={() => setOpenCompany(null)} onOpenPerson={(id) => { setOpenCompany(null); setOpenPerson(id); }} onSave={() => flash("Company edits save in v3")} />;
+        const addable = people.filter((pp) => !pp.companyId && !pp.isTest);
+        return <CompanyDrawer c={c} members={members} addable={addable}
+          onClose={() => setOpenCompany(null)} onOpenPerson={(id) => { setOpenCompany(null); setOpenPerson(id); }}
+          onSave={(d) => companyOp({ action: "update", id: c.id, ...d })}
+          onUngroup={() => { companyOp({ action: "ungroup", id: c.id }); setOpenCompany(null); }}
+          onAddMember={(personId) => companyOp({ action: "addMember", companyId: c.id, personId })}
+          onRemoveMember={(personId) => companyOp({ action: "removeMember", personId })} />;
       })()}
 
       {toast && <div style={{ position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)", background: INK, color: "#fff", borderRadius: 10, padding: "10px 16px", font: `600 13px ${F}`, zIndex: 60, boxShadow: "0 8px 24px rgba(11,18,32,.25)" }}>{toast}</div>}
@@ -528,10 +548,11 @@ export default function RentersV3Page() {
 // ───────────────────────────── Person drawer ─────────────────────────────
 function PersonDrawer(props: {
   p: Person; draft: Partial<Person>; setDraft: (f: (d: Partial<Person>) => Partial<Person>) => void;
-  companies: Company[]; companyById: Map<string, Company>; dupe?: { other: Person; why: string };
+  companies: Company[]; companyById: Map<string, Company>; dupe?: { other: Person; why: string; dupeId: string };
   noteText: string; setNoteText: (v: string) => void; noteType: string; setNoteType: (v: string) => void; confirmDel: boolean;
   onClose: () => void; onSave: () => void; onVet: (l: keyof typeof VET) => void; onSignin: () => void; onCap: (c: number) => void;
   onTest: () => void; onDel: () => void; onAddConv: () => void; onViewAs: () => void;
+  onMerge: () => void; onGroup: () => void; onDismiss: () => void;
 }) {
   const { p, draft, companies } = props;
   const s = statusOf(p);
@@ -570,9 +591,9 @@ function PersonDrawer(props: {
             <div style={{ background: "#fff8eb", border: "1px solid #f5dcae", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ font: `500 13px/1.45 ${F}`, color: "#7a4b06" }}><b>Possibly the same person as {props.dupe.other.name}</b> — {props.dupe.why}.</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button onClick={props.onSave} style={{ border: "none", background: INK, color: "#fff", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>Merge {props.dupe.other.name.split(" ")[0]} into this one</button>
-                <button onClick={props.onSave} style={{ border: "1px solid #f0c98a", background: "#fff", color: "#7a4b06", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>Different people, same company</button>
-                <button onClick={props.onSave} style={{ border: "none", background: "none", color: "#8a6a30", padding: "6px 6px", font: `700 12px ${F}`, cursor: "pointer" }}>Not related</button>
+                <button onClick={props.onMerge} style={{ border: "none", background: INK, color: "#fff", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>Merge {props.dupe.other.name.split(" ")[0]} into this one</button>
+                <button onClick={props.onGroup} style={{ border: "1px solid #f0c98a", background: "#fff", color: "#7a4b06", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>Different people, same company</button>
+                <button onClick={props.onDismiss} style={{ border: "none", background: "none", color: "#8a6a30", padding: "6px 6px", font: `700 12px ${F}`, cursor: "pointer" }}>Not related</button>
               </div>
             </div>
           )}
@@ -703,29 +724,38 @@ function PersonDrawer(props: {
 }
 
 // ───────────────────────────── Company drawer ─────────────────────────────
-function CompanyDrawer(props: { c: Company; members: Person[]; onClose: () => void; onOpenPerson: (id: string) => void; onSave: () => void }) {
+function CompanyDrawer(props: {
+  c: Company; members: Person[]; addable: Person[];
+  onClose: () => void; onOpenPerson: (id: string) => void;
+  onSave: (d: { name: string; domain: string; notes: string; mainContactId: string | null }) => void;
+  onUngroup: () => void; onAddMember: (personId: string) => void; onRemoveMember: (personId: string) => void;
+}) {
   const { c, members } = props;
-  const main = c.mainContactId ? members.find((m) => m.id === c.mainContactId) : null;
+  const [name, setName] = useState(c.name);
+  const [domain, setDomain] = useState(c.domain || "");
+  const [notes, setNotes] = useState(c.notes || "");
+  const [mainContactId, setMainContactId] = useState(c.mainContactId ?? "");
+  const [confirmUngroup, setConfirmUngroup] = useState(false);
   return (
     <>
       <div onClick={props.onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,18,32,.28)", zIndex: 40 }} />
       <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px,100vw)", background: "#fff", zIndex: 41, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(11,18,32,.14)" }}>
         <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${LINE2}`, display: "flex", gap: 12, alignItems: "center" }}>
-          <span style={{ flex: "none", width: 42, height: 42, borderRadius: 11, background: INK, color: "#fff", display: "grid", placeItems: "center", font: `700 14px ${G}` }}>{initials(c.name)}</span>
+          <span style={{ flex: "none", width: 42, height: 42, borderRadius: 11, background: INK, color: "#fff", display: "grid", placeItems: "center", font: `700 14px ${G}` }}>{initials(name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ font: `700 19px ${G}`, color: INK }}>{c.name}</div>
-            <div style={{ font: `500 12px ${F}`, color: SUB, marginTop: 2 }}>{members.length} people · {c.domain}</div>
+            <div style={{ font: `700 19px ${G}`, color: INK }}>{name}</div>
+            <div style={{ font: `500 12px ${F}`, color: SUB, marginTop: 2 }}>{members.length} people · {domain}</div>
           </div>
           <button onClick={props.onClose} style={{ flex: "none", border: "none", background: LINE2, width: 30, height: 30, borderRadius: 8, font: `700 14px ${F}`, color: SUB, cursor: "pointer" }}>✕</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
           <Section title="Company">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Field label="Name"><input defaultValue={c.name} style={inp} /></Field>
-              <Field label="Website / domain"><input defaultValue={c.domain} style={inp} /></Field>
+              <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} /></Field>
+              <Field label="Website / domain"><input value={domain} onChange={(e) => setDomain(e.target.value)} style={inp} /></Field>
             </div>
-            <Field label="Main contact"><select defaultValue={c.mainContactId ?? ""} style={sel}>{members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-            <Field label="Notes"><textarea rows={3} placeholder="Shared context for this company" style={{ ...inp, resize: "vertical" }} /></Field>
+            <Field label="Main contact"><select value={mainContactId} onChange={(e) => setMainContactId(e.target.value)} style={sel}><option value="">None</option>{members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+            <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Shared context for this company" style={{ ...inp, resize: "vertical" }} /></Field>
           </Section>
           <Section title="People">
             <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, display: "flex", flexDirection: "column" }}>
@@ -737,17 +767,23 @@ function CompanyDrawer(props: { c: Company; members: Person[]; onClose: () => vo
                     <div style={{ font: `500 11.5px ${F}`, color: SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.email}</div>
                   </button>
                   <span style={{ font: `700 11px ${F}`, padding: "2px 8px", borderRadius: 999, background: ST[s].bg, color: ST[s].fg }}>{s === "Signup" ? "Signed up" : s}</span>
+                  <button onClick={() => props.onRemoveMember(m.id)} title="Remove from company" style={{ border: "none", background: "none", color: MUT, font: `700 12px ${F}`, cursor: "pointer" }}>Remove</button>
                 </div>
               ); })}
+              <div style={{ padding: "10px 12px" }}>
+                <select value="" onChange={(e) => e.target.value && props.onAddMember(e.target.value)} style={{ ...sel, border: `1px dashed #c6ccd6`, color: BLUE }}>
+                  <option value="">+ Add a person to this company…</option>
+                  {props.addable.map((o) => <option key={o.id} value={o.id}>{o.name}{o.email ? ` · ${o.email}` : ""}</option>)}
+                </select>
+              </div>
             </div>
-            {main && <div style={{ font: `500 11px ${F}`, color: MUT }}>Grouping is auto-derived from the shared domain in this preview — editable + saved in v3.</div>}
           </Section>
         </div>
         <div style={{ padding: "12px 20px", borderTop: `1px solid ${LINE2}`, display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={props.onSave} style={{ border: "none", background: "none", color: "#dc2626", padding: "7px 6px", font: `700 12px ${F}`, cursor: "pointer" }}>Ungroup company</button>
+          <button onClick={() => { if (confirmUngroup) props.onUngroup(); else setConfirmUngroup(true); }} style={{ border: "none", background: "none", color: "#dc2626", padding: "7px 6px", font: `700 12px ${F}`, cursor: "pointer" }}>{confirmUngroup ? "Click again to ungroup" : "Ungroup company"}</button>
           <div style={{ flex: 1 }} />
           <button onClick={props.onClose} style={{ border: "none", background: "none", color: SUB, padding: "7px 8px", font: `700 12.5px ${F}`, cursor: "pointer" }}>Cancel</button>
-          <button onClick={props.onSave} style={{ border: "none", background: INK, color: "#fff", borderRadius: 9, padding: "8px 16px", font: `700 12.5px ${F}`, cursor: "pointer" }}>Save</button>
+          <button onClick={() => props.onSave({ name, domain, notes, mainContactId: mainContactId || null })} style={{ border: "none", background: INK, color: "#fff", borderRadius: 9, padding: "8px 16px", font: `700 12.5px ${F}`, cursor: "pointer" }}>Save</button>
         </div>
       </div>
     </>
