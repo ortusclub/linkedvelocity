@@ -20,6 +20,7 @@ import { RENTAL_READY_ITEMS, RENTAL_READY_OPTIONAL, rentalReadyStatus, type Chec
 import { SHARED_TOGGLES, OFFBOARDING_ITEMS, offboardingAuto, offboardingLeft, type Offboarding, type SharedWithRenter } from "@/lib/offboarding";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
 import { sortAccountsByLastUpdated } from "@/lib/account-notes";
+import { toIndustryBucket, INDUSTRY_BUCKETS } from "@/lib/industry";
 import { IssueActions } from "@/components/admin/issue-actions";
 import { ambassadorIssueContact } from "@/lib/issue-contacts";
 
@@ -217,6 +218,25 @@ const AV = ["#2563eb", "#7c3aed", "#0891b2", "#db2777", "#ea580c", "#059669", "#
 const colorOf = (s: string) => AV[[...s].reduce((h, c) => (h + c.charCodeAt(0)) | 0, 0) % AV.length];
 const iniOf = (s: string) => (s || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "?";
 
+// A labelled row of filter chips, each showing a live count. "All" shows the total across the
+// group's options (= what's visible ignoring just this facet). Zero-count options are dimmed and
+// inert so the bar reflects what's actually in the (filtered) inventory. Counts are faceted —
+// they reflect every OTHER active filter — so you can narrow on one axis and read the rest.
+function FacetPills({ label, opts, value, onPick }: { label: string; opts: { k: string; l: string; n: number }[]; value: string; onPick: (v: string) => void }) {
+  const badge: React.CSSProperties = { font: `700 11px ${G}`, color: SUB, background: BG, borderRadius: 999, padding: "1px 7px" };
+  const pill = (active: boolean, dim: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 6, cursor: dim ? "default" : "pointer", border: `1.5px solid ${active ? INK : "#e3e6ec"}`, background: active ? "#f3f5f8" : "#fff", borderRadius: 999, padding: "4px 10px", font: `700 12px ${F}`, color: INK, whiteSpace: "nowrap", opacity: dim ? 0.4 : 1 });
+  const total = opts.reduce((s, o) => s + o.n, 0);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+      <span style={{ font: `700 11px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: MUT, marginRight: 2, minWidth: 74 }}>{label}</span>
+      <button onClick={() => onPick("all")} style={pill(value === "all", false)}>All<span style={badge}>{total}</span></button>
+      {opts.map((o) => (
+        <button key={o.k} onClick={() => o.n > 0 && onPick(value === o.k ? "all" : o.k)} disabled={o.n === 0} style={pill(value === o.k, o.n === 0)}>{o.l}<span style={badge}>{o.n}</span></button>
+      ))}
+    </div>
+  );
+}
+
 function Totp({ accountId }: { accountId: string }) {
   type S = { status: "loading" | "none" | "error" } | { status: "ok"; code: string; expiresIn: number; period: number };
   const [s, setS] = useState<S>({ status: "loading" });
@@ -275,6 +295,7 @@ export default function InventoryV2Page() {
   const [busy, setBusy] = useState<string | null>(null);
   const [q, setQ] = useState(""), [cty, setCty] = useState("all"), [renter, setRenter] = useState("all");
   const [ver, setVer] = useState("all"), [conn, setConn] = useState("all"), [supply, setSupply] = useState("all"), [age, setAge] = useState("all");
+  const [sn, setSn] = useState("all"), [ind, setInd] = useState("all");
   const [sort, setSort] = useState("upd");
   const [poc, setPoc] = useState("all");
   const [needs, setNeeds] = useState("all");
@@ -501,17 +522,25 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   const connBucket = (n: number) => (n < 50 ? "0" : n < 100 ? "1" : n < 500 ? "2" : n < 1000 ? "3" : "4");
   const ageBucket = (m: number | null) => (m == null ? "x" : m < 12 ? "0" : m < 36 ? "1" : m < 60 ? "2" : m < 120 ? "3" : "4");
 
-  const filtered = useMemo(() => {
+  const indBucket = (a: Account) => toIndustryBucket(a.industry) || "—";
+
+  // One pass produces both the filtered list and the faceted chip counts. `passes(skip)` applies
+  // every filter except the named facet, so each facet's chip counts reflect the OTHER active
+  // filters — pick "Rented" and the connection/age/verified chips re-count within Rented.
+  const view = useMemo(() => {
     const ql = q.trim().toLowerCase();
-    return withGroup.filter(({ a }) => {
-      if (groupFilter !== "all" && (isDummy(a) ? "Showcase" : canonicalStatus(a)) !== groupFilter) return false;
+    const passes = (a: Account, g: string, skip = ""): boolean => {
+      if (skip !== "group" && groupFilter !== "all" && g !== groupFilter) return false;
       if (poc !== "all" && (a.ownerPoc || "").trim() !== poc) return false;
       if (cty !== "all" && countryOf(a.location) !== cty) return false;
       if (renter !== "all" && a.rentals[0]?.user?.id !== renter) return false;
-      if (ver === "v" && !a.linkedinVerified) return false;
-      if (ver === "u" && a.linkedinVerified) return false;
-      if (conn !== "all" && connBucket(a.connectionCount) !== conn) return false;
-      if (age !== "all" && ageBucket(a.accountAgeMonths) !== age) return false;
+      if (skip !== "ver" && ver === "v" && !a.linkedinVerified) return false;
+      if (skip !== "ver" && ver === "u" && a.linkedinVerified) return false;
+      if (skip !== "conn" && conn !== "all" && connBucket(a.connectionCount) !== conn) return false;
+      if (skip !== "age" && age !== "all" && ageBucket(a.accountAgeMonths) !== age) return false;
+      if (skip !== "sn" && sn === "y" && !a.hasSalesNav) return false;
+      if (skip !== "sn" && sn === "n" && a.hasSalesNav) return false;
+      if (skip !== "ind" && ind !== "all" && indBucket(a) !== ind) return false;
       if (supply === "offer" && !(canonicalStatus(a) === "Available" && !a.shadowRenter)) return false;
       if (supply === "unverified" && !(canonicalStatus(a) === "Available" && !a.rentalReady)) return false;
       if (supply === "shadow" && !a.shadowRenter) return false;
@@ -519,8 +548,20 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (matOnly && !a.maturingStartedAt) return false;
       if (ql) { const hay = [a.linkedinName, a.loginEmail, a.ownerName, a.rentals[0]?.user?.fullName, a.location, a.industry].join(" ").toLowerCase(); if (!hay.includes(ql)) return false; }
       return true;
-    }).map((x) => x.a);
-  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, needs, matOnly, q]);
+    };
+    const filtered = withGroup.filter(({ a, g }) => passes(a, g)).map((x) => x.a);
+    const conn$: Record<string, number> = {}, age$: Record<string, number> = {}, ind$: Record<string, number> = {};
+    const ver$ = { v: 0, u: 0 }, sn$ = { y: 0, n: 0 };
+    for (const { a, g } of withGroup) {
+      if (passes(a, g, "conn")) { const k = connBucket(a.connectionCount); conn$[k] = (conn$[k] || 0) + 1; }
+      if (passes(a, g, "age")) { const k = ageBucket(a.accountAgeMonths); age$[k] = (age$[k] || 0) + 1; }
+      if (passes(a, g, "ver")) { a.linkedinVerified ? ver$.v++ : ver$.u++; }
+      if (passes(a, g, "sn")) { a.hasSalesNav ? sn$.y++ : sn$.n++; }
+      if (passes(a, g, "ind")) { const k = indBucket(a); ind$[k] = (ind$[k] || 0) + 1; }
+    }
+    return { filtered, conn$, age$, ver$, sn$, ind$ };
+  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, sn, ind, needs, matOnly, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filtered = view.filtered;
 
   // Live counts per attention flag (over the whole inventory) — shown in the filter so you can see
   // how many unverified / mail / overdue there are before drilling in.
@@ -584,8 +625,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   }, [withGroup, accounts]);
 
   const totalShown = sorted.length;
-  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || supply !== "all" || needs !== "all" || matOnly || poc !== "all" || groupFilter !== "all";
-  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setPoc("all"); setGroupFilter("all"); };
+  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || poc !== "all" || groupFilter !== "all";
+  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSn("all"); setInd("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setPoc("all"); setGroupFilter("all"); };
 
   const inp: React.CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: INK, outline: "none" };
   const headCols = "minmax(0,2.2fr) 78px 64px minmax(0,1.3fr) 104px minmax(0,1.2fr) 100px 92px 52px 56px 16px";
@@ -670,13 +711,43 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
               ))}
             </div>
           )}
+          {/* Facet chip rows — at-a-glance counts per bucket; click to filter (counts are faceted
+              against the other active filters). Replaces the old connections/age/verified dropdowns. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 9, borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>
+            <FacetPills label="Connections" value={conn} onPick={setConn} opts={[
+              { k: "0", l: "< 50", n: view.conn$["0"] || 0 },
+              { k: "1", l: "50–100", n: view.conn$["1"] || 0 },
+              { k: "2", l: "100–500", n: view.conn$["2"] || 0 },
+              { k: "3", l: "500–999", n: view.conn$["3"] || 0 },
+              { k: "4", l: "1k+", n: view.conn$["4"] || 0 },
+            ]} />
+            <FacetPills label="Age" value={age} onPick={setAge} opts={[
+              { k: "0", l: "< 1 yr", n: view.age$["0"] || 0 },
+              { k: "1", l: "1–3 yr", n: view.age$["1"] || 0 },
+              { k: "2", l: "3–5 yr", n: view.age$["2"] || 0 },
+              { k: "3", l: "5–10 yr", n: view.age$["3"] || 0 },
+              { k: "4", l: "10+ yr", n: view.age$["4"] || 0 },
+              ...(view.age$["x"] ? [{ k: "x", l: "Unknown", n: view.age$["x"] }] : []),
+            ]} />
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+              <FacetPills label="Verified" value={ver} onPick={setVer} opts={[
+                { k: "v", l: "✓ Verified", n: view.ver$.v },
+                { k: "u", l: "Unverified", n: view.ver$.u },
+              ]} />
+              <FacetPills label="Sales Nav" value={sn} onPick={setSn} opts={[
+                { k: "y", l: "+SN", n: view.sn$.y },
+                { k: "n", l: "No SN", n: view.sn$.n },
+              ]} />
+            </div>
+            <FacetPills label="Industry" value={ind} onPick={setInd} opts={[
+              ...INDUSTRY_BUCKETS.map((b) => ({ k: b, l: b, n: view.ind$[b] || 0 })),
+              ...(view.ind$["—"] ? [{ k: "—", l: "None", n: view.ind$["—"] }] : []),
+            ]} />
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, renter, location, industry…" style={{ flex: 1, minWidth: 220, border: `1px solid #dde1e8`, background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F}`, color: INK, outline: "none" }} />
             <select value={cty} onChange={(e) => setCty(e.target.value)} style={inp}><option value="all">Any country</option>{countryOpts.map(([c, n]) => <option key={c} value={c}>{c} ({n})</option>)}</select>
             <select value={renter} onChange={(e) => setRenter(e.target.value)} style={inp}><option value="all">Any renter</option>{renterOpts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
-            <select value={ver} onChange={(e) => setVer(e.target.value)} style={inp}><option value="all">Verified + unverified</option><option value="v">Verified only</option><option value="u">Unverified only</option></select>
-            <select value={conn} onChange={(e) => setConn(e.target.value)} style={inp}><option value="all">Any connections</option><option value="0">&lt; 50</option><option value="1">50–100</option><option value="2">100–500</option><option value="3">500–999</option><option value="4">1k+</option></select>
-            <select value={age} onChange={(e) => setAge(e.target.value)} style={inp}><option value="all">Any age</option><option value="0">&lt; 1 year</option><option value="1">1–3 years</option><option value="2">3–5 years</option><option value="3">5–10 years</option><option value="4">10+ years</option></select>
             <select value={supply} onChange={(e) => setSupply(e.target.value)} style={inp}><option value="all">All supply</option><option value="offer">Available to offer</option><option value="unverified">Available · unverified</option><option value="shadow">Shadow</option></select>
             <select value={needs} onChange={(e) => setNeeds(e.target.value)} title="Show only accounts carrying a flag that needs fixing" style={{ ...inp, ...(needs !== "all" ? { borderColor: "#f59e0b", background: "#fffbeb", color: "#92400e", fontWeight: 700 } : {}) }}>
               <option value="all">Any flag</option>
