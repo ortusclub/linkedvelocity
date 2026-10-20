@@ -24,6 +24,8 @@ export type OutreachRow = {
   link: string;       // their /r/<slug>, or the /become-a-referrer signup URL when they have no link yet
   isSignup: boolean;  // true = link is the signup CTA (no referrer record yet)
   contacted: boolean; // we've already emailed them for this campaign
+  lastChatCh: "whatsapp" | "telegram" | "viber" | null; // last chat channel we messaged them on
+  lastChatAt: string | null; // when we last messaged them on a chat channel (ISO)
   signedUpAt: string | null; // when they signed up / applied (ISO)
   signedUpAfterEmailAt: string | null; // set when they signed up AFTER we emailed them (ISO) — a conversion
   suppressed: boolean;       // on the do-not-contact list

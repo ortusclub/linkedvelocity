@@ -46,12 +46,25 @@ function pickChat(method?: string | null, handle?: string | null, contacts?: unk
   return normChat(m, h);
 }
 
+// Most-recent chat touch (WhatsApp/Telegram/Viber) from an outreach_log, so the page can show
+// "already messaged on <channel> <date>". Ignores non-chat entries (pipeline notes, email, etc.).
+const CHAT_CH = new Set(["whatsapp", "telegram", "viber"]);
+function lastChat(log: unknown): { ch: "whatsapp" | "telegram" | "viber"; at: string } | null {
+  if (!Array.isArray(log)) return null;
+  let best: { ch: "whatsapp" | "telegram" | "viber"; at: string } | null = null;
+  for (const e of log as Array<{ ch?: string; at?: string }>) {
+    if (!e || !e.at || !CHAT_CH.has(String(e.ch))) continue;
+    if (!best || e.at > best.at) best = { ch: e.ch as "whatsapp" | "telegram" | "viber", at: String(e.at) };
+  }
+  return best;
+}
+
 export async function GET() {
   try {
     await requireAdmin();
     const [referrers, apps, suppressions] = await Promise.all([
-      prisma.referrer.findMany({ select: { id: true, slug: true, name: true, email: true, contactMethod: true, contactHandle: true, contacts: true, createdAt: true } }),
-      prisma.ambassadorApplication.findMany({ select: { id: true, fullName: true, email: true, status: true, referredBy: true, referrerId: true, createdAt: true, onboardedAt: true, contactNumber: true, contactChannel: true } }),
+      prisma.referrer.findMany({ select: { id: true, slug: true, name: true, email: true, contactMethod: true, contactHandle: true, contacts: true, outreachLog: true, createdAt: true } }),
+      prisma.ambassadorApplication.findMany({ select: { id: true, fullName: true, email: true, status: true, referredBy: true, referrerId: true, createdAt: true, onboardedAt: true, contactNumber: true, contactChannel: true, outreachLog: true } }),
       prisma.outreachSuppression.findMany({ select: { email: true, reason: true } }).catch(() => [] as Array<{ email: string; reason: string | null }>),
     ]);
     // Best-effort: an email-log hiccup must not break the page (just no "contacted" badges).
@@ -100,7 +113,8 @@ export async function GET() {
       else if (last && last < Date.now() - QUIET_DAYS * 864e5) seg = "1b";
       if (!seg) continue;
       const chat = pickChat(r.contactMethod, r.contactHandle, r.contacts);
-      rows.push({ kind: "referrer", id: r.id, name: r.name, segment: seg, email: r.email || null, chatMethod: chat?.method || null, chatHandle: chat?.handle || null, link: `${APP_URL}/r/${r.slug}`, isSignup: false, contacted: !!r.email && contactedEmails.has(norm(r.email)), signedUpAt: r.createdAt.toISOString(), signedUpAfterEmailAt: convertedAfter(r.email, r.createdAt.getTime()), suppressed: !!r.email && suppressed.has(norm(r.email)), suppressReason: r.email ? suppressed.get(norm(r.email)) ?? null : null });
+      const lc = lastChat(r.outreachLog);
+      rows.push({ kind: "referrer", id: r.id, name: r.name, segment: seg, email: r.email || null, chatMethod: chat?.method || null, chatHandle: chat?.handle || null, link: `${APP_URL}/r/${r.slug}`, isSignup: false, contacted: !!r.email && contactedEmails.has(norm(r.email)), lastChatCh: lc?.ch ?? null, lastChatAt: lc?.at ?? null, signedUpAt: r.createdAt.toISOString(), signedUpAfterEmailAt: convertedAfter(r.email, r.createdAt.getTime()), suppressed: !!r.email && suppressed.has(norm(r.email)), suppressReason: r.email ? suppressed.get(norm(r.email)) ?? null : null });
       if (r.email) takenEmails.add(norm(r.email));
       takenRefIds.add(r.id);
     }
@@ -118,7 +132,8 @@ export async function GET() {
       if (!seg) continue;
       const linkedRef = a.referrerId ? refById.get(a.referrerId) : null;
       const chat = pickChat(a.contactChannel, a.contactNumber, null);
-      rows.push({ kind: "ambassador", id: a.id, name: a.fullName, segment: seg, email: a.email || null, chatMethod: chat?.method || null, chatHandle: chat?.handle || null, link: linkedRef ? `${APP_URL}/r/${linkedRef.slug}` : SIGNUP_URL, isSignup: !linkedRef, contacted: !!a.email && contactedEmails.has(norm(a.email)), signedUpAt: a.createdAt.toISOString(), signedUpAfterEmailAt: convertedAfter(a.email, a.createdAt.getTime()), suppressed: !!a.email && suppressed.has(norm(a.email)), suppressReason: a.email ? suppressed.get(norm(a.email)) ?? null : null });
+      const lc = lastChat(a.outreachLog);
+      rows.push({ kind: "ambassador", id: a.id, name: a.fullName, segment: seg, email: a.email || null, chatMethod: chat?.method || null, chatHandle: chat?.handle || null, link: linkedRef ? `${APP_URL}/r/${linkedRef.slug}` : SIGNUP_URL, isSignup: !linkedRef, contacted: !!a.email && contactedEmails.has(norm(a.email)), lastChatCh: lc?.ch ?? null, lastChatAt: lc?.at ?? null, signedUpAt: a.createdAt.toISOString(), signedUpAfterEmailAt: convertedAfter(a.email, a.createdAt.getTime()), suppressed: !!a.email && suppressed.has(norm(a.email)), suppressReason: a.email ? suppressed.get(norm(a.email)) ?? null : null });
       if (a.email) takenEmails.add(norm(a.email));
     }
 
