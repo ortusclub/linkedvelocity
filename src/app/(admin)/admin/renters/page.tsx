@@ -61,7 +61,7 @@ type Person = {
   id: string; kind: "user" | "lead"; userId: string | null; leadId: string | null;
   name: string; email: string | null; channel: "WA" | "TG" | null; contact: string | null;
   role: string | null; source: string | null; pocOwner: "Ardi" | "Milee" | "Sam" | null;
-  followUp: string | null; leadStage: "warm" | "cold" | null;
+  followUp: string | null; leadStage: "warm" | "cold" | null; statusOverride: "renting" | "dormant" | null;
   vetting: keyof typeof VET; paymentMethod: "Card" | "Crypto Wallet" | null; paymentFailed: boolean;
   signInAccess: boolean; dailyCap: number; isTest: boolean; notes: string | null;
   liveRentals: number; totalRentals: number; mrr: number; txnCount: number; paidTotal: number;
@@ -84,12 +84,16 @@ function avatarColor(seed: string) {
 }
 function statusOf(p: Person): keyof typeof ST {
   if (p.isTest) return "Test";
+  if (p.statusOverride === "renting") return "Active";   // admin pin — off-platform renters (e.g. Manikaran)
+  if (p.statusOverride === "dormant") return "Dormant";  // admin pin — abandoned ghosts
   if (p.liveRentals > 0) return "Active";
   if (p.totalRentals > 0) return "Dormant";
   if (p.leadStage === "warm") return "Warm";
   if (p.leadStage === "cold") return "Cold";
   return "Signup";
 }
+// Sort rank so renters sit above dormant, which sit above leads/signups — regardless of recency.
+const STATUS_RANK: Record<string, number> = { Active: 0, Dormant: 1, Warm: 2, Cold: 2, Signup: 3, Test: 4 };
 function daysAgo(iso: string) {
   const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
   if (d <= 0) return "today"; if (d === 1) return "1d ago"; if (d < 30) return `${d}d ago`;
@@ -232,7 +236,10 @@ export default function RentersV3Page() {
       joined: (a, b) => (b.joinedAt > a.joinedAt ? 1 : -1),
       name: (a, b) => a.name.localeCompare(b.name),
     };
-    return [...list].sort(cmp[sort]);
+    const within = cmp[sort];
+    // Status bucket first (Active > Dormant > leads > signups), chosen sort within the bucket —
+    // so a recently-touched dormant never floats above an active renter.
+    return [...list].sort((a, b) => (STATUS_RANK[statusOf(a)] - STATUS_RANK[statusOf(b)]) || within(a, b));
   }, [people, matchesPoc, matchesQ, status, sort]);
 
   // rows: either flat person rows, or company group rows with nested members
@@ -312,6 +319,7 @@ export default function RentersV3Page() {
     const ok = await patchPerson(p.id, {
       name: d.name, email: d.email, channel: d.channel, contact: d.contact, role: d.role,
       source: d.source, pocOwner: d.pocOwner ?? "", followUp: d.followUp, leadStage: d.leadStage,
+      statusOverride: d.statusOverride === undefined ? undefined : (d.statusOverride ?? ""),
       notes: d.notes, companyId: d.companyId ?? "",
     });
     if (ok) { flash("Saved"); load(); }
@@ -639,6 +647,16 @@ function PersonDrawer(props: {
                 </div>
               </div>
             )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, font: `600 12px ${F}`, color: BODY, flexWrap: "wrap" }}>Force status
+              <div style={{ display: "flex", background: LINE2, borderRadius: 10, padding: 3, gap: 2 }}>
+                {([["", "Auto"], ["renting", "Renting"], ["dormant", "Dormant"]] as const).map(([v, l]) => {
+                  const cur = (draft.statusOverride !== undefined ? draft.statusOverride : p.statusOverride) ?? "";
+                  const on = cur === v;
+                  return <button key={l} onClick={() => props.setDraft((d) => ({ ...d, statusOverride: (v || null) as Person["statusOverride"] }))} style={{ border: "none", background: on ? "#fff" : "transparent", color: on ? INK : SUB, borderRadius: 8, padding: "5px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>{l}</button>;
+                })}
+              </div>
+              <span style={{ font: `500 11px ${F}`, color: MUT }}>Pin off-platform renters to Renting, or dead accounts to Dormant</span>
+            </div>
             <Field label="Notes"><textarea value={draft.notes ?? ""} onChange={(e) => props.setDraft((d) => ({ ...d, notes: e.target.value }))} rows={3} placeholder="Anything the team should know" style={{ ...inp, resize: "vertical" }} /></Field>
           </Section>
 

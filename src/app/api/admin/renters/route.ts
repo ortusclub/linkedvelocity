@@ -84,6 +84,7 @@ export async function GET() {
         pocOwner: (p.pocOwner as "Ardi" | "Milee" | "Sam" | null) ?? null,
         followUp: p.followUp ? p.followUp.toISOString() : null,
         leadStage: (p.leadStage as "warm" | "cold" | null) ?? null,
+        statusOverride: (p.statusOverride as "renting" | "dormant" | null) ?? null,
         vetting: u ? vettingLabel(u.vettingReview, u.vettedAt) : "Not vetted",
         paymentMethod: (u && fundingByUser.get(u.id)) || null,
         paymentFailed: rentals.some((r) => r.status === "payment_failed"),
@@ -145,6 +146,8 @@ export async function PATCH(req: Request) {
       if (b[k] !== undefined) data[k] = b[k] === "" ? null : b[k];
     }
     if (b.followUp !== undefined) data.followUp = b.followUp ? new Date(b.followUp) : null;
+    // Manual status pin: 'renting' | 'dormant' | '' / 'auto' → null (back to derived)
+    if (b.statusOverride !== undefined) data.statusOverride = (b.statusOverride === "renting" || b.statusOverride === "dormant") ? b.statusOverride : null;
     // Company: existing id, clear, or create-new by name
     if (b.newCompanyName) {
       const domain = businessDomain(b.email ?? null);

@@ -13,6 +13,14 @@ export const FREE_EMAIL_DOMAINS = new Set([
   "live.com", "msn.com", "yandex.com", "mail.com", "ymail.com",
 ]);
 
+// Internal / team domains — our own people (e.g. Sam @ortus.solutions) are not clients,
+// even when they hold rentals for testing. Never show them in Renters.
+export const INTERNAL_DOMAINS = new Set(["ortus.solutions"]);
+export function isInternalEmail(email?: string | null): boolean {
+  const d = domainOf(email);
+  return !!d && INTERNAL_DOMAINS.has(d);
+}
+
 export function domainOf(email?: string | null): string | null {
   if (!email) return null;
   const at = email.indexOf("@");
@@ -189,6 +197,8 @@ export async function composePeople(prisma: PrismaClient): Promise<Composed> {
   const byContact = new Map<string, ComposedPerson>();
 
   for (const u of users) {
+    // Drop internal/team accounts (our own @ortus.solutions people) regardless of rentals.
+    if (isInternalEmail(u.email)) continue;
     // Drop non-renters: pure ambassadors (ambassador_application) + account owners (hold a
     // LinkedIn account by name/email), unless they actually rent (then they stay).
     if (u.rentals.length === 0 && (ambEmails.has(u.email) || isAccountHolder(u.fullName, u.email, holders))) continue;
@@ -207,6 +217,7 @@ export async function composePeople(prisma: PrismaClient): Promise<Composed> {
   }
 
   for (const l of inboundLeads) {
+    if (isInternalEmail(l.companyEmail)) continue; // internal/team leads never surface in Renters
     const emailKey = (l.companyEmail || "").toLowerCase();
     const contactKey = normaliseContact(l.contact) || normaliseContact(l.handle) || normaliseContact(l.phone);
     let match: ComposedPerson | undefined;
