@@ -1652,6 +1652,16 @@ function DashboardContent() {
                 // / being-prepared / paused). Pending = planned changes still in the future.
                 const canRequestEdit = !R && !prep && !rental.paused && rental.status === "active";
                 const pendingChanges = (rental.profileChanges || []).filter((c) => c.status === "planned" && new Date(c.plannedFor).getTime() > Date.now()).length;
+                // Changes the LV team flagged back to the renter — these take priority on the pill
+                // (amber) so the renter opens the modal and reads the reason.
+                const needsInfoChanges = (rental.profileChanges || []).filter((c) => c.status === "needs_info").length;
+                const pillBg = needsInfoChanges > 0 ? "#fef3c7" : pendingChanges > 0 ? "#e8eefc" : "#f1f3f6";
+                const pillFg = needsInfoChanges > 0 ? "#b45309" : pendingChanges > 0 ? "#1550e8" : "#3b4657";
+                const pillText = needsInfoChanges > 0
+                  ? `${needsInfoChanges} need${needsInfoChanges === 1 ? "s" : ""} your input`
+                  : pendingChanges > 0
+                  ? `${pendingChanges} change${pendingChanges === 1 ? "" : "s"} in progress`
+                  : "Request profile edit";
 
                 const cDays = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
                 let sc = V.green, sl = "Active", ss = "Ready in GoLogin";
@@ -1715,9 +1725,9 @@ function DashboardContent() {
                           <button onClick={() => reportProxy(rental)} disabled={viewAs} title="LinkedIn not loading or acting up in GoLogin? Report the proxy and we'll switch this account to a fresh one." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Proxy not working? Report it</button>
                         )}
                         {canRequestEdit && (
-                          <button onClick={() => { if (!viewAs) setProfileChangeRental(rental); }} disabled={viewAs} title="Request edits to this profile — we apply them gradually so LinkedIn doesn't restrict the account." style={{ alignSelf: "flex-start", marginTop: 3, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", border: "none", borderRadius: 999, padding: "3px 10px", fontWeight: 700, fontSize: 11.5, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, background: pendingChanges > 0 ? "#e8eefc" : "#f1f3f6", color: pendingChanges > 0 ? "#1550e8" : "#3b4657" }}>
+                          <button onClick={() => { if (!viewAs) setProfileChangeRental(rental); }} disabled={viewAs} title="Request edits to this profile — we apply them gradually so LinkedIn doesn't restrict the account." style={{ alignSelf: "flex-start", marginTop: 3, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", border: "none", borderRadius: 999, padding: "3px 10px", fontWeight: 700, fontSize: 11.5, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, background: pillBg, color: pillFg }}>
                             <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden><path d="M7.5 2.5l2 2L4 10H2V8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                            {pendingChanges > 0 ? `${pendingChanges} change${pendingChanges === 1 ? "" : "s"} in progress` : "Request profile edit"}
+                            {pillText}
                           </button>
                         )}
                       </div>
