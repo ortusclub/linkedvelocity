@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     const accounts = await prisma.linkedInAccount.findMany({
       where: { status: { not: "removed" } },
       select: {
-        id: true, linkedinName: true, loginEmail: true, status: true, linkedinVerified: true,
+        id: true, linkedinName: true, loginEmail: true, status: true, linkedinVerified: true, poc: true,
         restrictedAt: true, restrictionLog: true,
         recoveryQrUrl: true, recoveryQrAt: true, recoverySentAt: true, recoverySentVia: true,
         recoveryOutcome: true, recoveryOutcomeAt: true, recoveryCase: true,
@@ -76,14 +76,15 @@ export async function GET(req: Request) {
           openStart = null;
         }
       }
-      if (a.restrictedAt) history.push({ reason: built.reason, days: Math.round(d.restrictedMs / dayMs), at: typeof a.restrictedAt === "string" ? a.restrictedAt : a.restrictedAt.toISOString(), how: "Open", open: true });
+      if (a.restrictedAt) history.push({ reason: built.reason, days: Math.round(d.restrictedMs / dayMs), at: typeof a.restrictedAt === "string" ? a.restrictedAt : a.restrictedAt.toISOString(), how: d.lostOutcome ? (d.lostOutcome === "perma" ? "Perma-restricted" : "No contact") : "Open", open: true });
       history.reverse();
 
       return {
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
+        poc: a.poc || "", phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
-        resolvedAt: d.resolvedAt, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
+        resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
         renterName: renterByAccount.get(a.id) || null,
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,

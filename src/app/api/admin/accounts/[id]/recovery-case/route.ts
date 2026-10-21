@@ -4,7 +4,9 @@ import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { restrictionUpdate, type RestrictionEvent } from "@/lib/restriction";
-import { parseStoredCase, LOGGABLE, type Step, type StoredCase } from "@/lib/recovery-case";
+import { parseStoredCase, LOGGABLE, LOST_LABEL, type Step, type StoredCase } from "@/lib/recovery-case";
+
+const POCS = ["", "Ardi", "Milee", "Sam", "Ortus"] as const;
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +18,10 @@ export const dynamic = "force-dynamic";
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("add_step"), kind: z.enum(["id", "form", "li", "note"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
+  z.object({ action: z.literal("set_poc"), poc: z.enum(POCS) }),
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),
+  z.object({ action: z.literal("mark_lost"), outcome: z.enum(["perma", "nocontact"]), note: z.string().max(500).optional() }),
+  z.object({ action: z.literal("reopen") }),
 ]);
 
 async function closeCase(id: string, stored: StoredCase, note: string | undefined, now: Date) {
@@ -56,9 +61,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: true });
     }
 
+    if (input.action === "set_poc") {
+      await prisma.linkedInAccount.update({ where: { id }, data: { poc: input.poc || null } });
+      return NextResponse.json({ ok: true });
+    }
+
     if (input.action === "mark_recovered") {
       await closeCase(id, stored, input.note, now);
       return NextResponse.json({ ok: true, recovered: true });
+    }
+
+    // Close the case as lost (permanently restricted / can't contact owner) — keeps the account
+    // restricted, just stops the worklist chasing it. Reversible via "reopen".
+    if (input.action === "mark_lost") {
+      stored.outcome = input.outcome;
+      stored.closedAt = now.toISOString();
+      if (input.note?.trim()) stored.outcomeNote = input.note.trim();
+      await prisma.linkedInAccount.update({ where: { id }, data: { recoveryCase: stored as unknown as Prisma.InputJsonValue } });
+      return NextResponse.json({ ok: true, lost: true });
+    }
+
+    if (input.action === "reopen") {
+      const was = stored.outcome ? LOST_LABEL[stored.outcome] : "closed";
+      stored.steps.push({ k: "note", o: "pending", at: now.toISOString(), note: `Reopened (was ${was})` });
+      delete stored.outcome; delete stored.closedAt; delete stored.outcomeNote;
+      await prisma.linkedInAccount.update({ where: { id }, data: { recoveryCase: stored as unknown as Prisma.InputJsonValue } });
+      return NextResponse.json({ ok: true });
     }
 
     // add_step

@@ -14,12 +14,18 @@ type Flag = { label: string; kind: "repeat" | "stale" | "renter" };
 type Hist = { reason: string; days: number; at: string; how: string; open: boolean };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
+  poc: string; phase: { label: string; pr: number };
   restrictedAt: string | null; reason: string; steps: Step[];
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
-  resolvedAt: number | null; lastErr: string; flags: Flag[]; chain: Chain[];
+  resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
 };
+
+const POCC: Record<string, string> = { Ardi: "#7c3aed", Milee: "#0f7a3d", Sam: "#c2410c", Ortus: "#0369a1" };
+const POCTEAM: Record<string, string> = { Ardi: "LV", Milee: "LV", Sam: "LV", Ortus: "Ortus" };
+const POC_LIST = ["Ardi", "Milee", "Sam", "Ortus"];
+const LOST: Record<string, [string, string, string]> = { perma: ["Permanently restricted", "#fef2f2", "#b91c1c"], nocontact: ["Can't contact owner", "#fff7ed", "#c2410c"] };
 
 const OC: Record<string, [string, string, string]> = {
   ok: ["#16a34a", "#ecfdf3", "#0f7a3d"], fail: ["#dc2626", "#fef2f2", "#b91c1c"],
@@ -27,7 +33,7 @@ const OC: Record<string, [string, string, string]> = {
 };
 const ST: Record<string, [string, string, string]> = {
   rented: ["Rented", "#eff6ff", "#1d4ed8"], under_construction: ["Under construction", "#f1f5f9", "#475569"],
-  available: ["Available", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
+  available: ["Onboarded", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
 };
 const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"] };
 const TITLES: Record<StepKind, string> = { email: "Restriction email", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note" };
@@ -91,12 +97,22 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
   const timeline: TLItem[] = [{ title: "Restricted", oLbl: r.reason, dot: "#0b1220", oc: "none", at: fmt(r.restrictedAt), err: "", note: "" }];
   for (const s of r.steps) timeline.push({ title: TITLES[s.k], oLbl: ({ ok: "Worked", fail: "Failed", pending: "Pending" } as Record<string, string>)[s.o], dot: OC[s.o][0], oc: s.o, at: fmt(s.at) + " · " + rel(s.at, now), err: s.err || "", note: s.note || "" });
   if (r.resolvedAt) timeline.push({ title: "Case closed", oLbl: "Restricted " + dur(r.restrictedMs), dot: "#16a34a", oc: "ok", at: fmt(new Date(r.resolvedAt).toISOString()), err: "", note: "" });
+  if (r.lostOutcome) timeline.push({ title: "Case closed", oLbl: LOST[r.lostOutcome][0], dot: LOST[r.lostOutcome][2], oc: "fail", at: r.closedAt ? fmt(new Date(r.closedAt).toISOString()) : "", err: "", note: "" });
+  const closed = !!r.resolvedAt || !!r.lostOutcome;
 
   return (
     <div style={{ background: "#f8f9fb", borderBottom: "1px solid #e3e6ec", padding: "14px 18px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={sendEmail} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 10, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>{r.sentAt ? "Resend owner email" : "Send restriction email"}</button>
-        {!r.resolvedAt && <button onClick={() => post({ action: "mark_recovered" })} disabled={busy} style={{ border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Mark recovered</button>}
+        {!closed && <button onClick={sendEmail} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 10, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>{r.sentAt ? "Send reminder" : "Send restriction email"}</button>}
+        {!closed && <button onClick={() => post({ action: "mark_recovered" })} disabled={busy} style={{ border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Mark recovered</button>}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, font: `700 11px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: "#8a93a3" }}>PoC
+          <select value={r.poc} onChange={(e) => post({ action: "set_poc", poc: e.target.value })} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "7px 8px", font: `600 12.5px ${F_SANS}`, color: "#0b1220", textTransform: "none", letterSpacing: 0 }}>
+            <option value="">Unassigned</option><option value="Ardi">Ardi · LV</option><option value="Milee">Milee · LV</option><option value="Sam">Sam · LV</option><option value="Ortus">Ortus</option>
+          </select>
+        </label>
+        {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "perma" })} disabled={busy} style={{ border: "1px solid #f3c7c7", background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Permanently restricted</button>}
+        {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "nocontact" })} disabled={busy} style={{ border: "1px solid #f5d9b8", background: "#fff", color: "#b45309", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Can&apos;t contact owner</button>}
+        {r.lostOutcome && <button onClick={() => post({ action: "reopen" })} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Reopen case</button>}
         {msg && <span style={{ font: `600 11.5px ${F_SANS}`, color: "#0f7a3d" }}>{msg}</span>}
         <span style={{ flex: 1 }} />
         <a href={`/admin/rentals?q=${encodeURIComponent(r.email || "")}`} style={{ font: `700 12px ${F_SANS}`, color: "#2563eb" }}>Renter record →</a>
@@ -126,7 +142,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
               </div>
             ))}
           </div>
-          {!r.resolvedAt && (
+          {!closed && (
             <div style={{ borderTop: "1px solid #eef0f4", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Log a step</span>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -169,6 +185,8 @@ export default function RestrictionsV2Page() {
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("action");
+  const [phaseF, setPhaseF] = useState("all");
+  const [pocF, setPocF] = useState("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -179,15 +197,22 @@ export default function RestrictionsV2Page() {
 
   const all = rows || [];
   const hasIdFail = (r: Row) => r.steps.some((s) => s.k === "id" && s.o === "fail");
+  const isOpenCase = (r: Row) => r.bucket !== "done" && r.bucket !== "lost";
   const pick: Record<string, (r: Row) => boolean> = {
-    action: (r) => r.bucket === "action", open: (r) => r.bucket !== "done", owner: (r) => r.bucket === "owner",
-    linkedin: (r) => r.bucket === "linkedin", idfail: (r) => r.bucket !== "done" && hasIdFail(r), done: (r) => r.bucket === "done", all: () => true,
+    action: (r) => r.bucket === "action", open: isOpenCase, owner: (r) => r.bucket === "owner",
+    linkedin: (r) => r.bucket === "linkedin", idfail: (r) => isOpenCase(r) && hasIdFail(r),
+    done: (r) => r.bucket === "done", lost: (r) => r.bucket === "lost", all: () => true,
   };
   const ql = q.trim().toLowerCase();
-  const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
-  const list = all.filter(pick[filter] || pick.all).filter(match).sort((a, b) => Number(b.urgent) - Number(a.urgent) || Number(!!a.resolvedAt) - Number(!!b.resolvedAt) || b.restrictedMs - a.restrictedMs);
+  const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
+  const matchPhase = (r: Row) => phaseF === "all" || r.status === phaseF;
+  const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
+  const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
+  const closed = (r: Row) => (r.resolvedAt || r.lostOutcome ? 1 : 0);
+  const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc)
+    .sort((a, b) => closed(a) - closed(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b));
 
-  const openCases = all.filter((r) => r.bucket !== "done");
+  const openCases = all.filter(isOpenCase);
   const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
   const tiles: Array<[string, string, number, string, string]> = [
     ["action", "Needs action", all.filter((r) => r.bucket === "action").length, "Email, appeal or chase due", "#dc2626"],
@@ -196,8 +221,19 @@ export default function RestrictionsV2Page() {
     ["linkedin", "Awaiting LinkedIn", all.filter((r) => r.bucket === "linkedin").length, "Appeal under review", "#8b5cf6"],
     ["idfail", "ID verify failed", openCases.filter(hasIdFail).length, "Open cases", "#f59e0b"],
     ["done", "Recovered", all.filter((r) => r.bucket === "done").length, "Last 30 days", "#16a34a"],
+    ["lost", "Lost", all.filter((r) => r.bucket === "lost").length, "Perma-restricted / no contact", "#7f1d1d"],
   ];
-  const segs: Array<[string, string]> = [["action", "Needs action"], ["open", "All open"], ["done", "Recovered"], ["all", "Everything"]];
+  const segs: Array<[string, string]> = [["action", "Needs action"], ["open", "All open"], ["done", "Recovered"], ["lost", "Lost"], ["all", "Everything"]];
+
+  // Phase + PoC filter chips, counted within the current primary filter (like the mockup).
+  const inFilter = all.filter(pick[filter] || pick.all);
+  const phaseOpts: Array<{ key: string; label: string; pr: string; n: number }> = [
+    { key: "all", label: "All", pr: "" }, { key: "rented", label: "Rented", pr: "P1" },
+    { key: "available", label: "Onboarded", pr: "P2" }, { key: "under_construction", label: "Under construction", pr: "P3" },
+  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || r.status === o.key).length }));
+  const pocChips: Array<{ key: string; label: string; n: number }> = [
+    { key: "all", label: "Everyone" }, ...POC_LIST.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
+  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.poc : r.poc === o.key)).length }));
 
   const colTpl = "minmax(200px,1.6fr) 120px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
 
@@ -225,7 +261,23 @@ export default function RestrictionsV2Page() {
         <div style={{ display: "flex", background: "#eef0f4", borderRadius: 10, padding: 3, gap: 2, flexWrap: "wrap" }}>
           {segs.map(([k, l]) => { const on = filter === k; return <button key={k} onClick={() => setFilter(k)} style={{ border: "none", background: on ? "#fff" : "transparent", color: on ? "#0b1220" : "#5b6779", boxShadow: on ? "0 1px 2px rgba(11,18,32,.12)" : "none", borderRadius: 8, padding: "6px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>; })}
         </div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, login email, renter or error…" style={{ flex: 1, minWidth: 240, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Phase</span>
+          {phaseOpts.map((p) => { const on = phaseF === p.key; return (
+            <button key={p.key} onClick={() => setPhaseF(p.key)} style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${on ? "#0b1220" : "#e3e6ec"}`, background: on ? "#fff" : "#f8f9fb", color: "#0b1220", borderRadius: 999, padding: "5px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {p.pr && <span style={{ font: `700 10px ${MONO}`, color: p.pr === "P1" ? "#b91c1c" : p.pr === "P2" ? "#b45309" : "#8a93a3" }}>{p.pr}</span>}{p.label}<span style={{ font: `700 11px ${F_GRO}`, color: "#5b6779" }}>{p.n}</span>
+            </button>
+          ); })}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>LV PoC</span>
+          {pocChips.map((pc) => { const on = pocF === pc.key; const color = POCC[pc.key] || (pc.key === "all" ? "#0b1220" : "#cbd2dc"); const ini = pc.key === "all" ? "★" : pc.key === "none" ? "–" : pc.label[0]; return (
+            <button key={pc.key} onClick={() => setPocF(pc.key)} style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${on ? "#2563eb" : "#e3e6ec"}`, background: on ? "#eef4ff" : "#fff", color: "#0b1220", borderRadius: 999, padding: "3px 10px 3px 3px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>
+              <span style={{ width: 20, height: 20, borderRadius: "50%", background: color, color: "#fff", font: `700 10px ${F_SANS}`, display: "grid", placeItems: "center" }}>{ini}</span>{pc.label}<span style={{ font: `700 11px ${F_GRO}`, color: "#5b6779" }}>{pc.n}</span>
+            </button>
+          ); })}
+        </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, login email, renter, PoC or error…" style={{ flex: 1, minWidth: 240, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
       </div>
 
       {error && <div style={{ font: `500 13px ${F_SANS}`, color: "#b91c1c" }}>{error}</div>}
@@ -248,11 +300,18 @@ export default function RestrictionsV2Page() {
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                       <span style={{ font: `700 14px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}{r.verified && <span title="Verified" style={{ marginLeft: 5, color: "#0f7a3d" }}>✓</span>}</span>
                       <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.email}</span>
-                      <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap", width: "fit-content" }}>{st[0]}</span>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                        <span title={r.poc ? `PoC: ${r.poc}${POCTEAM[r.poc] ? ` (${POCTEAM[r.poc]})` : ""}` : "No PoC assigned"} style={{ display: "flex", alignItems: "center", gap: 5, font: `700 10.5px ${F_SANS}`, color: r.poc ? "#334155" : "#b91c1c", whiteSpace: "nowrap" }}>
+                          <span style={{ width: 16, height: 16, borderRadius: "50%", background: r.poc ? POCC[r.poc] || "#cbd2dc" : "#cbd2dc", color: "#fff", font: `700 9px ${F_SANS}`, display: "grid", placeItems: "center" }}>{r.poc ? r.poc[0] : "–"}</span>
+                          {r.poc ? (POCTEAM[r.poc] === "LV" ? `${r.poc} · LV` : r.poc) : "No PoC"}
+                        </span>
+                        <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
+                        {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
+                      </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <span style={{ font: `700 15px ${F_GRO}`, color: r.resolvedAt ? "#5b6779" : days > 7 ? "#b91c1c" : days > 2 ? "#b45309" : "#0b1220" }}>{dur(r.restrictedMs)}</span>
-                      <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap" }}>{r.resolvedAt ? "restored " + fmt(new Date(r.resolvedAt).toISOString()).split(",")[0] : "since " + fmt(r.restrictedAt).split(",")[0]}</span>
+                      <span style={{ font: `700 15px ${F_GRO}`, color: r.resolvedAt || r.lostOutcome ? "#5b6779" : days > 7 ? "#b91c1c" : days > 2 ? "#b45309" : "#0b1220" }}>{dur(r.restrictedMs)}</span>
+                      <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap" }}>{r.resolvedAt ? "restored " + fmt(new Date(r.resolvedAt).toISOString()).split(",")[0] : r.lostOutcome && r.closedAt ? "closed " + fmt(new Date(r.closedAt).toISOString()).split(",")[0] : "since " + fmt(r.restrictedAt).split(",")[0]}</span>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span style={{ font: `700 15px ${F_GRO}`, color: r.cnt >= 3 ? "#c2410c" : "#0b1220" }}>{r.cnt}×</span>
@@ -270,7 +329,7 @@ export default function RestrictionsV2Page() {
                       ))}
                     </div>
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ font: `700 12.5px ${F_SANS}`, color: r.urgent ? "#b91c1c" : r.resolvedAt ? "#0f7a3d" : "#334155" }}>{r.next}</span>
+                      <span style={{ font: `700 12.5px ${F_SANS}`, color: r.lostOutcome ? LOST[r.lostOutcome][2] : r.urgent ? "#b91c1c" : r.resolvedAt ? "#0f7a3d" : "#334155" }}>{r.next}</span>
                       <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                         {r.flags.map((f, i) => <span key={i} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: FLAG[f.kind][0], color: FLAG[f.kind][1], whiteSpace: "nowrap" }}>{f.label}</span>)}
                       </div>
