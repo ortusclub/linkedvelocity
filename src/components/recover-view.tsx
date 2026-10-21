@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import styles from "@/app/(customer)/guide/primary-email/primary-email.module.css";
 
 const BOOK = "https://calendly.com/linkedvelocity-info/30min";
+// LinkedIn's own "ID verification troubleshooting tips" — covers ID types, photo quality,
+// supported countries and the mobile-only step the QR flow leads into.
+const TIPS = "https://www.linkedin.com/help/linkedin/answer/a1617196/";
 
 type Outcome = "worked" | "stuck";
 type Info = { name: string; qrUrl: string | null; qrAt: string | null; outcome: Outcome | null };
@@ -62,7 +65,7 @@ export default function RecoverView() {
             </a>
             <span style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>Hard to scan? <a href={info.qrUrl} target="_blank" rel="noopener noreferrer">Tap the code to open it full-size</a>.</span>
           </div>
-          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>.</p>
+          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>. If it asks you to upload an ID, see LinkedIn&apos;s <a href={TIPS} target="_blank" rel="noopener noreferrer">ID verification troubleshooting tips</a>.</p>
 
           {/* Did it work? — owner self-report, so the team knows whether to move on or step in. */}
           {outcome === "worked" ? (
@@ -71,7 +74,7 @@ export default function RecoverView() {
             </div>
           ) : outcome === "stuck" ? (
             <div style={{ marginTop: 18, padding: "14px 16px", borderRadius: 12, background: "#fff8f1", border: "1px solid #f6c89a", color: "#92400e", fontSize: 15, lineHeight: 1.6 }}>
-              <strong>Thanks for telling us.</strong> Reply to the message we sent you, or <a href={BOOK}>book a quick call</a> — we&apos;ll verify you another way. You can also try the <a href={codeLink}>6-digit code</a> once more.
+              <strong>Thanks for telling us.</strong> Reply to the message we sent you, or <a href={BOOK}>book a quick call</a> — we&apos;ll verify you another way. You can also try the <a href={codeLink}>6-digit code</a> once more, or read LinkedIn&apos;s <a href={TIPS} target="_blank" rel="noopener noreferrer">ID verification troubleshooting tips</a>.
             </div>
           ) : (
             <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eef0f3" }}>
