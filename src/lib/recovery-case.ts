@@ -7,11 +7,11 @@ import type { RestrictionEvent } from "@/lib/restriction";
 // steps are logged by the team and stored in `recovery_case`. Pure functions here — the API
 // fetches accounts and calls these; no DB access so the logic stays testable.
 
-export type StepKind = "email" | "qr" | "id" | "form" | "li" | "note";
+export type StepKind = "email" | "qr" | "id" | "form" | "li" | "note" | "gl" | "pw" | "relist" | "handback";
 export type Outcome = "ok" | "fail" | "pending";
 export type Step = { k: StepKind; o: Outcome; at: string; err?: string; note?: string };
 export type LostOutcome = "perma" | "nocontact";
-export type StoredCase = { reason?: string; steps?: Step[]; outcome?: LostOutcome; closedAt?: string; outcomeNote?: string; reopened?: boolean };
+export type StoredCase = { reason?: string; steps?: Step[]; outcome?: LostOutcome; closedAt?: string; outcomeNote?: string; reopened?: boolean; resolvedAt?: string };
 export type Bucket = "action" | "owner" | "linkedin" | "done" | "lost";
 
 // Phase = how we prioritise by account status: a restricted RENTED account (a renter is blocked,
@@ -42,6 +42,7 @@ export function matchApp<T extends { email: string; linkedinUrl: string | null }
 export const STEP_TITLES: Record<StepKind, string> = {
   email: "Owner contacted", qr: "QR recovery link", id: "ID verification",
   form: "Appeal form", li: "LinkedIn decision", note: "Note",
+  gl: "GoLogin login", pw: "Password reset", relist: "Relisted", handback: "Handed back",
 };
 export const OUT_LABEL: Record<StepKind, Record<Outcome, string>> = {
   email: { ok: "Sent", fail: "Bounced", pending: "Queued" },
@@ -50,11 +51,15 @@ export const OUT_LABEL: Record<StepKind, Record<Outcome, string>> = {
   form: { ok: "Accepted", fail: "Rejected", pending: "Under review" },
   li: { ok: "Restored", fail: "Rejected", pending: "Waiting" },
   note: { ok: "Note", fail: "Issue", pending: "Open" },
+  gl: { ok: "Done", fail: "Failed", pending: "Pending" },
+  pw: { ok: "Done", fail: "Failed", pending: "Pending" },
+  relist: { ok: "Relisted", fail: "Failed", pending: "Pending" },
+  handback: { ok: "Handed back", fail: "Failed", pending: "Pending" },
 };
-// Steps the team logs by hand. "email" = a manual "owner contacted" entry (e.g. a Telegram/
-// WhatsApp DM) that counts as the outreach step; it overrides the auto-derived email signal. QR
-// stays driven by its own actions.
+// Steps the team logs by hand via "Log a step". "email" = a manual "owner contacted" entry.
 export const LOGGABLE: StepKind[] = ["email", "id", "form", "li", "note"];
+// All kinds that can live in recovery_case.steps (the hand-logged ones plus the workflow actions).
+export const STORED_KINDS: StepKind[] = ["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"];
 
 export type CaseAccount = {
   id: string;
@@ -109,6 +114,8 @@ export function parseStoredCase(v: unknown): StoredCase {
     steps: Array.isArray(c.steps) ? c.steps : [],
     outcome, closedAt: typeof c.closedAt === "string" ? c.closedAt : undefined,
     outcomeNote: typeof c.outcomeNote === "string" ? c.outcomeNote : undefined,
+    reopened: c.reopened === true || undefined,
+    resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt : undefined,
   };
 }
 
@@ -135,9 +142,9 @@ function derivedSteps(a: CaseAccount): Step[] {
 
 export function buildCase(a: CaseAccount): { reason: string; steps: Step[] } {
   const stored = parseStoredCase(a.recoveryCase);
-  const logged = (stored.steps || []).filter((s) => LOGGABLE.includes(s.k) && s.at);
-  // A hand-logged "owner contacted" (email) step overrides the auto-derived one, so we don't show both.
-  const derived = derivedSteps(a).filter((ds) => !(ds.k === "email" && logged.some((l) => l.k === "email")));
+  const logged = (stored.steps || []).filter((s) => STORED_KINDS.includes(s.k) && s.at);
+  // A hand-logged email/qr step overrides the auto-derived one, so we don't show both.
+  const derived = derivedSteps(a).filter((ds) => !((ds.k === "email" || ds.k === "qr") && logged.some((l) => l.k === ds.k)));
   const steps = [...derived, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   const log = asLog(a.restrictionLog);
   const lastRestricted = [...log].reverse().find((e) => e.event === "restricted");
@@ -177,7 +184,7 @@ export type DerivedCase = {
 export function deriveCase(
   a: CaseAccount,
   built: { reason: string; steps: Step[] },
-  opts: { now?: number; staleDays?: number; ownerSilentHours?: number } = {},
+  opts: { now?: number; staleDays?: number; ownerSilentHours?: number; cooldownDays?: number } = {},
 ): DerivedCase {
   const now = opts.now ?? Date.now();
   const staleDays = opts.staleDays ?? 7;
@@ -188,7 +195,9 @@ export function deriveCase(
   const log = asLog(a.restrictionLog);
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRecovered = [...log].reverse().find((e) => e.event === "recovered");
-  const resolvedAt = !openSince && lastRecovered ? Date.parse(lastRecovered.at) : null;
+  // Recovered = LinkedIn restored it. The case STAYS OPEN through the post-recovery workflow
+  // (secure → warm-up → relist/hand-back); stored.resolvedAt marks it even before the log is read.
+  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRecovered ? Date.parse(lastRecovered.at) : null);
   // An explicit admin mark wins; otherwise backtrack "permanently restricted" from the account
   // status (retired), the pipeline issue flag, or a note — unless the case was explicitly reopened.
   // Perma applies even with no open restrictedAt (a retired account may have had it cleared).
@@ -205,9 +214,25 @@ export function deriveCase(
   const em = lastOf(steps, "email"), qr = lastOf(steps, "qr"), id = lastOf(steps, "id"), fm = lastOf(steps, "form"), li = lastOf(steps, "li");
   const sentAt = iso(a.recoverySentAt);
 
+  const cooldownDays = opts.cooldownDays ?? 30;
   let next = "Awaiting owner", urgent = false, bucket: Bucket = "owner";
   if (lostOutcome) { next = `${LOST_LABEL[lostOutcome]}${closedAt ? ` · ${rel(closedAt, now)}` : ""}`; bucket = "lost"; }
-  else if (resolvedAt) { next = `Recovered ${rel(resolvedAt, now)}`; bucket = "done"; }
+  else if (resolvedAt) {
+    // Post-recovery lifecycle: secure the account, warm up (status = under construction for the
+    // cooldown), then relist (→ available) or hand back to the renter.
+    const gl = lastOf(steps, "gl"), pw = lastOf(steps, "pw"), relist = lastOf(steps, "relist"), handback = lastOf(steps, "handback");
+    const rented = a.status === "rented";
+    if (relist) { next = `Relisted ${rel(Date.parse(relist.at), now)}`; bucket = "done"; }
+    else if (handback) { next = "Back with renter · gentle use"; bucket = "done"; }
+    else if (!gl || !pw) { next = "Log in on GoLogin + reset password"; urgent = true; bucket = "action"; }
+    else if (rented) { next = "Hand back to renter (gentle)"; urgent = true; bucket = "action"; }
+    else {
+      const leftDays = Math.ceil((resolvedAt + cooldownDays * 86400e3 - now) / 86400e3);
+      if (leftDays > 0) { next = `Warm-up · relist in ${leftDays}d`; bucket = "done"; }
+      else { next = "Ready to relist"; urgent = true; bucket = "action"; }
+    }
+  }
+  else if (qr && qr.o === "fail" && !id) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
   else if (em && em.o === "fail") { next = "Email bounced — get new contact"; urgent = true; bucket = "action"; }
   else if (!em) { next = "Send restriction email"; urgent = true; bucket = "action"; }
@@ -265,4 +290,112 @@ export function deriveCase(
   ];
 
   return { next, urgent, bucket, cnt, restrictedMs, resolvedAt, closedAt, lostOutcome, openSince, lastErr, phase: phaseOf(a.status), flags, chain };
+}
+
+// ---- Recovery workflow: the 5-step guided runbook for a case, from contacting the owner through
+// post-recovery securing + warm-up + relist/hand-back. Pure: returns card STATES + which actions
+// are available (as ids the UI maps to API calls); no DB access. ----
+export type WfState = "done" | "todo" | "wait" | "fail" | "skip" | "lock";
+export type WfAction = { id: string; label: string; variant: "primary" | "danger" | "secondary" };
+export type WfCard = {
+  n: number; title: string; sub: string; state: WfState; stLbl: string; stFg: string; isCurrent: boolean;
+  note?: string; checks?: Array<{ key: "gl" | "pw"; label: string; on: boolean }>; hasPw?: boolean;
+  hasBar?: boolean; pct?: number; barLabel?: string; actions: WfAction[];
+};
+export type Workflow = { cards: WfCard[]; next: string; level: string; current: number | null };
+
+const WF_LBL: Record<WfState, [string, string]> = {
+  done: ["Completed", "#0f7a3d"], todo: ["Not completed", "#5b6779"], wait: ["In progress · waiting", "#b45309"],
+  fail: ["Didn't work", "#b91c1c"], skip: ["Skipped", "#9aa3b2"], lock: ["Locked", "#9aa3b2"],
+};
+
+export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { now?: number; cooldownDays?: number } = {}): Workflow {
+  const now = opts.now ?? Date.now();
+  const cd = opts.cooldownDays ?? 30;
+  const DAY = 86400e3;
+  const L = (k: StepKind) => lastOf(built.steps, k);
+  const qr = L("qr"), id = L("id"), fm = L("form"), gl = L("gl"), pw = L("pw"), rl = L("relist"), hb = L("handback");
+  const stored = parseStoredCase(a.recoveryCase);
+  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : null;
+  const rec = !!resolvedAt, lost = !!stored.outcome, rented = a.status === "rented";
+  type Pre = Omit<WfCard, "stLbl" | "stFg" | "isCurrent">;
+  const cards: Pre[] = [];
+  const mk = (n: number, title: string, sub: string, state: WfState, extra: Partial<Pre> = {}) => cards.push({ n, title, sub, state, actions: [], ...extra });
+
+  // 1 — QR
+  {
+    let st: WfState = !qr ? "todo" : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
+    if (!qr && (rec || id || fm)) st = "skip";
+    const actions: WfAction[] = [];
+    if (!rec && !lost && st !== "skip") {
+      if (!qr) actions.push({ id: "qr_sent", label: "Mark QR link sent", variant: "primary" });
+      if (qr && qr.o === "pending") actions.push({ id: "qr_ok", label: "Worked → recovered", variant: "primary" }, { id: "qr_fail", label: "Didn't work", variant: "danger" });
+    }
+    mk(1, "Send QR to owner", qr && qr.o === "pending" ? `Sent ${rel(Date.parse(qr.at), now)} · waiting for them to scan` : "Capture the QR from GoLogin, send the private link", st, { actions, note: st === "todo" ? "Paste the QR in the QR recovery box below to send it." : "" });
+  }
+  // 2 — ID verification form (opens when QR fails)
+  {
+    const open = !!(qr && qr.o === "fail");
+    const st: WfState = id ? (id.o === "ok" ? "done" : id.o === "fail" ? "fail" : "wait") : (rec || fm) ? "skip" : open ? "todo" : "lock";
+    const actions: WfAction[] = [];
+    if (!rec && !lost && (open || id)) {
+      if (!id) actions.push({ id: "id_sent", label: "Mark form sent", variant: "primary" });
+      if (id && id.o === "pending") actions.push({ id: "id_ok", label: "Worked → recovered", variant: "primary" }, { id: "id_fail", label: "Didn't work", variant: "danger" });
+    }
+    mk(2, "Send ID verification form", id?.err || "If the QR doesn't work — owner submits ID through LinkedIn's form", st, { actions });
+  }
+  // 3 — Appeal (opens when ID fails)
+  {
+    const open = !!(id && id.o === "fail");
+    const st: WfState = fm ? (fm.o === "ok" ? "done" : fm.o === "fail" ? "fail" : "wait") : rec ? "skip" : open ? "todo" : "lock";
+    const actions: WfAction[] = [];
+    if (!rec && !lost && (open || fm)) {
+      if (!fm) actions.push({ id: "form_sent", label: "Mark appeal submitted", variant: "primary" });
+      if (fm && fm.o === "pending") actions.push({ id: "form_ok", label: "Recovered", variant: "primary" }, { id: "form_fail", label: "Rejected", variant: "danger" });
+      if (fm && fm.o === "fail") actions.push({ id: "perma", label: "Mark permanently restricted", variant: "danger" });
+    }
+    mk(3, "Send appeal", fm && fm.o === "pending" ? `Submitted ${rel(Date.parse(fm.at), now)} · LinkedIn usually answers in 3–10 days` : "Last resort — appeal with owner ID + explanation", st, { actions });
+  }
+  // 4 — GoLogin login + password reset (after recovery)
+  {
+    const st: WfState = gl && pw ? "done" : rec ? "todo" : "lock";
+    mk(4, "Log in on GoLogin + reset password", "LinkedIn normally asks for a fresh login and new password after recovery", st, {
+      checks: [{ key: "gl", label: "Logged in via GoLogin profile", on: !!gl }, { key: "pw", label: "Password reset & saved", on: !!pw }],
+      hasPw: rec && !pw,
+    });
+  }
+  // 5 — Hand back (rented) or warm-up → relist (not rented)
+  {
+    const ready = rec && !!gl && !!pw;
+    const base = resolvedAt || 0; // warm-up counted from recovery ("construction for 30 days after restriction")
+    if (rented && !rl) {
+      mk(5, "Hand back to renter", "Rented — no cooldown. Keep activity gentle for the first 2 weeks.", hb ? "done" : ready ? "todo" : "lock", {
+        actions: ready && !hb ? [{ id: "handback", label: "Mark handed back", variant: "primary" }] : [],
+        note: ready ? `Tell ${a.renterName || "the renter"}: low volume, ~5–10 connection requests/day, no bulk messaging.` : "",
+      });
+    } else {
+      const end = base + cd * DAY, left = base ? Math.max(0, Math.ceil((end - now) / DAY)) : cd;
+      const pct = ready && base ? Math.min(100, Math.round(((now - base) / (cd * DAY)) * 100)) : 0;
+      mk(5, `Warm up ${cd} days → relist`, "Not rented — under construction, gentle activity only, then mark available", rl ? "done" : ready ? (left ? "wait" : "todo") : "lock", {
+        hasBar: ready && !rl, pct, barLabel: left ? `Day ${Math.min(cd, Math.floor((now - base) / DAY) + 1)} of ${cd} · relist ${new Date(end).toISOString().slice(0, 10)}` : "Cooldown done",
+        note: ready && !rl ? "Warm-up: log in every few days, a few likes/views, ≤5 connection requests/day." : "",
+        actions: ready && !rl ? [{ id: "relist", label: left ? "Relist early" : "Relist as available", variant: left ? "secondary" : "primary" }] : [],
+      });
+    }
+  }
+
+  const lastTouched = cards.reduce((m, x) => (["done", "fail", "wait"].includes(x.state) ? x.n : m), 0);
+  let current: number | null = cards.find((x) => (x.state === "todo" || x.state === "wait") && x.n >= lastTouched)?.n ?? null;
+  if (current == null) for (const x of cards) if (x.state === "todo" || x.state === "wait") current = x.n;
+  if (lost) current = null;
+  const doneN = cards.filter((x) => x.state === "done" || x.state === "skip").length;
+  const out: WfCard[] = cards.map((x) => {
+    let [stLbl, stFg] = WF_LBL[x.state];
+    const isCurrent = x.n === current;
+    if (isCurrent && x.state === "todo") { stLbl = "Not completed · next step"; stFg = "#1d4ed8"; }
+    return { ...x, stLbl, stFg, isCurrent };
+  });
+  const next = lost && stored.outcome ? `${LOST_LABEL[stored.outcome]} — case closed` : current ? cards[current - 1].title : "All done";
+  const level = `Step ${current ?? 5}/5${doneN === 5 ? " · done" : ""}`;
+  return { cards: out, next, level, current };
 }

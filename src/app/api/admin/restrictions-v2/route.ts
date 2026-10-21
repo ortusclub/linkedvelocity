@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { buildCase, deriveCase, matchApp, notesSaysPerma, type CaseAccount } from "@/lib/recovery-case";
+import { buildCase, deriveCase, buildWorkflow, matchApp, notesSaysPerma, parseStoredCase, type CaseAccount } from "@/lib/recovery-case";
 import type { RestrictionEvent } from "@/lib/restriction";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const staleDays = Math.min(30, Math.max(1, Number(url.searchParams.get("staleDays")) || 7));
     const ownerSilentHours = Math.min(168, Math.max(6, Number(url.searchParams.get("ownerSilentHours")) || 48));
+    const cooldownDays = Math.min(90, Math.max(1, Number(url.searchParams.get("cooldownDays")) || 30));
     const now = Date.now();
 
     const accounts = await prisma.linkedInAccount.findMany({
@@ -51,9 +52,12 @@ export async function GET(req: Request) {
       return !!notesSaysPerma(a.notes);
     };
 
-    // Keep accounts with an open restriction, a recent recovery, or a permanently-restricted signal.
+    // Keep accounts with an open restriction, a recent recovery, a live post-recovery workflow
+    // (recovered but not yet relisted/handed back), or a permanently-restricted signal.
     const relevant = accounts.filter((a) => {
       if (a.restrictedAt) return true;
+      const sc = parseStoredCase(a.recoveryCase);
+      if (sc.resolvedAt && !sc.steps?.some((s) => s.k === "relist" || s.k === "handback")) return true;
       const rec = [...asLog(a.restrictionLog)].reverse().find((e) => e.event === "recovered");
       if (rec && now - Date.parse(rec.at) <= RECOVERED_WINDOW_MS) return true;
       return permaFromSignals(a);
@@ -95,7 +99,8 @@ export async function GET(req: Request) {
         outreachEmailAt: outreachEmailAtFor(app?.id),
       };
       const built = buildCase(acct);
-      const d = deriveCase(acct, built, { now, staleDays, ownerSilentHours });
+      const d = deriveCase(acct, built, { now, staleDays, ownerSilentHours, cooldownDays });
+      const wf = buildWorkflow(acct, built, { now, cooldownDays });
 
       // Restriction history: pair restricted→recovered events from the log (newest first).
       const log = asLog(a.restrictionLog);
@@ -123,6 +128,7 @@ export async function GET(req: Request) {
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
+        wf: wf.cards, wfNext: wf.next, wfLevel: wf.level,
         renterName: renterByAccount.get(a.id) || null,
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,

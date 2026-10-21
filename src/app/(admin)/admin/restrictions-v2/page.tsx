@@ -1,17 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 
 const F_SANS = "var(--font-sans),'Plus Jakarta Sans',system-ui,sans-serif";
 const F_GRO = "var(--font-grotesk),'Space Grotesk',system-ui,sans-serif";
 const MONO = "'JetBrains Mono',ui-monospace,monospace";
 
-type StepKind = "email" | "qr" | "id" | "form" | "li" | "note";
+type StepKind = "email" | "qr" | "id" | "form" | "li" | "note" | "gl" | "pw" | "relist" | "handback";
 type Outcome = "ok" | "fail" | "pending" | "none" | "na";
 type Step = { k: StepKind; o: "ok" | "fail" | "pending"; at: string; err?: string; note?: string };
 type Chain = { k: StepKind | "na"; label: string; outcome: Outcome; tip: string };
 type Flag = { label: string; kind: "repeat" | "stale" | "renter" };
 type Hist = { reason: string; days: number; at: string; how: string; open: boolean };
+type WfAction = { id: string; label: string; variant: "primary" | "danger" | "secondary" };
+type WfCard = { n: number; title: string; sub: string; state: string; stLbl: string; stFg: string; isCurrent: boolean; note?: string; checks?: Array<{ key: "gl" | "pw"; label: string; on: boolean }>; hasPw?: boolean; hasBar?: boolean; pct?: number; barLabel?: string; actions: WfAction[] };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
   linkedinUrl: string | null; poc: string; phase: { label: string; pr: number };
@@ -20,6 +22,7 @@ type Row = {
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
+  wf: WfCard[]; wfNext: string; wfLevel: string;
 };
 
 // PoC avatar colour from the name (same scheme as inventory v2), so a PoC looks identical here.
@@ -37,7 +40,7 @@ const ST: Record<string, [string, string, string]> = {
   available: ["Onboarded", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
 };
 const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"] };
-const TITLES: Record<StepKind, string> = { email: "Owner contacted", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note" };
+const TITLES: Record<StepKind, string> = { email: "Owner contacted", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note", gl: "GoLogin login", pw: "Password reset", relist: "Relisted", handback: "Handed back" };
 
 const dur = (ms: number) => { const h = Math.floor(ms / 3600e3); return h < 24 ? h + "h" : Math.floor(h / 24) + "d " + (h % 24) + "h"; };
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -160,6 +163,55 @@ function ContactCreds({ r }: { r: Row }) {
   );
 }
 
+// The 5-step recovery runbook. Each card's buttons map to an API action; checkboxes toggle the
+// GoLogin / password-reset steps (the password field saves the new password to the account).
+const WF_MAP: Record<string, Record<string, unknown>> = {
+  qr_sent: { action: "add_step", kind: "qr", outcome: "pending" }, qr_ok: { action: "add_step", kind: "qr", outcome: "ok" }, qr_fail: { action: "add_step", kind: "qr", outcome: "fail", note: "QR didn't work" },
+  id_sent: { action: "add_step", kind: "id", outcome: "pending" }, id_ok: { action: "add_step", kind: "id", outcome: "ok" }, id_fail: { action: "add_step", kind: "id", outcome: "fail", note: "ID verification failed" },
+  form_sent: { action: "add_step", kind: "form", outcome: "pending" }, form_ok: { action: "add_step", kind: "form", outcome: "ok" }, form_fail: { action: "add_step", kind: "form", outcome: "fail", note: "Appeal rejected" },
+  perma: { action: "mark_lost", outcome: "perma" }, relist: { action: "add_step", kind: "relist", outcome: "ok" }, handback: { action: "add_step", kind: "handback", outcome: "ok" },
+};
+function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
+  const [pw, setPw] = useState("");
+  const run = (id: string) => { const b = WF_MAP[id]; if (b) post(b); };
+  const toggle = (kind: "gl" | "pw") => post({ action: "toggle_step", kind, ...(kind === "pw" && pw.trim() ? { password: pw.trim() } : {}) });
+  const bstyle = (v: string): CSSProperties => ({ border: v === "primary" ? "none" : `1px solid ${v === "danger" ? "#f3c7c7" : "#dde1e8"}`, background: v === "primary" ? "#2563eb" : "#fff", color: v === "primary" ? "#fff" : v === "danger" ? "#b91c1c" : "#0b1220", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" });
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Recovery workflow</span>
+        <span style={{ font: `500 13px ${F_SANS}`, color: "#5b6779" }}>Next: <b style={{ color: "#0b1220" }}>{r.wfNext}</b></span>
+        <span style={{ flex: 1 }} />
+        <span style={{ font: `700 12px ${F_SANS}`, padding: "3px 10px", borderRadius: 999, background: "#ecfdf3", color: "#0f7a3d" }}>{r.wfLevel}</span>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(190px,1fr))", gap: 10, alignItems: "start" }}>
+          {r.wf.map((w) => (
+            <div key={w.n} style={{ border: `1.5px solid ${w.isCurrent ? "#2563eb" : w.state === "fail" ? "#f3c7c7" : "#e3e6ec"}`, background: w.state === "lock" || w.state === "skip" ? "#fafbfc" : "#fff", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
+              <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Step {w.n}</span>
+              <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: w.stFg }}>{w.stLbl}</span>
+              <span style={{ font: `700 14px ${F_SANS}`, color: w.state === "lock" || w.state === "skip" ? "#8a93a3" : "#0b1220" }}>{w.title}</span>
+              <span style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.45, color: "#5b6779" }}>{w.sub}</span>
+              {w.checks?.map((ck) => (
+                <label key={ck.key} style={{ display: "flex", gap: 8, alignItems: "center", font: `600 12.5px ${F_SANS}`, color: "#0b1220", cursor: "pointer" }}>
+                  <input type="checkbox" checked={ck.on} onChange={() => toggle(ck.key)} style={{ width: 15, height: 15, accentColor: "#16a34a" }} />{ck.label}
+                </label>
+              ))}
+              {w.hasPw && <input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password (saves to account)" style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12px ${MONO}`, color: "#0b1220", outline: "none", minWidth: 0 }} />}
+              {w.hasBar && <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ height: 6, borderRadius: 999, background: "#eef0f4", overflow: "hidden" }}><div style={{ height: "100%", width: `${w.pct || 0}%`, background: "#16a34a", borderRadius: 999 }} /></div>
+                <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{w.barLabel}</span>
+              </div>}
+              {w.note && <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3", lineHeight: 1.4 }}>{w.note}</span>}
+              {w.actions.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>{w.actions.map((act) => <button key={act.id} onClick={() => run(act.id)} style={bstyle(act.variant)}>{act.label}</button>)}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: number }) {
   const [fk, setFk] = useState<StepKind>("id");
   const [fo, setFo] = useState<"ok" | "fail" | "pending">("fail");
@@ -206,6 +258,8 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         <a href={`/admin/rentals?q=${encodeURIComponent(r.email || "")}`} style={{ font: `700 12px ${F_SANS}`, color: "#2563eb" }}>Renter record →</a>
         <a href="/admin/accounts" style={{ font: `700 12px ${F_SANS}`, color: "#2563eb" }}>Account mail →</a>
       </div>
+
+      <WorkflowPanel r={r} post={post} />
 
       <ContactCreds r={r} />
 
