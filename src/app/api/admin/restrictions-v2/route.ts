@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { buildCase, deriveCase, type CaseAccount } from "@/lib/recovery-case";
+import { buildCase, deriveCase, matchApp, type CaseAccount } from "@/lib/recovery-case";
 import type { RestrictionEvent } from "@/lib/restriction";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,7 @@ export async function GET(req: Request) {
       where: { status: { not: "removed" } },
       select: {
         id: true, linkedinName: true, loginEmail: true, status: true, linkedinVerified: true, poc: true,
+        linkedinUrl: true, notes: true,
         restrictedAt: true, restrictionLog: true,
         recoveryQrUrl: true, recoveryQrAt: true, recoverySentAt: true, recoverySentVia: true,
         recoveryOutcome: true, recoveryOutcomeAt: true, recoveryCase: true,
@@ -56,6 +57,16 @@ export async function GET(req: Request) {
       if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
     }
 
+    // Resolve the LV PoC the SAME way inventory/onboarding do: the linked application's poc,
+    // falling back to the account's own. Matched by LinkedIn URL then Owner-email tag.
+    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true } });
+    const pocByAccount = new Map<string, string>();
+    for (const a of relevant) {
+      const app = matchApp(apps, a);
+      const poc = app?.poc || a.poc || "";
+      if (poc) pocByAccount.set(a.id, poc);
+    }
+
     const rows = relevant.map((a) => {
       const acct: CaseAccount = { ...a, renterName: renterByAccount.get(a.id) || null };
       const built = buildCase(acct);
@@ -81,7 +92,7 @@ export async function GET(req: Request) {
 
       return {
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
-        poc: a.poc || "", phase: d.phase,
+        poc: pocByAccount.get(a.id) || "", phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,

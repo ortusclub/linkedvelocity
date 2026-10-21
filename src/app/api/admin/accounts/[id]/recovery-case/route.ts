@@ -4,9 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { restrictionUpdate, type RestrictionEvent } from "@/lib/restriction";
-import { parseStoredCase, LOGGABLE, LOST_LABEL, type Step, type StoredCase } from "@/lib/recovery-case";
-
-const POCS = ["", "Ardi", "Milee", "Sam", "Ortus"] as const;
+import { parseStoredCase, LOGGABLE, LOST_LABEL, matchApp, type Step, type StoredCase } from "@/lib/recovery-case";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +16,7 @@ export const dynamic = "force-dynamic";
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("add_step"), kind: z.enum(["id", "form", "li", "note"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
-  z.object({ action: z.literal("set_poc"), poc: z.enum(POCS) }),
+  z.object({ action: z.literal("set_poc"), poc: z.string().max(80) }),
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("mark_lost"), outcome: z.enum(["perma", "nocontact"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("reopen") }),
@@ -62,7 +60,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     if (input.action === "set_poc") {
-      await prisma.linkedInAccount.update({ where: { id }, data: { poc: input.poc || null } });
+      // Write to the linked application's poc (where inventory/onboarding keep it), falling back
+      // to the account's own — so the PoC stays consistent across every view.
+      const poc = input.poc.trim() || null;
+      const acc = await prisma.linkedInAccount.findUnique({ where: { id }, select: { linkedinUrl: true, notes: true } });
+      const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true } });
+      const app = acc ? matchApp(apps, acc) : null;
+      // Keep both in sync (like the pipeline's PoC field): the linked application AND the account.
+      if (app) await prisma.ambassadorApplication.update({ where: { id: app.id }, data: { poc } });
+      await prisma.linkedInAccount.update({ where: { id }, data: { poc } });
       return NextResponse.json({ ok: true });
     }
 
@@ -85,6 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const was = stored.outcome ? LOST_LABEL[stored.outcome] : "closed";
       stored.steps.push({ k: "note", o: "pending", at: now.toISOString(), note: `Reopened (was ${was})` });
       delete stored.outcome; delete stored.closedAt; delete stored.outcomeNote;
+      stored.reopened = true; // suppress a "permanently restricted" note from re-closing the case
       await prisma.linkedInAccount.update({ where: { id }, data: { recoveryCase: stored as unknown as Prisma.InputJsonValue } });
       return NextResponse.json({ ok: true });
     }
