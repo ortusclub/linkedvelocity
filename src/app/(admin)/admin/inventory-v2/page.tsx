@@ -1325,6 +1325,22 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(done).catch(done); else done();
   };
   const CopyRentBtn = () => <button onClick={copyRentLink} style={{ border: `1.5px solid ${BLUE}`, background: "#fff", color: BLUE, borderRadius: 10, padding: "8px 14px", font: `700 13px ${F}`, cursor: "pointer" }}>{copied ? "✓ Link copied" : "Copy rent link"}</button>;
+  // Mint a fresh GoLogin share link (the URL embeds the profile name/email). Needed when
+  // the profile was renamed or the login email changed out-of-band, so the stored link
+  // still carries the old name. Runs server-side (prod has the GoLogin token).
+  const [regenBusy, setRegenBusy] = useState(false);
+  const regenShareLink = async () => {
+    if (!r.gologinProfileId) return;
+    if (!window.confirm("Regenerate this account's GoLogin share link?\n\nDeletes the current link and mints a fresh one carrying the profile's current name. Use this after the profile was renamed / the login email changed outside the editor.")) return;
+    setRegenBusy(true);
+    try {
+      const res = await fetch(`/api/admin/accounts/${r.id}/share-link/regenerate`, { method: "POST" });
+      const d = await res.json().catch(() => ({} as { error?: string; shareLink?: string }));
+      if (!res.ok) { alert(`Regenerate failed: ${d.error || res.status}`); return; }
+      alert(`New GoLogin share link saved:\n${d.shareLink || "(saved)"}`);
+      reload();
+    } finally { setRegenBusy(false); }
+  };
   const [joined, setJoined] = useState(r.linkedinJoinedAt ? r.linkedinJoinedAt.slice(0, 7) : estMonthFromAge(r.accountAgeMonths));
   const [connVal, setConnVal] = useState(String(r.connectionCount));
   // Catalogue fields (photo + headline/location/industry) — the data needed to list an account.
@@ -1489,7 +1505,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
             {/* Column 2 — Log in */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
               <Card pad="14px">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><a href={`/admin/accounts/${r.id}`} target="_blank" rel="noreferrer" title="Open the full editor — login/personal/work email, password, GoLogin, pricing… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>Edit account ↗</a>{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><a href={`/admin/accounts/${r.id}`} target="_blank" rel="noreferrer" title="Open the full editor — login/personal/work email, password, GoLogin, pricing… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>Edit account ↗</a>{r.gologinProfileId && <button onClick={regenShareLink} disabled={regenBusy || busy} title="Regenerate the GoLogin share link so it carries the profile's current name (use after a rename / out-of-band email change)" style={{ font: `700 12px ${F}`, color: BLUE, background: "transparent", border: `1px solid ${BLUE}`, borderRadius: 7, padding: "3px 9px", cursor: regenBusy ? "wait" : "pointer", opacity: regenBusy ? 0.6 : 1 }}>{regenBusy ? "Regenerating…" : "↻ Regen link"}</button>}{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
                 <Totp accountId={r.id} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Login email (work)</Lbl><Copyable value={r.loginEmail} /></div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Personal email</Lbl><Copyable value={r.personalEmail} /></div>
