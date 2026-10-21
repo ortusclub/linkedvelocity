@@ -242,6 +242,11 @@ model LinkedInAccount {
   recoverySentVia       String?       @map("recovery_sent_via")
   recoveryOutcome       String?       @map("recovery_outcome")
   recoveryOutcomeAt     DateTime?     @map("recovery_outcome_at")
+  // Restrictions v2 case tracker: the OPEN restriction case's reason + manually-logged recovery
+  // steps (ID verification / appeal form / LinkedIn decision / note). Email + QR steps are
+  // derived from the recovery* fields above, not stored here. Cleared on recover (archived into
+  // the restrictionLog "recovered" event). Shape: { reason?: string, steps: [{ k, o, at, err?, note? }] }.
+  recoveryCase          Json?         @map("recovery_case")
   trialEndsAt           DateTime?     @map("trial_ends_at")   // set when status=trial: a 3-day inventory hold; past this = "trial expired", awaiting admin mark-back
   // Short-term reservation: while heldUntil is in the future the account is hidden from every
   // catalogue (public + unlisted) and the normal checkout, so it can't be snagged. Status stays

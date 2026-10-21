@@ -29,7 +29,7 @@ export async function ownerRecoveryInfo(access: string): Promise<OwnerRecoveryIn
 }
 
 // Owner-facing: record what the owner reported after trying the QR — "worked" (back in) or
-// "stuck" (still can't). Surfaces on /admin/recover so the team knows whether to move on or
+// "stuck" (still can't). Surfaces on /admin/restrictions-v2 so the team knows whether to move on or
 // step in. Token-gated by the same 24h private link; nothing sensitive is written or read.
 export async function recordOwnerRecoveryOutcome(access: string, outcome: RecoveryOutcome): Promise<{ ok: true }> {
   const accountId = await readAccountCodeLink(access);
