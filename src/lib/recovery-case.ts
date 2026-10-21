@@ -10,8 +10,19 @@ import type { RestrictionEvent } from "@/lib/restriction";
 export type StepKind = "email" | "qr" | "id" | "form" | "li" | "note";
 export type Outcome = "ok" | "fail" | "pending";
 export type Step = { k: StepKind; o: Outcome; at: string; err?: string; note?: string };
-export type StoredCase = { reason?: string; steps?: Step[] };
-export type Bucket = "action" | "owner" | "linkedin" | "done";
+export type LostOutcome = "perma" | "nocontact";
+export type StoredCase = { reason?: string; steps?: Step[]; outcome?: LostOutcome; closedAt?: string; outcomeNote?: string };
+export type Bucket = "action" | "owner" | "linkedin" | "done" | "lost";
+
+// Phase = how we prioritise by account status: a restricted RENTED account (a renter is blocked,
+// losing us money) outranks an onboarded one, which outranks one still under construction.
+export const PHASE: Record<string, { label: string; pr: number }> = {
+  rented: { label: "Rented", pr: 1 }, available: { label: "Onboarded", pr: 2 }, under_construction: { label: "Under construction", pr: 3 },
+};
+export const phaseOf = (status: string) => PHASE[status] || { label: status, pr: 4 };
+
+// Terminal "lost" outcomes — the case is closed without recovering the account.
+export const LOST_LABEL: Record<LostOutcome, string> = { perma: "Permanently restricted", nocontact: "Can't contact owner" };
 
 export const STEP_TITLES: Record<StepKind, string> = {
   email: "Restriction email to owner", qr: "QR recovery link", id: "ID verification",
@@ -43,6 +54,7 @@ export type CaseAccount = {
   recoveryOutcome: string | null;
   recoveryOutcomeAt: Date | string | null;
   recoveryCase: unknown;
+  poc?: string | null;
   renterName?: string | null;
 };
 
@@ -52,7 +64,13 @@ const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as Rest
 export function parseStoredCase(v: unknown): StoredCase {
   if (!v || typeof v !== "object") return { steps: [] };
   const c = v as StoredCase;
-  return { reason: typeof c.reason === "string" ? c.reason : undefined, steps: Array.isArray(c.steps) ? c.steps : [] };
+  const outcome = c.outcome === "perma" || c.outcome === "nocontact" ? c.outcome : undefined;
+  return {
+    reason: typeof c.reason === "string" ? c.reason : undefined,
+    steps: Array.isArray(c.steps) ? c.steps : [],
+    outcome, closedAt: typeof c.closedAt === "string" ? c.closedAt : undefined,
+    outcomeNote: typeof c.outcomeNote === "string" ? c.outcomeNote : undefined,
+  };
 }
 
 // Email + QR steps reconstructed from the recovery_* fields, so the chain reflects the owner
@@ -96,8 +114,11 @@ export type DerivedCase = {
   cnt: number;
   restrictedMs: number;
   resolvedAt: number | null;
+  closedAt: number | null;
+  lostOutcome: LostOutcome | null;
   openSince: number | null;
   lastErr: string;
+  phase: { label: string; pr: number };
   flags: Array<{ label: string; kind: "repeat" | "stale" | "renter" }>;
   chain: Array<{ k: StepKind | "na"; label: string; outcome: Outcome | "none" | "na"; tip: string }>;
 };
@@ -112,17 +133,22 @@ export function deriveCase(
   const ownerSilentHours = opts.ownerSilentHours ?? 48;
   const H = 3600e3;
   const steps = built.steps;
+  const stored = parseStoredCase(a.recoveryCase);
   const log = asLog(a.restrictionLog);
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRecovered = [...log].reverse().find((e) => e.event === "recovered");
   const resolvedAt = !openSince && lastRecovered ? Date.parse(lastRecovered.at) : null;
+  const lostOutcome = openSince && stored.outcome ? stored.outcome : null; // "lost" only applies to an open restriction
+  const closedAt = lostOutcome && stored.closedAt ? Date.parse(stored.closedAt) : null;
 
   const em = lastOf(steps, "email"), qr = lastOf(steps, "qr"), id = lastOf(steps, "id"), fm = lastOf(steps, "form"), li = lastOf(steps, "li");
   const sentAt = iso(a.recoverySentAt);
 
   let next = "Awaiting owner", urgent = false, bucket: Bucket = "owner";
-  if (resolvedAt) { next = `Recovered ${rel(resolvedAt, now)}`; bucket = "done"; }
+  if (lostOutcome) { next = `${LOST_LABEL[lostOutcome]}${closedAt ? ` · ${rel(closedAt, now)}` : ""}`; bucket = "lost"; }
+  else if (resolvedAt) { next = `Recovered ${rel(resolvedAt, now)}`; bucket = "done"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
+  else if (em && em.o === "fail") { next = "Email bounced — get new contact"; urgent = true; bucket = "action"; }
   else if (!em) { next = "Send restriction email"; urgent = true; bucket = "action"; }
   else if (a.recoveryQrAt && !a.recoverySentAt) { next = "Send QR link to owner"; urgent = true; bucket = "action"; }
   else if (id && id.o === "fail" && !fm) { next = "Submit appeal form"; urgent = true; bucket = "action"; }
@@ -140,7 +166,7 @@ export function deriveCase(
 
   // Duration of the current/last case.
   let restrictedMs = 0;
-  if (openSince) restrictedMs = now - openSince;
+  if (openSince) restrictedMs = (closedAt || now) - openSince;
   else if (resolvedAt) {
     const restrictBefore = [...log].filter((e) => e.event === "restricted" && Date.parse(e.at) <= resolvedAt).pop();
     restrictedMs = restrictBefore ? resolvedAt - Date.parse(restrictBefore.at) : 0;
@@ -148,11 +174,12 @@ export function deriveCase(
 
   const errs = steps.filter((s) => s.err);
   const lastErr = errs.length ? errs[errs.length - 1].err || "" : "";
+  const openCase = !resolvedAt && !lostOutcome;
 
   const flags: DerivedCase["flags"] = [];
   if (cnt >= 3) flags.push({ label: `${ord(cnt)} restriction`, kind: "repeat" });
-  if (!resolvedAt && restrictedMs / H / 24 > staleDays) flags.push({ label: `Stale ${Math.floor(restrictedMs / H / 24)}d`, kind: "stale" });
-  if (a.renterName && !resolvedAt && a.status === "rented") flags.push({ label: a.renterName, kind: "renter" });
+  if (openCase && restrictedMs / H / 24 > staleDays) flags.push({ label: `Stale ${Math.floor(restrictedMs / H / 24)}d`, kind: "stale" });
+  if (a.renterName && openCase && a.status === "rented") flags.push({ label: a.renterName, kind: "renter" });
 
   const chip = (s: Step | null, k: StepKind, emptyTip: string) =>
     s ? { k, label: OUT_LABEL[s.k][s.o], outcome: s.o, tip: `${STEP_TITLES[s.k]}: ${OUT_LABEL[s.k][s.o]}` } : { k, label: "—", outcome: "none" as const, tip: emptyTip };
@@ -164,5 +191,5 @@ export function deriveCase(
     chip(li, "li", "No decision yet"),
   ];
 
-  return { next, urgent, bucket, cnt, restrictedMs, resolvedAt, openSince, lastErr, flags, chain };
+  return { next, urgent, bucket, cnt, restrictedMs, resolvedAt, closedAt, lostOutcome, openSince, lastErr, phase: phaseOf(a.status), flags, chain };
 }
