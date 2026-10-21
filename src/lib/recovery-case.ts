@@ -215,11 +215,19 @@ export function deriveCase(
   else if (id && id.o === "fail" && !fm) { next = "Submit appeal form"; urgent = true; bucket = "action"; }
   else if (fm && fm.o === "fail") { next = "Appeal rejected — retry or retire"; urgent = true; bucket = "action"; }
   else if (fm && fm.o === "pending") { next = `Awaiting LinkedIn · ${rel(fm.at ? Date.parse(fm.at) : now, now).replace(" ago", "")}`; bucket = "linkedin"; }
-  else if (qr && qr.o === "pending") {
-    const silentH = sentAt ? (now - Date.parse(sentAt)) / H : 0;
-    if (silentH > ownerSilentHours) { next = `Chase owner · silent ${Math.round(silentH)}h`; urgent = true; bucket = "action"; }
-    else next = "Awaiting owner scan";
-  } else next = "Awaiting owner";
+  else {
+    // Awaiting the owner — but if they've gone silent since we last reached out (contact / QR
+    // link), flip the case back to Needs action as a chase, like a pipeline follow-up nudge.
+    const contactAts = steps.filter((s) => s.k === "email" || s.k === "qr").map((s) => Date.parse(s.at));
+    if (sentAt) contactAts.push(Date.parse(sentAt));
+    const lastContact = contactAts.length ? Math.max(...contactAts) : 0;
+    const silentH = lastContact ? (now - lastContact) / H : 0;
+    const qrPending = qr && qr.o === "pending";
+    if (lastContact && silentH > ownerSilentHours) {
+      const span = silentH >= 48 ? `${Math.round(silentH / 24)}d` : `${Math.round(silentH)}h`;
+      next = `Chase owner · silent ${span}`; urgent = true; bucket = "action";
+    } else next = qrPending ? "Awaiting owner scan" : "Awaiting owner";
+  }
 
   // Count restrictions: the "restricted" events in the log, or 1 if currently restricted with none logged.
   const restrictedEvents = log.filter((e) => e.event === "restricted").length;
