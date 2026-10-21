@@ -357,16 +357,18 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const cards: Pre[] = [];
   const mk = (n: number, title: string, sub: string, state: WfState, extra: Partial<Pre> = {}) => cards.push({ n, title, sub, state, actions: [], ...extra });
 
-  // 1 — QR
+  // 1 — Owner verifies (QR relay is the fallback, not the default)
   {
     let st: WfState = !qr ? "todo" : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
     if (!qr && (rec || id || fm)) st = "skip";
     const actions: WfAction[] = [];
     if (!rec && !lost && st !== "skip") {
-      if (!qr) actions.push({ id: "qr_sent", label: "Mark QR link sent", variant: "primary" });
+      // Default exit: the owner verifies on their own after the email. QR relay is only for when
+      // they can't reach the checkpoint (the account's in our GoLogin, so they can't see it).
+      if (!qr) actions.push({ id: "recovered", label: "Owner got back in ✓", variant: "primary" }, { id: "qr_sent", label: "Relay QR instead", variant: "secondary" });
       if (qr && qr.o === "pending") actions.push({ id: "qr_ok", label: "Worked → recovered", variant: "primary" }, { id: "qr_fail", label: "Didn't work", variant: "danger" });
     }
-    mk(1, "Send QR to owner", qr && qr.o === "pending" ? `Sent ${rel(Date.parse(qr.at), now)} · waiting for them to scan` : "Capture the QR from GoLogin, send the private link", st, { actions, note: st === "todo" ? "Paste the QR in the QR recovery box below to send it." : "" });
+    mk(1, "Owner verifies", qr && qr.o === "pending" ? `QR relayed ${rel(Date.parse(qr.at), now)} · waiting for them to scan` : "Usually the owner just verifies after the email. Only relay a QR if they can't reach the checkpoint themselves.", st, { actions, note: st === "todo" && !qr ? "If they got back in on their own, hit \"Owner got back in\". Only paste a QR (box below) if they're stuck at the checkpoint." : "" });
   }
   // 2 — ID verification form (opens when QR fails)
   {

@@ -171,6 +171,7 @@ const WF_MAP: Record<string, Record<string, unknown>> = {
   id_sent: { action: "add_step", kind: "id", outcome: "pending" }, id_ok: { action: "add_step", kind: "id", outcome: "ok" }, id_fail: { action: "add_step", kind: "id", outcome: "fail", note: "ID verification failed" },
   form_sent: { action: "add_step", kind: "form", outcome: "pending" }, form_ok: { action: "add_step", kind: "form", outcome: "ok" }, form_fail: { action: "add_step", kind: "form", outcome: "fail", note: "Appeal rejected" },
   perma: { action: "mark_lost", outcome: "perma" }, relist: { action: "add_step", kind: "relist", outcome: "ok" }, handback: { action: "add_step", kind: "handback", outcome: "ok" },
+  recovered: { action: "mark_recovered" },
 };
 function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
   const [pw, setPw] = useState("");
