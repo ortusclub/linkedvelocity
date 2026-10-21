@@ -4,7 +4,8 @@ import styles from "@/app/(customer)/guide/primary-email/primary-email.module.cs
 
 const BOOK = "https://calendly.com/linkedvelocity-info/30min";
 
-type Info = { name: string; qrUrl: string | null; qrAt: string | null };
+type Outcome = "worked" | "stuck";
+type Info = { name: string; qrUrl: string | null; qrAt: string | null; outcome: Outcome | null };
 
 export default function RecoverView() {
   // Capture the private token synchronously at first render so it survives any child that
@@ -17,15 +18,26 @@ export default function RecoverView() {
   const [info, setInfo] = useState<Info | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (access && typeof window !== "undefined") window.history.replaceState(null, "", window.location.pathname);
     if (!access) { setLoading(false); return; }
     fetch("/api/account-recovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "recovery_info", access }) })
-      .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d.error || "This link is invalid or expired."); setInfo(d); })
+      .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d.error || "This link is invalid or expired."); setInfo(d); setOutcome(d.outcome ?? null); })
       .catch((e) => setError(e instanceof Error ? e.message : "Please try again."))
       .finally(() => setLoading(false));
   }, [access]);
+
+  const report = (o: Outcome) => {
+    if (saving) return;
+    setOutcome(o); // optimistic — the owner sees the confirmation immediately
+    setSaving(true);
+    fetch("/api/account-recovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "recovery_outcome", access, outcome: o }) })
+      .catch(() => {})
+      .finally(() => setSaving(false));
+  };
 
   const codeLink = access ? `/c#${access}` : "/account-code";
 
@@ -50,7 +62,26 @@ export default function RecoverView() {
             </a>
             <span style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>Hard to scan? <a href={info.qrUrl} target="_blank" rel="noopener noreferrer">Tap the code to open it full-size</a>.</span>
           </div>
-          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>. If the QR doesn&apos;t work after a couple of tries, reply to our team — we&apos;ll help you verify another way.</p>
+          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>.</p>
+
+          {/* Did it work? — owner self-report, so the team knows whether to move on or step in. */}
+          {outcome === "worked" ? (
+            <div style={{ marginTop: 18, padding: "14px 16px", borderRadius: 12, background: "#ecfdf3", border: "1px solid #abefc6", color: "#067647", fontSize: 15, lineHeight: 1.6 }}>
+              <strong>You&apos;re back in — nice.</strong> We&apos;ve let the team know. You can close this page.
+            </div>
+          ) : outcome === "stuck" ? (
+            <div style={{ marginTop: 18, padding: "14px 16px", borderRadius: 12, background: "#fff8f1", border: "1px solid #f6c89a", color: "#92400e", fontSize: 15, lineHeight: 1.6 }}>
+              <strong>Thanks for telling us.</strong> Reply to the message we sent you, or <a href={BOOK}>book a quick call</a> — we&apos;ll verify you another way. You can also try the <a href={codeLink}>6-digit code</a> once more.
+            </div>
+          ) : (
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eef0f3" }}>
+              <p style={{ fontSize: 15, fontWeight: 600, margin: "0 0 10px", color: "#111827" }}>Did it work?</p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => report("worked")} disabled={saving} style={{ flex: "1 1 180px", fontSize: 15, fontWeight: 600, padding: "12px 16px", borderRadius: 12, border: "1px solid #067647", background: "#067647", color: "#fff", cursor: "pointer" }}>✓ Yes, I&apos;m back in</button>
+                <button type="button" onClick={() => report("stuck")} disabled={saving} style={{ flex: "1 1 180px", fontSize: 15, fontWeight: 600, padding: "12px 16px", borderRadius: 12, border: "1px solid #d0d5dd", background: "#fff", color: "#344054", cursor: "pointer" }}>No, still stuck</button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <p className={styles.notice}>Your recovery code isn&apos;t ready yet. Our team is preparing it — keep this link, refresh in a few minutes, or reply to the message we sent you.</p>
