@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 const F_SANS = "var(--font-sans),'Plus Jakarta Sans',system-ui,sans-serif";
 const F_GRO = "var(--font-grotesk),'Space Grotesk',system-ui,sans-serif";
@@ -14,7 +14,7 @@ type Flag = { label: string; kind: "repeat" | "stale" | "renter" };
 type Hist = { reason: string; days: number; at: string; how: string; open: boolean };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
-  poc: string; phase: { label: string; pr: number };
+  linkedinUrl: string | null; poc: string; phase: { label: string; pr: number };
   restrictedAt: string | null; reason: string; steps: Step[];
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
@@ -83,6 +83,83 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
   );
 }
 
+type ContactData = {
+  owner: { name: string; email: string | null; pref: string; prefLabel: string };
+  contacts: Array<{ key: string; label: string; value: string; href: string; open: string }>;
+  account: { linkedinUrl: string | null; loginEmail: string | null; password: string | null; has2fa: boolean };
+};
+
+// Owner contact + account sign-in details, fetched on expand so credentials stay out of the list.
+function ContactCreds({ r }: { r: Row }) {
+  const [data, setData] = useState<ContactData | null>(null);
+  const [err, setErr] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [totp, setTotp] = useState<{ code: string; until: number } | null>(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/admin/accounts/${r.id}/recovery-contact`).then((res) => res.json()).then((d) => { if (alive) (d.error ? setErr(d.error) : setData(d)); }).catch((e) => alive && setErr(String(e)));
+    return () => { alive = false; };
+  }, [r.id]);
+
+  useEffect(() => {
+    if (!data?.account.has2fa) return;
+    let alive = true; let timer: ReturnType<typeof setTimeout>;
+    const load = () => fetch(`/api/admin/accounts/${r.id}/totp`).then((res) => res.json()).then((d) => {
+      if (!alive || !d.configured || !d.code) return;
+      const secs = Math.max(1, d.expiresIn || 30);
+      setTotp({ code: d.code, until: Date.now() + secs * 1000 });
+      timer = setTimeout(load, secs * 1000);
+    }).catch(() => {});
+    load();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [r.id, data?.account.has2fa]);
+
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+
+  const copy = (key: string, v: string) => { navigator.clipboard?.writeText(v); setCopied(key); setTimeout(() => setCopied((c) => (c === key ? null : c)), 1400); };
+  const cbtn = (key: string, v: string) => <button onClick={() => copy(key, v)} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#334155", borderRadius: 7, padding: "4px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>{copied === key ? "Copied" : "Copy"}</button>;
+  const obtn = (href: string, label: string) => <a href={href} target="_blank" rel="noreferrer" style={{ background: "#0a66c2", color: "#fff", borderRadius: 7, padding: "5px 9px", font: `700 11px ${F_SANS}`, textDecoration: "none", whiteSpace: "nowrap" }}>{label}</a>;
+  const field = (label: string, node: ReactNode, actions: ReactNode, border = "#e3e6ec", bg = "#fafbfc") => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${border}`, background: bg, borderRadius: 10, padding: "6px 6px 6px 10px", minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ font: `700 10px ${F_SANS}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#8a93a3", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ font: `600 12.5px ${MONO}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 300 }}>{node}</span>
+      </div>
+      {actions}
+    </div>
+  );
+  const remain = totp ? Math.max(0, Math.round((totp.until - Date.now()) / 1000)) : 0;
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: "12px 14px", display: "flex", gap: "10px 18px", alignItems: "center", flexWrap: "wrap" }}>
+      {err && <span style={{ font: `600 12px ${F_SANS}`, color: "#b91c1c" }}>{err}</span>}
+      {!data && !err && <span style={{ font: `500 12px ${F_SANS}`, color: "#8a93a3" }}>Loading contact & sign-in…</span>}
+      {data && <>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 150 }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Owner contact</span>
+          <span style={{ font: `700 13.5px ${F_SANS}`, color: "#0b1220" }}>{data.owner.name}</span>
+          {data.owner.prefLabel && <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3" }}>Prefers {data.owner.prefLabel}</span>}
+        </div>
+        {data.contacts.map((k) => field(k.label + (k.key === data.owner.pref ? " · preferred" : ""), k.value, <>{cbtn(k.key, k.value)}{obtn(k.href, k.open)}</>, k.key === data.owner.pref ? "#bfd3fb" : "#e3e6ec", k.key === data.owner.pref ? "#f5f8ff" : "#fafbfc"))}
+        {!data.contacts.length && <span style={{ font: `600 12px ${F_SANS}`, color: "#b91c1c" }}>No contact details on file</span>}
+
+        <div style={{ flexBasis: "100%", height: 0 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 150 }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Account sign-in</span>
+          <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3" }}>{(ST[r.status] || [r.status])[0]}{r.renterName ? ` · ${r.renterName}` : ""}</span>
+        </div>
+        {data.account.linkedinUrl && field("LinkedIn", data.account.linkedinUrl.replace(/^https?:\/\//, ""), obtn(data.account.linkedinUrl.startsWith("http") ? data.account.linkedinUrl : `https://${data.account.linkedinUrl}`, "Open"))}
+        {data.account.loginEmail && field("Login email", data.account.loginEmail, cbtn("login", data.account.loginEmail))}
+        {data.account.password && field("Password", showPw ? data.account.password : "••••••••••", <><button onClick={() => setShowPw((s) => !s)} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#334155", borderRadius: 7, padding: "4px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>{showPw ? "Hide" : "Show"}</button>{cbtn("pw", data.account.password)}</>)}
+        {data.account.has2fa && totp && field(`2FA code · ${remain}s`, `${totp.code.slice(0, 3)} ${totp.code.slice(3)}`, cbtn("2fa", totp.code), "#e3e6ec", "#f5f8ff")}
+      </>}
+    </div>
+  );
+}
+
 function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: number }) {
   const [fk, setFk] = useState<StepKind>("id");
   const [fo, setFo] = useState<"ok" | "fail" | "pending">("fail");
@@ -120,6 +197,8 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         <a href={`/admin/rentals?q=${encodeURIComponent(r.email || "")}`} style={{ font: `700 12px ${F_SANS}`, color: "#2563eb" }}>Renter record →</a>
         <a href="/admin/accounts" style={{ font: `700 12px ${F_SANS}`, color: "#2563eb" }}>Account mail →</a>
       </div>
+
+      <ContactCreds r={r} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 12, alignItems: "start" }}>
         {/* Timeline + log a step */}
@@ -301,7 +380,10 @@ export default function RestrictionsV2Page() {
                 <div key={r.id}>
                   <div onClick={() => setOpen((o) => ({ ...o, [r.id]: !isOpen }))} style={{ display: "grid", gridTemplateColumns: colTpl, gap: 14, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid #eef0f4", boxShadow: `inset 3px 0 0 ${r.urgent ? "#dc2626" : "transparent"}`, background: isOpen ? "#fafbfc" : "#fff", cursor: "pointer" }}>
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-                      <span style={{ font: `700 14px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}{r.verified && <span title="Verified" style={{ marginLeft: 5, color: "#0f7a3d" }}>✓</span>}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ font: `700 14px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}{r.verified && <span title="Verified" style={{ marginLeft: 5, color: "#0f7a3d" }}>✓</span>}</span>
+                        {r.linkedinUrl && <a href={r.linkedinUrl.startsWith("http") ? r.linkedinUrl : `https://${r.linkedinUrl}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Open LinkedIn profile" style={{ flex: "none", width: 16, height: 16, borderRadius: 3, background: "#0a66c2", color: "#fff", font: `800 9.5px ${F_SANS}`, display: "grid", placeItems: "center", textDecoration: "none" }}>in</a>}
+                      </span>
                       <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.email}</span>
                       <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
                         <span title={r.poc ? `PoC: ${r.poc}` : "No PoC assigned"} style={{ display: "flex", alignItems: "center", gap: 5, font: `700 10.5px ${F_SANS}`, color: r.poc ? "#334155" : "#b91c1c", whiteSpace: "nowrap" }}>
