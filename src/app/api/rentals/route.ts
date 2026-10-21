@@ -4,6 +4,7 @@ import { canShowRentalShareLink } from "@/lib/rental-dashboard-access";
 import { decryptSecret } from "@/lib/crypto-creds";
 import { monthlyRentalPrice } from "@/lib/account-pricing";
 import { resolveViewUser } from "@/lib/view-as";
+import { FIELD_LABEL, requestDetail, type ProfileChangeFieldKey, type ExperiencePayload } from "@/lib/profile-changes";
 
 export async function GET(req: NextRequest) {
   try {
@@ -50,6 +51,36 @@ export async function GET(req: NextRequest) {
     const swapByRental = new Map<string, { status: string; ticketRef: string; openedAt: string }>();
     for (const s of openSwaps) {
       if (!swapByRental.has(s.rentalId)) swapByRental.set(s.rentalId, { status: s.status, ticketRef: s.ticketRef, openedAt: s.createdAt.toISOString() });
+    }
+
+    // Profile-change requests (Renter Dashboard v3): the "Requested" list in the modal + the
+    // Status-column pill. Attached per rental, oldest-planned first.
+    const changeRows = await prisma.profileChangeRequest.findMany({
+      where: { rentalId: { in: rentals.map((r) => r.id) } },
+      orderBy: { plannedFor: "asc" },
+    });
+    const changesByRental = new Map<string, Array<Record<string, unknown>>>();
+    for (const c of changeRows) {
+      const field = c.field as ProfileChangeFieldKey;
+      const detail = requestDetail({
+        field,
+        value: c.value,
+        fileUrl: c.fileUrl,
+        experience: (c.experience as ExperiencePayload | null) ?? null,
+      });
+      const row = {
+        id: c.id,
+        field,
+        label: FIELD_LABEL[field],
+        detail,
+        status: c.status,
+        plannedFor: c.plannedFor.toISOString(),
+        appliedAt: c.appliedAt ? c.appliedAt.toISOString() : null,
+        adminNote: c.adminNote,
+      };
+      const list = changesByRental.get(c.rentalId) ?? [];
+      list.push(row);
+      changesByRental.set(c.rentalId, list);
     }
 
     // Show a "recovered" note on the dashboard only while it's still fresh, then let it fade.
@@ -106,6 +137,7 @@ export async function GET(req: NextRequest) {
         // "finish GoLogin setup" card while a rental is still pending access.
         gologinLoginEmail: user.gologinShareEmail || user.email,
         proxyFix: swapByRental.get(r.id) ?? null,
+        profileChanges: changesByRental.get(r.id) ?? [],
         linkedinAccount: {
           ...account,
           gologinShareLink: ready ? account.gologinShareLink : null,

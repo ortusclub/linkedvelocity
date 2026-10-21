@@ -299,6 +299,7 @@ model LinkedInAccount {
   waitlistEntries       Waitlist[]
   cryptoPayments        CryptoPayment[]
   mailEvents            AccountMailEvent[]
+  profileChangeRequests ProfileChangeRequest[]
 
   @@map("linkedin_accounts")
 }
@@ -416,6 +417,7 @@ model Rental {
   user                  User            @relation(fields: [userId], references: [id])
   linkedinAccount       LinkedInAccount @relation(fields: [linkedinAccountId], references: [id])
   transactions          Transaction[]
+  profileChangeRequests ProfileChangeRequest[]
 
   @@index([replacesRentalId])
   @@map("rentals")
@@ -1115,4 +1117,55 @@ model CapturedVerification {
   @@index([address])
   @@index([receivedAt])
   @@map("captured_verifications")
+}
+
+enum ProfileChangeField {
+  banner
+  headline
+  about
+  experience
+  location
+  other
+}
+
+enum ProfileChangeStatus {
+  planned
+  done
+  needs_info
+  rejected
+}
+
+// A renter-requested edit to a rented LinkedIn profile. LinkedIn restricts accounts
+// that change too much at once, so renters request changes here and the LV team applies
+// them gradually (~1 every 2 days). See Renter Dashboard v3. Each request is scheduled on
+// its own plannedFor date; the admin team marks them done / needs_info / rejected (Phase 2).
+model ProfileChangeRequest {
+  id                String              @id @default(uuid()) @db.Uuid
+  rentalId          String              @map("rental_id") @db.Uuid
+  accountId         String              @map("account_id") @db.Uuid
+  field             ProfileChangeField
+  // Text-field value (headline / about / location / "other"). Null for a banner upload
+  // or an experience entry (those carry fileUrl / experience instead).
+  value             String?
+  // Public blob URL of an uploaded banner (field = banner).
+  fileUrl           String?             @map("file_url")
+  // Structured experience payload (field = experience):
+  // { action, title, company, startMonth, startYear, endMonth, endYear, isCurrent, location, description }.
+  experience        Json?
+  status            ProfileChangeStatus @default(planned)
+  // Estimate shown to the renter — the admin team can override. Changes are spaced ~2 days apart.
+  plannedFor        DateTime            @map("planned_for")
+  appliedAt         DateTime?           @map("applied_at")
+  // Admin reason surfaced to the renter when status = needs_info or rejected (Phase 2).
+  adminNote         String?             @map("admin_note")
+  createdById       String              @map("created_by") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  rental            Rental          @relation(fields: [rentalId], references: [id], onDelete: Cascade)
+  linkedinAccount   LinkedInAccount @relation(fields: [accountId], references: [id])
+
+  @@index([rentalId])
+  @@index([status, plannedFor])
+  @@map("profile_change_requests")
 }
