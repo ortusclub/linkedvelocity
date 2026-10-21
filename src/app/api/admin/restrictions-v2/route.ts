@@ -119,7 +119,7 @@ export async function GET(req: Request) {
 
       return {
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
-        poc: pocResolved, phase: d.phase,
+        linkedinUrl: a.linkedinUrl, poc: pocResolved, phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
