@@ -12,7 +12,6 @@ import {
   sendRenewalHeadsUp,
   sendRenewalHeadsUpBatch,
   sendAccessRevokedEmail,
-  sendAccountAvailableEmail,
   sendPaymentFailedEmail,
   sendTopUpConfirmation,
 } from "@/services/email";
@@ -276,9 +275,11 @@ export async function POST(req: NextRequest) {
         const sent = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
         if (now >= graceCutoff) {
           // Grace exhausted — revoke access and mark "expired" so the release pass (section 3)
-          // frees the account for others + notifies the waitlist, matching the manual-lapse path.
+          // cuts access and pulls the account into the after-rental reset, matching the lapse path.
           await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
-          try { await revokeRentalAccess(r.id); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
+          // Pause (not delete) the public link — the account is held for the reclaim window,
+          // so a renter who re-pays regains access on grant without a fresh link.
+          try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
           try { await sendAccessRevokedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`, fmtDate(graceCutoff), r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
           result.failed++;
         } else {
@@ -333,7 +334,8 @@ export async function POST(req: NextRequest) {
       // The account is HELD for the reclaim window, not released yet.
       if (r.status === "active" && now >= new Date(end.getTime() + DAY)) {
         await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
-        try { await revokeRentalAccess(r.id); } catch (e) { console.error("revoke on lapse", r.id, e); }
+        // Pause (not delete) the public link — account is held for the reclaim window.
+        try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on lapse", r.id, e); }
         enqueue(r, "access_revoked", { account }, { releaseDate: fmtDate(new Date(end.getTime() + RECLAIM_DAYS * DAY)) });
         result.lapsed++;
         continue;
@@ -362,8 +364,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3) Release held profiles — reclaim window is over and still unpaid → free the
-    // account for other renters + notify the waitlist.
+    // 3) Release held profiles — reclaim window is over and still unpaid → cut real access
+    // (delete the public link) and pull the account into the after-rental reset
+    // (under_construction), NOT straight back into the rentable catalogue.
     const heldOut = await prisma.rental.findMany({
       where: {
         status: { in: ["expired", "cancelled"] },
@@ -381,14 +384,27 @@ export async function POST(req: NextRequest) {
       });
       if (reclaimed > 0) { await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "released"] as unknown as Prisma.InputJsonValue } }); continue; }
 
-      await prisma.linkedInAccount.update({ where: { id: r.linkedinAccountId }, data: { status: "available" } });
+      // Cut REAL access before freeing the account: delete the public (g.camp) link. If
+      // GoLogin refuses, do NOT mark the account available — surfacing a profile the old
+      // renter can still open is the shadow-leak bug. Hold it and retry next run instead.
+      try {
+        await revokeRentalAccess(r.id, { publicLink: "delete" });
+      } catch (e) {
+        console.error("release: public link delete failed, holding account", r.linkedinAccountId, e);
+        continue;
+      }
+      // After-rental reset: do NOT drop straight back into the catalogue with the last
+      // renter's sessions, campaigns and inbox still on the profile. Pull it to
+      // under_construction (hidden) and clear the rental-ready checklist, so the housekeeping
+      // gate (sign out other sessions, disconnect automation, clear the inbox) must be redone
+      // before it can be re-listed Available. The waitlist is notified when it re-lists, not
+      // here — the account is not actually available yet.
+      await prisma.linkedInAccount.update({
+        where: { id: r.linkedinAccountId },
+        data: { status: "under_construction", listed: false, rentalReadyChecklist: {} },
+      });
       await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "released"] as unknown as Prisma.InputJsonValue } });
       result.released++;
-
-      const waitlist = await prisma.waitlist.findMany({ where: { linkedinAccountId: r.linkedinAccountId }, include: { user: true } });
-      for (const w of waitlist) {
-        try { await sendAccountAvailableEmail(w.user.email, r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
-      }
     }
 
     return NextResponse.json({ ok: true, ...result });

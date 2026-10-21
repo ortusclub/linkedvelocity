@@ -1,7 +1,7 @@
 import { paidMonthEnd } from "@/lib/shadow-handover";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
-import { shareProfile, unshareProfile, tokenForAccount, workspaceForAccount, createPublicShareLink, getPublicShareLink } from "@/services/gologin";
+import { shareProfile, unshareProfile, tokenForAccount, workspaceForAccount, createPublicShareLink, getPublicShareLink, deletePublicShareLink, setPublicShareLinkPaused } from "@/services/gologin";
 import { Prisma } from "@/generated/prisma/client";
 
 export type ShareRef = { email: string; shareId: string };
@@ -13,7 +13,7 @@ export async function grantRentalAccess(rentalId: string): Promise<{ shareId: st
     where: { id: rentalId },
     include: {
       user: { select: { email: true, gologinShareEmail: true } },
-      linkedinAccount: { select: { gologinProfileId: true, gologinAccount: true, restrictedAt: true, twoFactorResetNeeded: true } },
+      linkedinAccount: { select: { gologinProfileId: true, gologinAccount: true, gologinShareLink: true, restrictedAt: true, twoFactorResetNeeded: true } },
     },
   });
   if (!rental) throw new Error("Rental not found");
@@ -69,15 +69,36 @@ export async function grantRentalAccess(rentalId: string): Promise<{ shareId: st
       ...(rental.handoverAt ? { startDate: start, currentPeriodEnd: periodEnd, handoverAt: null } : {}),
     },
   });
+  // If this profile has a public (g.camp) link that was PAUSED on a prior lapse, bring it
+  // back so a renter who re-paid regains access through the same URL (grants that don't
+  // involve a paused link are a cheap no-op beyond the lookup).
+  if (rental.linkedinAccount.gologinShareLink) {
+    try {
+      const link = await getPublicShareLink(profileId, undefined, token);
+      if (link?.paused) await setPublicShareLinkPaused(link.linkId, profileId, false, token);
+    } catch (e) {
+      console.error("grantRentalAccess: could not unpause public link", rentalId, e);
+    }
+  }
   return { shareId, email };
 }
 
 // Revoke ALL of a rental's GoLogin shares (cut the renter off) and clear the stored IDs.
 // Does NOT change status/paused — the caller decides what the revoke means (pause vs end).
-export async function revokeRentalAccess(rentalId: string): Promise<{ shareId: string; ok: boolean; error?: string }[]> {
+//
+// `opts.publicLink` controls the PUBLIC (g.camp) share link, which email unshares don't
+// touch. A link-based renter gets in through that link, so a revoke that ignores it does
+// NOT actually cut access — the April shadow-leak gap. Pass "pause" for a reversible hold
+// (lapse, account still reclaimable) or "delete" for a permanent cut (release to catalogue).
+// "delete" THROWS if GoLogin refuses, so a caller can treat it as a guard and avoid freeing
+// an account whose access is still live. Omit it to leave the public link untouched.
+export async function revokeRentalAccess(
+  rentalId: string,
+  opts?: { publicLink?: "pause" | "delete" },
+): Promise<{ shareId: string; ok: boolean; error?: string }[]> {
   const rental = await prisma.rental.findUnique({
     where: { id: rentalId },
-    include: { linkedinAccount: { select: { gologinAccount: true } } },
+    include: { linkedinAccount: { select: { gologinAccount: true, gologinProfileId: true } } },
   });
   if (!rental) throw new Error("Rental not found");
   const token = tokenForAccount(rental.linkedinAccount.gologinAccount);
@@ -96,5 +117,25 @@ export async function revokeRentalAccess(rentalId: string): Promise<{ shareId: s
     where: { id: rentalId },
     data: { gologinShareIds: current.filter(s => results.some(r => r.shareId === s.shareId && !r.ok)) as unknown as Prisma.InputJsonValue, ...(results.every(r => r.ok) ? { accessRevokedAt: new Date() } : {}) },
   });
+  // Public (g.camp) link — the leak-closing step.
+  if (opts?.publicLink) {
+    const profileId = rental.linkedinAccount.gologinProfileId;
+    if (profileId) {
+      const link = await getPublicShareLink(profileId, undefined, token).catch((e) => {
+        // A lookup failure is fatal for "delete" (we can't prove access was cut) but only
+        // logged for "pause" (best-effort hold); rethrow in the delete case below.
+        if (opts.publicLink === "delete") throw e;
+        console.error("revokeRentalAccess: could not look up public link to pause", rentalId, e);
+        return null;
+      });
+      if (opts.publicLink === "delete") {
+        if (link) await deletePublicShareLink(link.linkId, profileId, token);
+        await prisma.linkedInAccount.update({ where: { id: rental.linkedinAccountId }, data: { gologinShareLink: null } });
+      } else if (link) {
+        try { await setPublicShareLinkPaused(link.linkId, profileId, true, token); }
+        catch (e) { console.error("revokeRentalAccess: could not pause public link", rentalId, e); }
+      }
+    }
+  }
   return results;
 }
