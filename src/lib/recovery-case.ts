@@ -98,8 +98,13 @@ function mailDerivedSteps(a: CaseAccount): Step[] {
       else if (/remain(?:s)? restricted|does ?n.?t comply|not comply|rejected|declin|unable to (?:restore|reinstate)|will remain restricted/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn: appeal rejected (email)" });
       else out.push({ k: "li", o: "pending", at, note: "LinkedIn appeal update (email)" });
     } else if (m.type === "id_verification") {
-      if (/verified|confirmed|successfully/i.test(t)) out.push({ k: "id", o: "ok", at, note: "LinkedIn: ID verified (email)" });
-      else if (/could ?n.?t|unable|failed|didn.?t match|expired|try again/i.test(t)) out.push({ k: "id", o: "fail", at, err: "LinkedIn: ID check failed (email)" });
+      // Success FIRST — "removed the restriction" / "verifying your identity" means it worked.
+      // (The failure patterns must be specific to verification, not generic words like "expired"
+      // which also appear in the password-reset-link instructions of a SUCCESS email.)
+      if (/removed (the )?restriction|restriction (has been |was )?(removed|lifted)|pleased to (let you know|inform)|thank you for verifying|verif(y|ied|ying) your identity|successfully verified|identity (has been )?(verified|confirmed)|access (has been )?restored|no longer restricted|reinstat/i.test(t))
+        out.push({ k: "id", o: "ok", at, note: "LinkedIn: ID verified / restriction removed (email)" });
+      else if (/unable to verify|could ?n.?t verify|couldn.?t verify|verification (was )?(unsuccessful|failed)|we (were|are) unable to|identity (could not|couldn.?t) be|does ?n.?t (meet|comply)|please resubmit/i.test(t))
+        out.push({ k: "id", o: "fail", at, err: "LinkedIn: ID check failed (email)" });
       else out.push({ k: "id", o: "pending", at, note: "LinkedIn ID verification (email)" });
     } else if (m.type === "recovery_appeal" || m.type === "appeal_intake") {
       out.push({ k: "form", o: "pending", at, note: m.type === "appeal_intake" ? "LinkedIn asked for more info (email)" : "Recovery appeal (email)" });
@@ -340,7 +345,13 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const L = (k: StepKind) => lastOf(built.steps, k);
   const qr = L("qr"), id = L("id"), fm = L("form"), gl = L("gl"), pw = L("pw"), rl = L("relist"), hb = L("handback");
   const stored = parseStoredCase(a.recoveryCase);
-  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : null;
+  // Recovered = the case's own marker OR (no open restriction + a logged recovery) — so an account
+  // recovered the old way (via inventory/pipeline, which only logs the event) still shows the
+  // post-recovery steps instead of being stuck pre-recovery.
+  const log = asLog(a.restrictionLog);
+  const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
+  const lastRec = [...log].reverse().find((e) => e.event === "recovered");
+  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRec ? Date.parse(lastRec.at) : null);
   const rec = !!resolvedAt, lost = !!stored.outcome, rented = a.status === "rented";
   type Pre = Omit<WfCard, "stLbl" | "stFg" | "isCurrent">;
   const cards: Pre[] = [];
