@@ -11,7 +11,7 @@ export type StepKind = "email" | "qr" | "id" | "form" | "li" | "note";
 export type Outcome = "ok" | "fail" | "pending";
 export type Step = { k: StepKind; o: Outcome; at: string; err?: string; note?: string };
 export type LostOutcome = "perma" | "nocontact";
-export type StoredCase = { reason?: string; steps?: Step[]; outcome?: LostOutcome; closedAt?: string; outcomeNote?: string };
+export type StoredCase = { reason?: string; steps?: Step[]; outcome?: LostOutcome; closedAt?: string; outcomeNote?: string; reopened?: boolean };
 export type Bucket = "action" | "owner" | "linkedin" | "done" | "lost";
 
 // Phase = how we prioritise by account status: a restricted RENTED account (a renter is blocked,
@@ -23,6 +23,21 @@ export const phaseOf = (status: string) => PHASE[status] || { label: status, pr:
 
 // Terminal "lost" outcomes — the case is closed without recovering the account.
 export const LOST_LABEL: Record<LostOutcome, string> = { perma: "Permanently restricted", nocontact: "Can't contact owner" };
+
+// Link an account to its ambassador application the SAME way inventory / onboarding do, so the
+// LV PoC we show (and edit) is the one PoC everywhere: by LinkedIn URL first (unique per person),
+// then by the "Owner: <email>" note tag. The PoC is then `app.poc || account.poc`.
+export const normUrl = (u: string | null | undefined) => (u || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("?")[0].replace(/\/+$/, "");
+export const ownerEmailFromNotes = (notes: string | null | undefined) => (notes || "").match(/Owner:\s*(\S+@\S+)/)?.[1]?.replace(/\.$/, "") || "";
+export function matchApp<T extends { email: string; linkedinUrl: string | null }>(apps: T[], account: { linkedinUrl: string | null; notes: string | null }): T | null {
+  if (account.linkedinUrl) {
+    const u = normUrl(account.linkedinUrl);
+    const byUrl = u ? apps.find((a) => a.linkedinUrl && normUrl(a.linkedinUrl) === u) : null;
+    if (byUrl) return byUrl;
+  }
+  const oe = ownerEmailFromNotes(account.notes).toLowerCase();
+  return oe ? apps.find((a) => a.email.toLowerCase() === oe) || null : null;
+}
 
 export const STEP_TITLES: Record<StepKind, string> = {
   email: "Restriction email to owner", qr: "QR recovery link", id: "ID verification",
@@ -55,8 +70,26 @@ export type CaseAccount = {
   recoveryOutcomeAt: Date | string | null;
   recoveryCase: unknown;
   poc?: string | null;
+  notes?: string | null;
   renterName?: string | null;
 };
+
+// Signals we backtrack from the account notes (written by the auto-notify / recover-send flows
+// and by hand), so a case reflects history we already have instead of starting blank.
+const parseStamp = (v: unknown): string | null => { const t = typeof v === "string" ? Date.parse(v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };
+// First notes line matching `re`, with its leading `[ISO]` timestamp if present.
+function notesSignal(notes: string | null | undefined, re: RegExp): { at: string | null } | null {
+  for (const line of (notes || "").split("\n")) {
+    if (re.test(line)) return { at: parseStamp(line.match(/^\s*\[([^\]]+)\]/)?.[1]) };
+  }
+  return null;
+}
+// A restriction email was sent to the owner (auto-notify or the recover QR link relay).
+const EMAIL_SENT_RE = /auto-notified\b.*\brestriction|emailed\s+recover(?:\s+qr)?\s+link|restriction\s+(?:notice|email)\b.*\bsent/i;
+// The account has been written off as permanently restricted.
+const PERMA_RE = /permanent(?:ly)?[\s-]*restrict/i;
+export const notesEmailSent = (notes: string | null | undefined): { at: string | null } | null => notesSignal(notes, EMAIL_SENT_RE);
+export const notesSaysPerma = (notes: string | null | undefined): { at: string | null } | null => notesSignal(notes, PERMA_RE);
 
 const iso = (d: Date | string | null | undefined): string | null => (d ? (typeof d === "string" ? d : d.toISOString()) : null);
 const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as RestrictionEvent[]) : []);
@@ -78,7 +111,9 @@ export function parseStoredCase(v: unknown): StoredCase {
 function derivedSteps(a: CaseAccount): Step[] {
   const steps: Step[] = [];
   const sentAt = iso(a.recoverySentAt);
+  const notesEmail = sentAt ? null : notesEmailSent(a.notes); // backtrack: auto-notify / recover-send logged the send to notes
   if (sentAt) steps.push({ k: "email", o: "ok", at: sentAt, note: a.recoverySentVia ? `Owner link sent via ${a.recoverySentVia}` : "Owner link sent" });
+  else if (notesEmail) steps.push({ k: "email", o: "ok", at: notesEmail.at || iso(a.restrictedAt) || new Date(0).toISOString(), note: "Restriction email sent (from notes)" });
   const qrAt = iso(a.recoveryQrAt);
   const outAt = iso(a.recoveryOutcomeAt) || sentAt || qrAt;
   if (a.recoveryOutcome === "worked" && outAt) steps.push({ k: "qr", o: "ok", at: outAt, note: "Owner reported back in" });
@@ -138,8 +173,11 @@ export function deriveCase(
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRecovered = [...log].reverse().find((e) => e.event === "recovered");
   const resolvedAt = !openSince && lastRecovered ? Date.parse(lastRecovered.at) : null;
-  const lostOutcome = openSince && stored.outcome ? stored.outcome : null; // "lost" only applies to an open restriction
-  const closedAt = lostOutcome && stored.closedAt ? Date.parse(stored.closedAt) : null;
+  // "lost" only applies to an open restriction. An explicit admin mark wins; otherwise backtrack
+  // a "permanently restricted" note (unless the case was explicitly reopened).
+  const notesPerma = openSince && !stored.outcome && !stored.reopened ? notesSaysPerma(a.notes) : null;
+  const lostOutcome: LostOutcome | null = openSince ? (stored.outcome || (notesPerma ? "perma" : null)) : null;
+  const closedAt = !lostOutcome ? null : stored.closedAt ? Date.parse(stored.closedAt) : notesPerma?.at ? Date.parse(notesPerma.at) : null;
 
   const em = lastOf(steps, "email"), qr = lastOf(steps, "qr"), id = lastOf(steps, "id"), fm = lastOf(steps, "form"), li = lastOf(steps, "li");
   const sentAt = iso(a.recoverySentAt);

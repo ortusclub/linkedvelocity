@@ -22,9 +22,10 @@ type Row = {
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
 };
 
-const POCC: Record<string, string> = { Ardi: "#7c3aed", Milee: "#0f7a3d", Sam: "#c2410c", Ortus: "#0369a1" };
-const POCTEAM: Record<string, string> = { Ardi: "LV", Milee: "LV", Sam: "LV", Ortus: "Ortus" };
-const POC_LIST = ["Ardi", "Milee", "Sam", "Ortus"];
+// PoC avatar colour from the name (same scheme as inventory v2), so a PoC looks identical here.
+const AV = ["#2563eb", "#7c3aed", "#0891b2", "#db2777", "#ea580c", "#059669", "#4f46e5"];
+const colorOf = (s: string) => AV[[...s].reduce((h, c) => (h + c.charCodeAt(0)) | 0, 0) % AV.length];
+const iniOf = (s: string) => (s || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "?";
 const LOST: Record<string, [string, string, string]> = { perma: ["Permanently restricted", "#fef2f2", "#b91c1c"], nocontact: ["Can't contact owner", "#fff7ed", "#c2410c"] };
 
 const OC: Record<string, [string, string, string]> = {
@@ -106,9 +107,10 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         {!closed && <button onClick={sendEmail} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 10, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>{r.sentAt ? "Send reminder" : "Send restriction email"}</button>}
         {!closed && <button onClick={() => post({ action: "mark_recovered" })} disabled={busy} style={{ border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Mark recovered</button>}
         <label style={{ display: "flex", alignItems: "center", gap: 6, font: `700 11px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: "#8a93a3" }}>PoC
-          <select value={r.poc} onChange={(e) => post({ action: "set_poc", poc: e.target.value })} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "7px 8px", font: `600 12.5px ${F_SANS}`, color: "#0b1220", textTransform: "none", letterSpacing: 0 }}>
-            <option value="">Unassigned</option><option value="Ardi">Ardi · LV</option><option value="Milee">Milee · LV</option><option value="Sam">Sam · LV</option><option value="Ortus">Ortus</option>
-          </select>
+          <input defaultValue={r.poc} placeholder="who's handling this" disabled={busy}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.poc || "")) post({ action: "set_poc", poc: v }); }}
+            style={{ width: 150, border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "7px 9px", font: `600 12.5px ${F_SANS}`, color: "#0b1220", textTransform: "none", letterSpacing: 0, outline: "none" }} />
         </label>
         {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "perma" })} disabled={busy} style={{ border: "1px solid #f3c7c7", background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Permanently restricted</button>}
         {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "nocontact" })} disabled={busy} style={{ border: "1px solid #f5d9b8", background: "#fff", color: "#b45309", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Can&apos;t contact owner</button>}
@@ -231,8 +233,9 @@ export default function RestrictionsV2Page() {
     { key: "all", label: "All", pr: "" }, { key: "rented", label: "Rented", pr: "P1" },
     { key: "available", label: "Onboarded", pr: "P2" }, { key: "under_construction", label: "Under construction", pr: "P3" },
   ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || r.status === o.key).length }));
+  const pocNames = [...new Set(all.map((r) => r.poc).filter(Boolean))].sort();
   const pocChips: Array<{ key: string; label: string; n: number }> = [
-    { key: "all", label: "Everyone" }, ...POC_LIST.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
+    { key: "all", label: "Everyone" }, ...pocNames.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
   ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.poc : r.poc === o.key)).length }));
 
   const colTpl = "minmax(200px,1.6fr) 120px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
@@ -271,7 +274,7 @@ export default function RestrictionsV2Page() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>LV PoC</span>
-          {pocChips.map((pc) => { const on = pocF === pc.key; const color = POCC[pc.key] || (pc.key === "all" ? "#0b1220" : "#cbd2dc"); const ini = pc.key === "all" ? "★" : pc.key === "none" ? "–" : pc.label[0]; return (
+          {pocChips.map((pc) => { const on = pocF === pc.key; const color = pc.key === "all" ? "#0b1220" : pc.key === "none" ? "#cbd2dc" : colorOf(pc.key); const ini = pc.key === "all" ? "★" : pc.key === "none" ? "–" : iniOf(pc.label); return (
             <button key={pc.key} onClick={() => setPocF(pc.key)} style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${on ? "#2563eb" : "#e3e6ec"}`, background: on ? "#eef4ff" : "#fff", color: "#0b1220", borderRadius: 999, padding: "3px 10px 3px 3px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>
               <span style={{ width: 20, height: 20, borderRadius: "50%", background: color, color: "#fff", font: `700 10px ${F_SANS}`, display: "grid", placeItems: "center" }}>{ini}</span>{pc.label}<span style={{ font: `700 11px ${F_GRO}`, color: "#5b6779" }}>{pc.n}</span>
             </button>
@@ -301,9 +304,9 @@ export default function RestrictionsV2Page() {
                       <span style={{ font: `700 14px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}{r.verified && <span title="Verified" style={{ marginLeft: 5, color: "#0f7a3d" }}>✓</span>}</span>
                       <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.email}</span>
                       <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
-                        <span title={r.poc ? `PoC: ${r.poc}${POCTEAM[r.poc] ? ` (${POCTEAM[r.poc]})` : ""}` : "No PoC assigned"} style={{ display: "flex", alignItems: "center", gap: 5, font: `700 10.5px ${F_SANS}`, color: r.poc ? "#334155" : "#b91c1c", whiteSpace: "nowrap" }}>
-                          <span style={{ width: 16, height: 16, borderRadius: "50%", background: r.poc ? POCC[r.poc] || "#cbd2dc" : "#cbd2dc", color: "#fff", font: `700 9px ${F_SANS}`, display: "grid", placeItems: "center" }}>{r.poc ? r.poc[0] : "–"}</span>
-                          {r.poc ? (POCTEAM[r.poc] === "LV" ? `${r.poc} · LV` : r.poc) : "No PoC"}
+                        <span title={r.poc ? `PoC: ${r.poc}` : "No PoC assigned"} style={{ display: "flex", alignItems: "center", gap: 5, font: `700 10.5px ${F_SANS}`, color: r.poc ? "#334155" : "#b91c1c", whiteSpace: "nowrap" }}>
+                          <span style={{ width: 16, height: 16, borderRadius: "50%", background: r.poc ? colorOf(r.poc) : "#cbd2dc", color: "#fff", font: `700 8px ${F_SANS}`, display: "grid", placeItems: "center" }}>{r.poc ? iniOf(r.poc) : "–"}</span>
+                          {r.poc || "No PoC"}
                         </span>
                         <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
                         {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
