@@ -69,7 +69,7 @@ const WARMUP: { t: string; items: string[] }[] = [
 ];
 
 const MARKETER_FAQ = [
-  { q: "When do I get paid?", a: "You get ₱2,000 for the day, plus ₱500 to ₱1,000 for every sign-up onboarded onto our inventory — you see the exact amount when you choose how to onboard. Commissions release about a week after a sign-up is onboarded, once we've confirmed the account is stable, and are paid the following Monday. A restriction in that window adds a few days." },
+  { q: "When do I get paid?", a: "You get ₱2,000 for the day, plus ₱500 to ₱1,000 for every sign-up onboarded onto our inventory — you see the exact amount when you choose how to onboard. Commissions release about a week after a sign-up is onboarded, once we've confirmed the account is stable, then paid out. We pay out daily, so you're paid as soon as your account clears — around the same time the account owner is paid. A restriction in that window adds a few days." },
   { q: "What counts as a successful sign-up?", a: "The person you signed up gets fully onboarded and their account lands on our inventory — usually confirmed about a week after onboarding, once it's passed our checks. That's when your fee (₱500 to ₱1,000, depending on how it's onboarded) is triggered." },
   { q: "What if someone doesn't qualify?", a: "Thank them and move on. LinkedIn's minimum age is 16, or older where local law requires." },
   { q: "How do I update my payout details?", a: "In the Earnings tab — under “Where we send your money”, save your GCash / bank info so we can pay you." },
@@ -337,7 +337,7 @@ export default function Portal({ token }: { token: string }) {
 
   // For non-PH (USD) referrers, rewrite the money/method-bearing FAQ answers.
   const faqOverrides: Record<string, string> = {
-    "When do I get paid?": `You get ${base} to ${diyHigh} for every sign-up onboarded onto our inventory — you see the exact amount when you choose how to onboard. Commissions release about a week after onboarding, once we've confirmed the account is stable, and are paid the following Monday. A restriction in that window adds a few days.`,
+    "When do I get paid?": `You get ${base} to ${diyHigh} for every sign-up onboarded onto our inventory — you see the exact amount when you choose how to onboard. Commissions release about a week after onboarding, once we've confirmed the account is stable, then paid out. We pay out daily, so you're paid as soon as your account clears — around the same time the account owner is paid. A restriction in that window adds a few days.`,
     "What counts as a successful sign-up?": `The person you signed up gets fully onboarded and their account lands on our inventory — usually confirmed about a week after onboarding, once it's passed our checks. That's when your fee (${base} to ${diyHigh}, depending on how it's onboarded) is triggered.`,
     "How do I update my payout details?": `In the Earnings tab — under "Where we send your money", save your ${config.defaultPayoutMethod} / bank info so we can pay you.`,
     "How much will I earn?": `${setupOffer} to start — paid to your account about a week after setup, once the account is confirmed stable. Then ${monthlyOffer} every full month your account stays active, paid in the first few days of the month (the first working day if the 1st is a weekend). Your monthly payments start from your first full month; the ${setupOffer} covers your first partial month, so you're never short-changed.`,
@@ -538,7 +538,7 @@ export default function Portal({ token }: { token: string }) {
                 <span style={{ font: `700 13.5px ${JAK}`, color: "#166534" }}>Estimated earned</span>
                 <span style={{ marginLeft: "auto", font: `600 19px ${GRO}`, color: C.greenDk, fontVariantNumeric: "tabular-nums" }}>{money(stats.commission)}</span>
               </div>
-              <p style={{ font: `500 12.5px/1.5 ${JAK}`, color: "#3f5c4a", margin: "7px 0 0" }}>Commission releases once we&apos;ve verified the account works — about a week after onboarding. Paid the following Monday.</p>
+              <p style={{ font: `500 12.5px/1.5 ${JAK}`, color: "#3f5c4a", margin: "7px 0 0" }}>Commission releases once we&apos;ve verified the account works — about a week after onboarding, then paid out. We pay out daily.</p>
               <span onClick={() => go("money")} style={{ display: "inline-block", marginTop: 10, font: `700 12.5px ${JAK}`, color: C.greenDk, cursor: "pointer" }}>See my earnings →</span>
             </div>
 
@@ -763,7 +763,7 @@ export default function Portal({ token }: { token: string }) {
         {tab === "money" && (
           <div style={{ padding: "18px 18px 0" }}>
             <h1 style={h1}>Your earnings</h1>
-            <p style={lead}>Paid to your GCash or bank the Monday after each onboarding clears our check. {rangeD} per onboarding, depending on how it&apos;s done.</p>
+            <p style={lead}>Paid to your GCash or bank as soon as each onboarding clears our check — we pay out daily. {rangeD} per onboarding, depending on how it&apos;s done.</p>
 
             <div style={{ background: C.dark, borderRadius: 18, padding: 18, marginBottom: 12 }}>
               <div style={{ font: `600 11.5px ${JAK}`, color: "#94a3b8", marginBottom: 4 }}>Estimated, not yet paid</div>
@@ -802,7 +802,7 @@ export default function Portal({ token }: { token: string }) {
             <div style={card}>
               <div style={{ ...secLbl, marginBottom: 8 }}>Payment history</div>
               {payouts.length === 0 ? (
-                <p style={{ font: `500 12.5px/1.55 ${JAK}`, color: C.muted, margin: 0, padding: "8px 0" }}>No payouts yet. Your first one lands the Monday after your first onboarding clears our check.</p>
+                <p style={{ font: `500 12.5px/1.55 ${JAK}`, color: C.muted, margin: 0, padding: "8px 0" }}>No payouts yet. Your first one lands as soon as your first onboarding clears our check.</p>
               ) : payouts.map((p) => {
                 const label = PAYOUT_LABEL[p.type] || PAYOUT_LABEL.other;
                 const confirming_ = confirmId === p.id;
@@ -814,7 +814,7 @@ export default function Portal({ token }: { token: string }) {
                     : { t: "Not sent yet", bg: C.pendBg, fg: C.pendFg, bd: "#e3e6ea" };
                 const meta = p.paidAt
                   ? `Paid ${fmtDate(p.paidAt)}${p.method ? ` · ${p.method}` : ""}${p.confirmedAt ? " · you confirmed it" : ""}${p.reference && !refIsUrl ? ` · ref ${p.reference}` : ""}`
-                  : "Not sent yet — lands the Monday after it clears our check";
+                  : "Not sent yet — lands once it clears our check";
                 const needsConfirm = !!p.paidAt && !p.confirmedAt && !confirming_;
                 return (
                   <div key={p.id} style={{ borderTop: `1px solid ${C.line2}`, padding: "14px 0" }}>
