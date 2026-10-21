@@ -66,7 +66,9 @@ export async function GET() {
     const rows = people.map((p) => {
       const u = p.user;
       const rentals = u?.rentals ?? [];
-      const live = rentals.filter((r) => r.status === "active");
+      // Currently renting = active + pending_access (paid/granted, renter just hasn't opened it in
+      // GoLogin yet). Both are live, billable rentals, so they count toward the live total and MRR.
+      const live = rentals.filter((r) => r.status === "active" || r.status === "pending_access");
       const mrr = live.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount?.monthlyPrice ?? 0), 0);
       const lead = p.inboundLeadId ? leadById.get(p.inboundLeadId) : null;
       const stale = !!lead && p.conversations.length > 0 && (!lead.commsSummary || !lead.commsSummaryAt || lead.commsSummaryAt < lead.lastContactAt);
