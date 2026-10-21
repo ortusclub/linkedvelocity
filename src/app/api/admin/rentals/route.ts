@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
-import { SHADOW_MONTHLY_PRICE, yieldShadowRentals, isShadowRenterEmail } from "@/lib/shadow-rental";
+import { SHADOW_MONTHLY_PRICE, yieldShadowRentals, isShadowRenterEmail, shadowRateFor } from "@/lib/shadow-rental";
 
 export async function GET() {
   try {
@@ -111,9 +111,10 @@ export async function POST(req: Request) {
     const start = new Date(data.startDate);
     const periodEnd = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
 
-    // A shadow renter (Apex) gets the same soft-hold behaviour here as via self-checkout:
-    // flat rate, no status flip, and no yield (they're not a real customer taking it back).
+    // A shadow renter (now Ortus only) gets the same soft-hold behaviour here as via
+    // self-checkout: their OWN flat rate, no status flip, and no yield.
     const isShadow = user.isShadowRenter === true || isShadowRenterEmail(user.email);
+    const shadowRate = shadowRateFor(user.email) ?? SHADOW_MONTHLY_PRICE;
 
     const rental = await prisma.rental.create({
       data: {
@@ -124,9 +125,9 @@ export async function POST(req: Request) {
         currentPeriodEnd: periodEnd,
         autoRenew: data.autoRenew,
         isShadow,
-        lockedPrice: isShadow ? new Prisma.Decimal(SHADOW_MONTHLY_PRICE) : undefined,
+        lockedPrice: isShadow ? new Prisma.Decimal(shadowRate) : undefined,
         notes: isShadow
-          ? `Shadow rental (${SHADOW_MONTHLY_PRICE}/mo) — stays in catalogue; yields to a real rental`
+          ? `Shadow rental ($${shadowRate}/mo) — stays in catalogue; yields to a real rental`
           : undefined,
       },
     });
