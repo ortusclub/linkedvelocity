@@ -247,12 +247,15 @@ export function deriveCase(
   let next = "Awaiting owner", urgent = false, bucket: Bucket = "owner";
   if (lostOutcome) { next = `${LOST_LABEL[lostOutcome]}${closedAt ? ` · ${rel(closedAt, now)}` : ""}`; bucket = "lost"; }
   else if (resolvedAt) {
-    // Post-recovery lifecycle: secure the account, warm up (status = under construction for the
-    // cooldown), then relist (→ available) or hand back to the renter.
+    // The post-recovery lifecycle (secure → warm-up → relist/hand-back) only applies to recoveries
+    // taken through THIS tab (stored.resolvedAt). A recovery logged the old way (via inventory) is
+    // already handled — it's just Recovered/done, not "needs securing".
     const gl = lastOf(steps, "gl"), pw = lastOf(steps, "pw"), relist = lastOf(steps, "relist"), handback = lastOf(steps, "handback");
     const rented = a.status === "rented";
+    const inWorkflow = !!stored.resolvedAt;
     if (relist) { next = `Relisted ${rel(Date.parse(relist.at), now)}`; bucket = "done"; }
     else if (handback) { next = "Back with renter · gentle use"; bucket = "done"; }
+    else if (!inWorkflow) { next = `Recovered ${rel(resolvedAt, now)}`; bucket = "done"; }
     else if (!gl || !pw) { next = "Log in on GoLogin + reset password"; urgent = true; bucket = "action"; }
     else if (rented) { next = "Hand back to renter (gentle)"; urgent = true; bucket = "action"; }
     else {
@@ -353,6 +356,9 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const lastRec = [...log].reverse().find((e) => e.event === "recovered");
   const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRec ? Date.parse(lastRec.at) : null);
   const rec = !!resolvedAt, lost = !!stored.outcome, rented = a.status === "rented";
+  // Securing (GoLogin + password) + warm-up only apply to recoveries taken through this tab; a
+  // recovery logged the old way is already handled, so those steps show as done, not "todo".
+  const securing = !!stored.resolvedAt;
   type Pre = Omit<WfCard, "stLbl" | "stFg" | "isCurrent">;
   const cards: Pre[] = [];
   const mk = (n: number, title: string, sub: string, state: WfState, extra: Partial<Pre> = {}) => cards.push({ n, title, sub, state, actions: [], ...extra });
@@ -395,25 +401,26 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   }
   // 4 — GoLogin login + password reset (after recovery)
   {
-    const st: WfState = gl && pw ? "done" : rec ? "todo" : "lock";
+    const st: WfState = gl && pw ? "done" : securing ? "todo" : rec ? "done" : "lock";
     mk(4, "Log in on GoLogin + reset password", "LinkedIn normally asks for a fresh login and new password after recovery", st, {
       checks: [{ key: "gl", label: "Logged in via GoLogin profile", on: !!gl }, { key: "pw", label: "Password reset & saved", on: !!pw }],
-      hasPw: rec && !pw,
+      hasPw: securing && !pw,
     });
   }
   // 5 — Hand back (rented) or warm-up → relist (not rented)
   {
     const ready = rec && !!gl && !!pw;
     const base = resolvedAt || 0; // warm-up counted from recovery ("construction for 30 days after restriction")
+    const histDone: WfState | null = rec && !securing ? "done" : null; // old-way recovery: already handled
     if (rented && !rl) {
-      mk(5, "Hand back to renter", "Rented — no cooldown. Keep activity gentle for the first 2 weeks.", hb ? "done" : ready ? "todo" : "lock", {
+      mk(5, "Hand back to renter", "Rented — no cooldown. Keep activity gentle for the first 2 weeks.", hb ? "done" : ready ? "todo" : histDone || "lock", {
         actions: ready && !hb ? [{ id: "handback", label: "Mark handed back", variant: "primary" }] : [],
         note: ready ? `Tell ${a.renterName || "the renter"}: low volume, ~5–10 connection requests/day, no bulk messaging.` : "",
       });
     } else {
       const end = base + cd * DAY, left = base ? Math.max(0, Math.ceil((end - now) / DAY)) : cd;
       const pct = ready && base ? Math.min(100, Math.round(((now - base) / (cd * DAY)) * 100)) : 0;
-      mk(5, `Warm up ${cd} days → relist`, "Not rented — under construction, gentle activity only, then mark available", rl ? "done" : ready ? (left ? "wait" : "todo") : "lock", {
+      mk(5, `Warm up ${cd} days → relist`, "Not rented — under construction, gentle activity only, then mark available", rl ? "done" : ready ? (left ? "wait" : "todo") : histDone || "lock", {
         hasBar: ready && !rl, pct, barLabel: left ? `Day ${Math.min(cd, Math.floor((now - base) / DAY) + 1)} of ${cd} · relist ${new Date(end).toISOString().slice(0, 10)}` : "Cooldown done",
         note: ready && !rl ? "Warm-up: log in every few days, a few likes/views, ≤5 connection requests/day." : "",
         actions: ready && !rl ? [{ id: "relist", label: left ? "Relist early" : "Relist as available", variant: left ? "secondary" : "primary" }] : [],
