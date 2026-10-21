@@ -114,6 +114,77 @@ export function confirmWeeklyPayment(notes: string | null | undefined, paidDate:
   return `${stripped} ${stamp}`.trim();
 }
 
+// --- Off-platform DAILY rentals --------------------------------------------
+// Like the weekly rentals above, but billed per-day to a UNIQUE TRON address
+// (one address per renter). Because each renter has their own address, payments
+// are identified by *recipient* rather than by amount — so two renters can pay
+// the same daily rate without colliding. Config marker (set once at rental
+// creation, never rewritten):
+//   [daily $8 from 2026-08-07]
+// where the date is when tracking started (access granted). The daily-payment
+// cron sums every USDT received on the renter's address and writes a separate,
+// self-updating stamp carrying the computed next-due date + running total:
+//   [daily-paid nextdue 2026-08-10 total 24 tx a1b2c3d4]
+const DAILY_RE = /\[daily \$(\d+(?:\.\d+)?) from (\d{4}-\d{2}-\d{2})\]/i;
+
+export interface DailyBilling {
+  rate: number;    // numeric daily price, e.g. 8
+  rateRaw: string; // as written, e.g. "8" (preserves formatting)
+  from: string;    // YYYY-MM-DD tracking start (access date)
+  marker: string;  // the exact matched marker substring
+}
+
+export function dailyBilling(notes: string | null | undefined): DailyBilling | null {
+  const m = (notes || "").match(DAILY_RE);
+  if (!m) return null;
+  return { rate: parseFloat(m[1]), rateRaw: m[1], from: m[2], marker: m[0] };
+}
+
+const DAILY_PAID_RE = /\[daily-paid nextdue (\d{4}-\d{2}-\d{2}) total (\d+(?:\.\d+)?)(?: tx ([0-9a-fA-F]{6,16}))?\]/;
+
+export interface DailyPaidStamp { nextDue: string; total: number; tx: string | null }
+
+export function dailyPaidStamp(notes: string | null | undefined): DailyPaidStamp | null {
+  const m = (notes || "").match(DAILY_PAID_RE);
+  return m ? { nextDue: m[1], total: parseFloat(m[2]), tx: m[3] || null } : null;
+}
+
+// Add N whole days to a YYYY-MM-DD string, return YYYY-MM-DD.
+export function addDays(ymd: string, n: number): string {
+  const d = new Date(ymd + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear(), mo = String(d.getMonth() + 1).padStart(2, "0"), da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
+}
+
+// Whole days a given USDT total covers at `rate`/day. The small epsilon absorbs
+// rounding (e.g. 23.999 received for 3 days at $8 still counts as 3).
+export function daysCovered(total: number, rate: number): number {
+  if (rate <= 0) return 0;
+  return Math.floor((total + 0.01) / rate);
+}
+
+// The next payment-due date = tracking start advanced by the number of paid days.
+export function dailyNextDue(from: string, daysPaid: number): string {
+  return addDays(from, daysPaid);
+}
+
+// Daily reuses the weekly due-state maths — both are "how many days until this
+// date", same labels and tones.
+export function dailyDueState(nextDue: string, now: Date = new Date()): WeeklyDueState {
+  return weeklyDueState(nextDue, now);
+}
+
+// Write/replace the cron's self-updating daily-paid stamp in notes.
+export function stampDailyPaid(notes: string | null | undefined, nextDue: string, total: number, txId: string | null): string {
+  const totalStr = Number.isInteger(total) ? String(total) : total.toFixed(2);
+  const stamp = txId
+    ? `[daily-paid nextdue ${nextDue} total ${totalStr} tx ${txId.slice(0, 8)}]`
+    : `[daily-paid nextdue ${nextDue} total ${totalStr}]`;
+  const stripped = (notes || "").replace(DAILY_PAID_RE, "").replace(/[ \t]{2,}/g, " ").trimEnd();
+  return `${stripped} ${stamp}`.trim();
+}
+
 // GoLogin access state, independent of payment.
 export function accessStatus(r: TrackerRental): "Granted" | "Paused" | "Revoked" | "Not granted" {
   if (r.paused) return "Paused";
