@@ -16,7 +16,11 @@ export const FREE_EMAIL_DOMAINS = new Set([
 // Internal / team domains — our own people (e.g. Sam @ortus.solutions) are not clients,
 // even when they hold rentals for testing. Never show them in Renters.
 export const INTERNAL_DOMAINS = new Set(["ortus.solutions"]);
+// …except real internal renters we DO want to track (Ortus shadow-rents ~12 accounts via info@).
+export const INTERNAL_EMAIL_ALLOW = new Set(["info@ortus.solutions"]);
 export function isInternalEmail(email?: string | null): boolean {
+  const e = (email || "").trim().toLowerCase();
+  if (INTERNAL_EMAIL_ALLOW.has(e)) return false;
   const d = domainOf(email);
   return !!d && INTERNAL_DOMAINS.has(d);
 }
