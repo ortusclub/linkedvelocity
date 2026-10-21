@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 // restrictedAt, credits rental downtime), archive the case's steps + reason into the restrictionLog
 // "recovered" event for history, and reset the recovery_* fields so the next case starts clean.
 const schema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("add_step"), kind: z.enum(["id", "form", "li", "note"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional() }),
+  z.object({ action: z.literal("add_step"), kind: z.enum(["email", "id", "form", "li", "note"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
   z.object({ action: z.literal("set_poc"), poc: z.string().max(80) }),
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),

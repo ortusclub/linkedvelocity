@@ -40,7 +40,7 @@ export function matchApp<T extends { email: string; linkedinUrl: string | null }
 }
 
 export const STEP_TITLES: Record<StepKind, string> = {
-  email: "Restriction email to owner", qr: "QR recovery link", id: "ID verification",
+  email: "Owner contacted", qr: "QR recovery link", id: "ID verification",
   form: "Appeal form", li: "LinkedIn decision", note: "Note",
 };
 export const OUT_LABEL: Record<StepKind, Record<Outcome, string>> = {
@@ -51,8 +51,10 @@ export const OUT_LABEL: Record<StepKind, Record<Outcome, string>> = {
   li: { ok: "Restored", fail: "Rejected", pending: "Waiting" },
   note: { ok: "Note", fail: "Issue", pending: "Open" },
 };
-// Steps the team logs by hand (email + qr are driven by their own actions, not this form).
-export const LOGGABLE: StepKind[] = ["id", "form", "li", "note"];
+// Steps the team logs by hand. "email" = a manual "owner contacted" entry (e.g. a Telegram/
+// WhatsApp DM) that counts as the outreach step; it overrides the auto-derived email signal. QR
+// stays driven by its own actions.
+export const LOGGABLE: StepKind[] = ["email", "id", "form", "li", "note"];
 
 export type CaseAccount = {
   id: string;
@@ -134,7 +136,9 @@ function derivedSteps(a: CaseAccount): Step[] {
 export function buildCase(a: CaseAccount): { reason: string; steps: Step[] } {
   const stored = parseStoredCase(a.recoveryCase);
   const logged = (stored.steps || []).filter((s) => LOGGABLE.includes(s.k) && s.at);
-  const steps = [...derivedSteps(a), ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  // A hand-logged "owner contacted" (email) step overrides the auto-derived one, so we don't show both.
+  const derived = derivedSteps(a).filter((ds) => !(ds.k === "email" && logged.some((l) => l.k === "email")));
+  const steps = [...derived, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   const log = asLog(a.restrictionLog);
   const lastRestricted = [...log].reverse().find((e) => e.event === "restricted");
   // Reason falls back to the pipeline issue flag when it carries more than the bare keyword.
