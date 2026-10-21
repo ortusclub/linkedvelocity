@@ -261,7 +261,7 @@ export function deriveCase(
       else { next = "Ready to relist"; urgent = true; bucket = "action"; }
     }
   }
-  else if (qr && qr.o === "fail" && !id) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
+  else if (qr && qr.o === "fail" && !id && !fm) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
   else if (em && em.o === "fail") { next = "Email bounced — get new contact"; urgent = true; bucket = "action"; }
   else if (!em) { next = "Send restriction email"; urgent = true; bucket = "action"; }
