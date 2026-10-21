@@ -24,20 +24,40 @@ function ownerMessage(name: string, link: string) {
   return `Hi ${who}, your LinkedIn account needs a quick identity check to get back online. Open this on your phone and follow the steps (private link, expires in 24 hours): ${link}`;
 }
 
-function SendRow({ name, link, onSent }: { name: string; link: string; onSent: (via: string) => void }) {
+// Email sends for real server-side (to owner + referrer) and auto-marks sent truthfully. The
+// other channels only OPEN a prefilled draft / copy the link — the admin still sends it by hand —
+// so clicking them does NOT claim "sent"; it reveals an explicit "Mark as sent" confirm instead.
+function SendRow({ name, link, onMarkSent, onEmail }: { name: string; link: string; onMarkSent: (via: string) => void; onEmail: () => Promise<{ ok: boolean; msg: string }> }) {
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState<string | null>(null);
+  const [emailing, setEmailing] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
+  const [emailOk, setEmailOk] = useState(true);
   const msg = ownerMessage(name, link);
-  const btn = (label: string, href: string, via: string) => (
-    <a href={href} target="_blank" rel="noreferrer" onClick={() => onSent(via)} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", color: "var(--text)", textDecoration: "none", background: "var(--card)", whiteSpace: "nowrap" }}>{label}</a>
+  const manual = (label: string, href: string, via: string) => (
+    <a href={href} target="_blank" rel="noreferrer" onClick={() => setShared(via)} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", color: "var(--text)", textDecoration: "none", background: "var(--card)", whiteSpace: "nowrap" }}>{label}</a>
   );
+  const doEmail = async () => { setEmailing(true); const r = await onEmail(); setEmailOk(r.ok); setEmailMsg(r.msg); setEmailing(false); };
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center", marginTop: 8 }}>
-      <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} style={{ flex: "1 1 220px", minWidth: 180, font: `500 12px ${F_SANS}`, padding: "6px 9px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)" }} />
-      <button onClick={() => { navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); onSent("copy"); }); }} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)", cursor: "pointer" }}>{copied ? "Copied ✓" : "Copy"}</button>
-      {btn("WhatsApp", `https://wa.me/?text=${encodeURIComponent(msg)}`, "whatsapp")}
-      {btn("Telegram", `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(ownerMessage(name, "").trim())}`, "telegram")}
-      {btn("Viber", `viber://forward?text=${encodeURIComponent(msg)}`, "viber")}
-      {btn("Email", `mailto:?subject=${encodeURIComponent("Get your LinkedIn account back online")}&body=${encodeURIComponent(msg)}`, "email")}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <button onClick={doEmail} disabled={emailing} style={{ font: `600 12px ${F_SANS}`, padding: "7px 13px", borderRadius: 8, border: "1px solid var(--blue, #1D4ED8)", background: "var(--blue, #1D4ED8)", color: "#fff", cursor: "pointer", whiteSpace: "nowrap" }}>{emailing ? "Sending…" : "✉ Email owner + referrer"}</button>
+        {emailMsg && <span style={{ font: `600 11.5px ${F_SANS}`, color: emailOk ? "var(--green, #067647)" : "var(--danger)" }}>{emailMsg}</span>}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center" }}>
+        <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted)" }}>or share by hand:</span>
+        <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} style={{ flex: "1 1 200px", minWidth: 160, font: `500 12px ${F_SANS}`, padding: "6px 9px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)" }} />
+        <button onClick={() => { navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); setShared("copy"); }); }} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)", cursor: "pointer" }}>{copied ? "Copied ✓" : "Copy"}</button>
+        {manual("WhatsApp", `https://wa.me/?text=${encodeURIComponent(msg)}`, "whatsapp")}
+        {manual("Telegram", `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(ownerMessage(name, "").trim())}`, "telegram")}
+        {manual("Viber", `viber://forward?text=${encodeURIComponent(msg)}`, "viber")}
+      </div>
+      {shared && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", font: `500 11.5px ${F_SANS}`, color: "var(--muted)" }}>
+          <span>{shared === "copy" ? "Link copied." : `Draft opened in ${VIA_LABEL[shared]}.`} Once you&apos;ve actually sent it:</span>
+          <button onClick={() => { onMarkSent(shared); setShared(null); }} style={{ font: `600 11.5px ${F_SANS}`, padding: "5px 10px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)", cursor: "pointer" }}>Mark as sent ✓</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -69,10 +89,22 @@ function Card({ a, onChange }: { a: Acct; onChange: (next: Acct) => void }) {
     catch (e) { setErr(e instanceof Error ? e.message : "Could not make a link."); } finally { setBusy(false); }
   };
   const clearQr = async () => { setBusy(true); try { await fetch(`/api/admin/accounts/${a.id}/recovery-qr`, { method: "DELETE" }); onChange({ ...a, recoveryQrUrl: null, recoveryQrAt: null }); setLink(""); } finally { setBusy(false); } };
-  // Optimistic: reflect the send/share immediately, then persist so the card survives a refresh.
+  // Manual-channel confirm: the admin asserts they actually sent it, then we persist.
   const markSent = (via: string) => {
     onChange({ ...a, recoverySentAt: new Date().toISOString(), recoverySentVia: via });
     fetch(`/api/admin/accounts/${a.id}/recovery-qr`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ via }) }).catch(() => {});
+  };
+  // Real server-side send to owner + referrer (mirrors restrict-notify). Marks sent on success.
+  const emailSend = async (): Promise<{ ok: boolean; msg: string }> => {
+    try {
+      const r = await fetch(`/api/admin/accounts/${a.id}/recover-send`, { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) return { ok: false, msg: d.error || "Send failed." };
+      onChange({ ...a, recoverySentAt: new Date().toISOString(), recoverySentVia: "email" });
+      const to = (d.sent || []).map((s: { recipient: string }) => s.recipient).join(" + ") || "—";
+      const skip = (d.skipped || []).map((s: { recipient: string }) => s.recipient).join(", ");
+      return { ok: true, msg: `Emailed ${to}${skip ? ` · no email for ${skip}` : ""}` };
+    } catch { return { ok: false, msg: "Send failed." }; }
   };
 
   const chip = (text: string, fg: string, bg: string) => <span style={{ font: `600 11px ${F_SANS}`, color: fg, background: bg, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{text}</span>;
@@ -115,7 +147,7 @@ function Card({ a, onChange }: { a: Acct; onChange: (next: Acct) => void }) {
           </div>
           {a.recoveryQrAt && <div style={{ font: `500 11px ${F_SANS}`, color: "var(--muted)", marginTop: 6 }}>QR captured {new Date(a.recoveryQrAt).toLocaleString()}</div>}
           {err && <div style={{ font: `500 11.5px ${F_SANS}`, color: "var(--danger)", marginTop: 6 }}>{err}</div>}
-          {link && <SendRow name={a.linkedinName} link={link} onSent={markSent} />}
+          {link && <SendRow name={a.linkedinName} link={link} onMarkSent={markSent} onEmail={emailSend} />}
         </div>
       </div>
     </div>
