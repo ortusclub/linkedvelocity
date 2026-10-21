@@ -235,6 +235,13 @@ model LinkedInAccount {
   // non-techy owner can scan it on their phone instead of parsing emailed instructions.
   recoveryQrUrl         String?       @map("recovery_qr_url")
   recoveryQrAt          DateTime?     @map("recovery_qr_at")
+  // Recovery helper step 2: whether the owner link was sent/shared (set when the team hits a
+  // Copy/WhatsApp/etc. send action in /admin/recover) and the owner's self-reported outcome
+  // from the /recover page buttons ("worked" = back in, "stuck" = still can't get in).
+  recoverySentAt        DateTime?     @map("recovery_sent_at")
+  recoverySentVia       String?       @map("recovery_sent_via")
+  recoveryOutcome       String?       @map("recovery_outcome")
+  recoveryOutcomeAt     DateTime?     @map("recovery_outcome_at")
   trialEndsAt           DateTime?     @map("trial_ends_at")   // set when status=trial: a 3-day inventory hold; past this = "trial expired", awaiting admin mark-back
   // Short-term reservation: while heldUntil is in the future the account is hidden from every
   // catalogue (public + unlisted) and the normal checkout, so it can't be snagged. Status stays

@@ -10,7 +10,7 @@ export async function GET() {
     await requireAdmin();
     const accounts = await prisma.linkedInAccount.findMany({
       where: { status: { not: "removed" }, restrictedAt: { not: null } },
-      select: { id: true, linkedinName: true, status: true, loginEmail: true, linkedinVerified: true, restrictedAt: true, recoveryQrUrl: true, recoveryQrAt: true },
+      select: { id: true, linkedinName: true, status: true, loginEmail: true, linkedinVerified: true, restrictedAt: true, recoveryQrUrl: true, recoveryQrAt: true, recoverySentAt: true, recoverySentVia: true, recoveryOutcome: true, recoveryOutcomeAt: true },
       orderBy: { restrictedAt: "desc" },
     });
     return NextResponse.json({ accounts });

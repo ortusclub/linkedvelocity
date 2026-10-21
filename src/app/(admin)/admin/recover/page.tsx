@@ -5,9 +5,18 @@ import { useEffect, useRef, useState } from "react";
 const F_SANS = "var(--font-sans),system-ui,sans-serif";
 const F_GRO = "var(--font-grotesk),system-ui,sans-serif";
 
-type Acct = { id: string; linkedinName: string; status: string; loginEmail: string | null; linkedinVerified: boolean; restrictedAt: string; recoveryQrUrl: string | null; recoveryQrAt: string | null };
+type Acct = { id: string; linkedinName: string; status: string; loginEmail: string | null; linkedinVerified: boolean; restrictedAt: string; recoveryQrUrl: string | null; recoveryQrAt: string | null; recoverySentAt: string | null; recoverySentVia: string | null; recoveryOutcome: string | null; recoveryOutcomeAt: string | null };
 
 const daysAgo = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+const ago = (iso: string) => {
+  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+};
+const VIA_LABEL: Record<string, string> = { copy: "copied link", whatsapp: "WhatsApp", telegram: "Telegram", viber: "Viber", email: "Email", link: "link" };
 const fileToDataUrl = (f: File) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); });
 
 function ownerMessage(name: string, link: string) {
@@ -15,20 +24,20 @@ function ownerMessage(name: string, link: string) {
   return `Hi ${who}, your LinkedIn account needs a quick identity check to get back online. Open this on your phone and follow the steps (private link, expires in 24 hours): ${link}`;
 }
 
-function SendRow({ name, link }: { name: string; link: string }) {
+function SendRow({ name, link, onSent }: { name: string; link: string; onSent: (via: string) => void }) {
   const [copied, setCopied] = useState(false);
   const msg = ownerMessage(name, link);
-  const btn = (label: string, href: string, onClick?: () => void) => (
-    <a href={href} target="_blank" rel="noreferrer" onClick={onClick} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", color: "var(--text)", textDecoration: "none", background: "var(--card)", whiteSpace: "nowrap" }}>{label}</a>
+  const btn = (label: string, href: string, via: string) => (
+    <a href={href} target="_blank" rel="noreferrer" onClick={() => onSent(via)} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", color: "var(--text)", textDecoration: "none", background: "var(--card)", whiteSpace: "nowrap" }}>{label}</a>
   );
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center", marginTop: 8 }}>
       <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} style={{ flex: "1 1 220px", minWidth: 180, font: `500 12px ${F_SANS}`, padding: "6px 9px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)" }} />
-      <button onClick={() => { navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)", cursor: "pointer" }}>{copied ? "Copied ✓" : "Copy"}</button>
-      {btn("WhatsApp", `https://wa.me/?text=${encodeURIComponent(msg)}`)}
-      {btn("Telegram", `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(ownerMessage(name, "").trim())}`)}
-      {btn("Viber", `viber://forward?text=${encodeURIComponent(msg)}`)}
-      {btn("Email", `mailto:?subject=${encodeURIComponent("Get your LinkedIn account back online")}&body=${encodeURIComponent(msg)}`)}
+      <button onClick={() => { navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); onSent("copy"); }); }} style={{ font: `600 12px ${F_SANS}`, padding: "6px 11px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--card)", color: "var(--text)", cursor: "pointer" }}>{copied ? "Copied ✓" : "Copy"}</button>
+      {btn("WhatsApp", `https://wa.me/?text=${encodeURIComponent(msg)}`, "whatsapp")}
+      {btn("Telegram", `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(ownerMessage(name, "").trim())}`, "telegram")}
+      {btn("Viber", `viber://forward?text=${encodeURIComponent(msg)}`, "viber")}
+      {btn("Email", `mailto:?subject=${encodeURIComponent("Get your LinkedIn account back online")}&body=${encodeURIComponent(msg)}`, "email")}
     </div>
   );
 }
@@ -60,6 +69,13 @@ function Card({ a, onChange }: { a: Acct; onChange: (next: Acct) => void }) {
     catch (e) { setErr(e instanceof Error ? e.message : "Could not make a link."); } finally { setBusy(false); }
   };
   const clearQr = async () => { setBusy(true); try { await fetch(`/api/admin/accounts/${a.id}/recovery-qr`, { method: "DELETE" }); onChange({ ...a, recoveryQrUrl: null, recoveryQrAt: null }); setLink(""); } finally { setBusy(false); } };
+  // Optimistic: reflect the send/share immediately, then persist so the card survives a refresh.
+  const markSent = (via: string) => {
+    onChange({ ...a, recoverySentAt: new Date().toISOString(), recoverySentVia: via });
+    fetch(`/api/admin/accounts/${a.id}/recovery-qr`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ via }) }).catch(() => {});
+  };
+
+  const chip = (text: string, fg: string, bg: string) => <span style={{ font: `600 11px ${F_SANS}`, color: fg, background: bg, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{text}</span>;
 
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--card-border)", borderRadius: 14, padding: 16, boxShadow: "var(--card-shadow)" }}>
@@ -67,6 +83,19 @@ function Card({ a, onChange }: { a: Acct; onChange: (next: Acct) => void }) {
         <div style={{ font: `700 14px ${F_GRO}`, color: "var(--text)" }}>{a.linkedinName}{a.linkedinVerified && <span title="Verified" style={{ marginLeft: 6, color: "var(--green)", font: `600 11px ${F_SANS}` }}>✓</span>}</div>
         <div style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted)" }}>{a.status} · {daysAgo(a.restrictedAt)}d down · {a.loginEmail || "no login email"}</div>
       </div>
+
+      {(a.recoveryQrUrl || a.recoverySentAt || a.recoveryOutcome) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+          {a.recoverySentAt
+            ? chip(`Sent · ${VIA_LABEL[a.recoverySentVia || "link"] || a.recoverySentVia} · ${ago(a.recoverySentAt)}`, "#1D4ED8", "#EAF1FE")
+            : a.recoveryQrUrl && chip("Not sent yet", "#92400E", "#FEF3E2")}
+          {a.recoveryOutcome === "worked"
+            ? chip(`Owner: back in ✓${a.recoveryOutcomeAt ? ` · ${ago(a.recoveryOutcomeAt)}` : ""}`, "#067647", "#ECFDF3")
+            : a.recoveryOutcome === "stuck"
+              ? chip(`Owner: still stuck${a.recoveryOutcomeAt ? ` · ${ago(a.recoveryOutcomeAt)}` : ""}`, "#B42318", "#FEF3F2")
+              : a.recoverySentAt && chip("Awaiting owner", "var(--muted)", "var(--card-border)")}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 14, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         {a.recoveryQrUrl ? (
@@ -86,7 +115,7 @@ function Card({ a, onChange }: { a: Acct; onChange: (next: Acct) => void }) {
           </div>
           {a.recoveryQrAt && <div style={{ font: `500 11px ${F_SANS}`, color: "var(--muted)", marginTop: 6 }}>QR captured {new Date(a.recoveryQrAt).toLocaleString()}</div>}
           {err && <div style={{ font: `500 11.5px ${F_SANS}`, color: "var(--danger)", marginTop: 6 }}>{err}</div>}
-          {link && <SendRow name={a.linkedinName} link={link} />}
+          {link && <SendRow name={a.linkedinName} link={link} onSent={markSent} />}
         </div>
       </div>
     </div>

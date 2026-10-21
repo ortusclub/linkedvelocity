@@ -38,6 +38,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 }
 
+// Admin: mark the owner recovery link as sent/shared. Fired when the team hits a
+// Copy/WhatsApp/Telegram/Viber/Email send action in /admin/recover, so the card shows "Sent via
+// X" and we can tell apart "not sent yet" from "sent, awaiting the owner". Body: { via }.
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAdmin();
+    const { id } = await params;
+    const body = await req.json().catch(() => ({}));
+    const via = typeof body?.via === "string" && body.via.length <= 20 ? body.via : "link";
+    const account = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true } });
+    if (!account) return NextResponse.json({ error: "Account not found" }, { status: 404 });
+    await prisma.linkedInAccount.update({ where: { id }, data: { recoverySentAt: new Date(), recoverySentVia: via } });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "error";
+    return NextResponse.json({ error: msg }, { status: msg === "Forbidden" ? 403 : msg === "Unauthorized" ? 401 : 500 });
+  }
+}
+
 // Admin: clear a stale QR once recovery is done (or to re-capture a fresh one).
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
