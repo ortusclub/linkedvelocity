@@ -17,6 +17,14 @@ const RECOVERED_WINDOW_MS = 30 * 86400000;
 const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as RestrictionEvent[]) : []);
 const dayMs = 86400000;
 
+// "Last touch" = the most recent bit of OUR activity on a case (a recovery send, a hand-logged
+// step incl. a note, or a status change). It deliberately excludes captured LinkedIn mail — an
+// un-worked LinkedIn reply should still read as stale so the case floats up for chasing.
+const TOUCH_LABEL: Record<string, string> = {
+  email: "email sent", qr: "QR sent", id: "ID logged", form: "appeal form", li: "LinkedIn logged",
+  note: "note added", gl: "GoLogin", pw: "password reset", relist: "relisted", handback: "handed back",
+};
+
 export async function GET(req: Request) {
   try {
     await requireAdmin();
@@ -137,7 +145,26 @@ export async function GET(req: Request) {
       if (curAt) history.push({ reason: built.reason, days: Math.round(d.restrictedMs / dayMs), at: curAt, how: d.lostOutcome ? (d.lostOutcome === "perma" ? "Perma-restricted" : "No contact") : "Open", open: true });
       history.reverse();
 
+      // Last touch: newest of our sends, hand-logged steps (incl. notes), and status changes.
+      const stored = parseStoredCase(a.recoveryCase);
+      const touches: Array<[number, string]> = [];
+      const addTouch = (t: Date | string | null | undefined, label: string) => {
+        if (!t) return;
+        const ms = typeof t === "string" ? Date.parse(t) : t.getTime();
+        if (!Number.isNaN(ms)) touches.push([ms, label]);
+      };
+      addTouch(a.recoverySentAt, "owner link sent");
+      addTouch(a.recoveryQrAt, "QR sent");
+      addTouch(a.recoveryOutcomeAt, a.recoveryOutcome === "worked" ? "owner back in" : a.recoveryOutcome === "stuck" ? "owner stuck" : "owner replied");
+      addTouch(acct.outreachEmailAt, "restriction email");
+      for (const s of stored.steps || []) addTouch(s.at, TOUCH_LABEL[s.k] || "logged");
+      for (const e of log) addTouch(e.at, e.event === "recovered" ? "recovered" : "restricted");
+      if (d.resolvedAt) addTouch(new Date(d.resolvedAt), "resolved");
+      if (d.closedAt) addTouch(new Date(d.closedAt), d.lostOutcome === "perma" ? "perma-restricted" : "closed");
+      const lastTouch = touches.sort((x, y) => y[0] - x[0])[0] || null;
+
       return {
+        lastTouchAt: lastTouch ? lastTouch[0] : null, lastTouchLabel: lastTouch ? lastTouch[1] : "",
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
         linkedinUrl: a.linkedinUrl, poc: pocResolved, phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,

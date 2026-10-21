@@ -21,6 +21,7 @@ type Row = {
   restrictedAt: string | null; reason: string; steps: Step[];
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
+  lastTouchAt: number | null; lastTouchLabel: string;
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
   wf: WfCard[]; wfNext: string; wfLevel: string; emails: MailEvt[];
@@ -363,6 +364,7 @@ export default function RestrictionsV2Page() {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("action");
   const [phaseF, setPhaseF] = useState("all");
+  const [touchSort, setTouchSort] = useState<"asc" | "desc" | null>(null);
   const [pocF, setPocF] = useState("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -386,8 +388,20 @@ export default function RestrictionsV2Page() {
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
   const closed = (r: Row) => (r.resolvedAt || r.lostOutcome ? 1 : 0);
+  // Open tabs default to stalest-first by last touch (oldest / never-touched at top) so neglected
+  // cases surface; the "Last touch" header toggles the direction. Other tabs keep the default order
+  // unless the header is clicked.
+  const openTab = ["action", "open", "owner", "linkedin", "idfail"].includes(filter);
+  const touchDir: "asc" | "desc" | null = touchSort ?? (openTab ? "asc" : null);
+  const byTouch = (a: Row, b: Row) => {
+    const av = a.lastTouchAt, bv = b.lastTouchAt;
+    if (av == null && bv == null) return sinceMs(a) - sinceMs(b);
+    if (av == null) return touchDir === "asc" ? -1 : 1; // never touched = most stale
+    if (bv == null) return touchDir === "asc" ? 1 : -1;
+    return touchDir === "asc" ? av - bv : bv - av;
+  };
   const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc)
-    .sort((a, b) => closed(a) - closed(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b));
+    .sort((a, b) => touchDir ? (closed(a) - closed(b) || byTouch(a, b)) : (closed(a) - closed(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
 
   const openCases = all.filter(isOpenCase);
   const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
@@ -413,7 +427,7 @@ export default function RestrictionsV2Page() {
     { key: "all", label: "Everyone" }, ...pocNames.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
   ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.poc : r.poc === o.key)).length }));
 
-  const colTpl = "minmax(200px,1.6fr) 120px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
+  const colTpl = "minmax(200px,1.6fr) 120px 110px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -463,9 +477,11 @@ export default function RestrictionsV2Page() {
 
       {rows && (
         <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, overflowX: "auto" }}>
-          <div style={{ minWidth: 1080 }}>
+          <div style={{ minWidth: 1210 }}>
             <div style={{ display: "grid", gridTemplateColumns: colTpl, gap: 14, padding: "11px 18px", borderBottom: "1px solid #eef0f4", font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>
-              <span>Account</span><span>Restricted for</span><span>Times</span><span>Reason</span><span>Email · ID · Form · LinkedIn</span><span>Next step</span><span></span>
+              <span>Account</span><span>Restricted for</span>
+              <span onClick={() => setTouchSort(touchDir === "asc" ? "desc" : "asc")} title="Most recent activity by the team. Click to flip; open tabs show stalest first." style={{ cursor: "pointer", color: touchSort || openTab ? "#334155" : "#8a93a3", userSelect: "none" }}>Last touch {touchDir === "asc" ? "▲" : touchDir === "desc" ? "▼" : "⇅"}</span>
+              <span>Times</span><span>Reason</span><span>Email · ID · Form · LinkedIn</span><span>Next step</span><span></span>
             </div>
             {!list.length && <div style={{ padding: "28px 18px", font: `500 13.5px ${F_SANS}`, color: "#8a93a3" }}>Nothing here.</div>}
             {list.map((r) => {
@@ -493,6 +509,17 @@ export default function RestrictionsV2Page() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span style={{ font: `700 15px ${F_GRO}`, color: r.resolvedAt || r.lostOutcome ? "#5b6779" : days > 7 ? "#b91c1c" : days > 2 ? "#b45309" : "#0b1220" }}>{dur(r.restrictedMs)}</span>
                       <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap" }}>{r.resolvedAt ? "restored " + fmt(new Date(r.resolvedAt).toISOString()).split(",")[0] : r.lostOutcome && r.closedAt ? "closed " + fmt(new Date(r.closedAt).toISOString()).split(",")[0] : "since " + fmt(r.restrictedAt).split(",")[0]}</span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                      {(() => {
+                        const lt = r.lastTouchAt;
+                        if (!lt) return <span style={{ font: `700 12px ${F_SANS}`, color: "#b91c1c", whiteSpace: "nowrap" }}>never touched</span>;
+                        const td = (now - lt) / 86400e3;
+                        return (<>
+                          <span style={{ font: `700 13px ${F_GRO}`, color: td > 7 ? "#b91c1c" : td > 3 ? "#b45309" : "#334155", whiteSpace: "nowrap" }}>{rel(new Date(lt).toISOString(), now)}</span>
+                          <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.lastTouchLabel}</span>
+                        </>);
+                      })()}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span style={{ font: `700 15px ${F_GRO}`, color: r.cnt >= 3 ? "#c2410c" : "#0b1220" }}>{r.cnt}×</span>
