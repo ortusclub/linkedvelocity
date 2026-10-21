@@ -53,6 +53,7 @@ const fileToDataUrl = (f: File) => new Promise<string>((res, rej) => { const r =
 function QrCard({ r, reload }: { r: Row; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = async (dataUrl: string) => {
     setBusy(true); setErr("");
@@ -61,6 +62,28 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
   };
   const onPaste = async (e: React.ClipboardEvent) => { const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/")); const f = item?.getAsFile(); if (f) { e.preventDefault(); await upload(await fileToDataUrl(f)); } };
   const clearQr = async () => { setBusy(true); try { await fetch(`/api/admin/accounts/${r.id}/recovery-qr`, { method: "DELETE" }); reload(); } finally { setBusy(false); } };
+  // Mint the owner's private /recover link and hand it off on the channel they actually use.
+  // Copy = just the link; the app buttons open a pre-filled share AND mark the case as sent.
+  const share = async (via: "copy" | "whatsapp" | "telegram" | "viber") => {
+    setBusy(true); setErr(""); setInfo("");
+    try {
+      const res = await fetch(`/api/admin/accounts/${r.id}/recover-link`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ via }) });
+      const d = await res.json(); if (!res.ok) throw new Error(d.error || "Couldn't make the link.");
+      const link: string = d.link;
+      const lead = `Hi — LinkedIn needs a quick identity check to get ${d.name}'s account back online, and it has to be done on a phone. Open this private link on your phone and scan the QR with the LinkedIn app (it expires in 24h):`;
+      if (via === "copy") {
+        try { await navigator.clipboard.writeText(link); } catch { /* clipboard may be blocked */ }
+        setInfo("Link copied — paste it to the owner.");
+      } else {
+        const url = via === "telegram" ? `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(lead)}`
+          : via === "viber" ? `viber://forward?text=${encodeURIComponent(`${lead}\n${link}`)}`
+          : `https://wa.me/?text=${encodeURIComponent(`${lead}\n${link}`)}`;
+        window.open(url, "_blank");
+        setInfo(`Opened ${via} — pick the owner and send. Marked as sent.`);
+        reload();
+      }
+    } catch (e) { setErr(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
+  };
   const btn = (label: string, onClick: () => void, primary?: boolean) => (
     <button onClick={onClick} disabled={busy} style={{ border: primary ? "none" : "1px solid #dde1e8", background: primary ? "#0b1220" : "#fff", color: primary ? "#fff" : "#0b1220", borderRadius: 8, padding: "6px 11px", font: `600 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>
   );
@@ -78,12 +101,20 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
               {btn(busy ? "…" : "Replace", () => fileRef.current?.click())}
               {btn("Clear", clearQr)}
             </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ font: `600 11px ${F_SANS}`, color: "#5b6779" }}>Send link to owner:</span>
+              {btn("Copy", () => share("copy"))}
+              {btn("WhatsApp", () => share("whatsapp"))}
+              {btn("Telegram", () => share("telegram"))}
+              {btn("Viber", () => share("viber"))}
+            </div>
           </div>
         </div>
       ) : (
         <button onClick={() => fileRef.current?.click()} onPaste={onPaste} tabIndex={0} disabled={busy} style={{ border: "1.5px dashed #cfd5df", background: "#fafbfc", borderRadius: 10, padding: 16, font: `600 12.5px ${F_SANS}`, color: "#5b6779", cursor: "pointer", textAlign: "center" }}>Paste the QR screenshot from GoLogin (⌘V) or click to upload</button>
       )}
       {err && <span style={{ font: `500 11.5px ${F_SANS}`, color: "#b91c1c" }}>{err}</span>}
+      {info && <span style={{ font: `600 11.5px ${F_SANS}`, color: "#0f7a3d" }}>{info}</span>}
     </div>
   );
 }
