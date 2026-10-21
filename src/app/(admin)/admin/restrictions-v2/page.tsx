@@ -37,7 +37,7 @@ const ST: Record<string, [string, string, string]> = {
   available: ["Onboarded", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
 };
 const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"] };
-const TITLES: Record<StepKind, string> = { email: "Restriction email", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note" };
+const TITLES: Record<StepKind, string> = { email: "Owner contacted", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note" };
 
 const dur = (ms: number) => { const h = Math.floor(ms / 3600e3); return h < 24 ? h + "h" : Math.floor(h / 24) + "d " + (h % 24) + "h"; };
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -189,6 +189,15 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
             onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.poc || "")) post({ action: "set_poc", poc: v }); }}
             style={{ width: 150, border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "7px 9px", font: `600 12.5px ${F_SANS}`, color: "#0b1220", textTransform: "none", letterSpacing: 0, outline: "none" }} />
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, font: `700 11px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: "#8a93a3" }}>Reason
+          <input list="rc-reasons" defaultValue={r.reason === "Restriction" ? "" : r.reason} placeholder="why restricted" disabled={busy}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== r.reason) post({ action: "set_reason", reason: v }); }}
+            style={{ width: 190, border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "7px 9px", font: `600 12.5px ${F_SANS}`, color: "#0b1220", textTransform: "none", letterSpacing: 0, outline: "none" }} />
+          <datalist id="rc-reasons">
+            <option value="ID verification required" /><option value="Phone verification" /><option value="Unusual activity detected" /><option value="Suspicious login (new device)" /><option value="Automation / ToS" />
+          </datalist>
+        </label>
         {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "perma" })} disabled={busy} style={{ border: "1px solid #f3c7c7", background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Permanently restricted</button>}
         {!closed && <button onClick={() => post({ action: "mark_lost", outcome: "nocontact" })} disabled={busy} style={{ border: "1px solid #f5d9b8", background: "#fff", color: "#b45309", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Can&apos;t contact owner</button>}
         {r.lostOutcome && <button onClick={() => post({ action: "reopen" })} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Reopen case</button>}
@@ -228,12 +237,12 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
               <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Log a step</span>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <select value={fk} onChange={(e) => setFk(e.target.value as StepKind)} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 8px", font: `600 12.5px ${F_SANS}`, color: "#0b1220" }}>
-                  <option value="id">ID verification</option><option value="form">Appeal form</option><option value="li">LinkedIn decision</option><option value="note">Note</option>
+                  <option value="email">Owner contacted</option><option value="id">ID verification</option><option value="form">Appeal form</option><option value="li">LinkedIn decision</option><option value="note">Note</option>
                 </select>
                 <select value={fo} onChange={(e) => setFo(e.target.value as "ok" | "fail" | "pending")} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 8px", font: `600 12.5px ${F_SANS}`, color: "#0b1220" }}>
                   <option value="ok">Worked</option><option value="fail">Failed</option><option value="pending">Pending</option>
                 </select>
-                <input value={fn} onChange={(e) => setFn(e.target.value)} placeholder="Error or note (optional)" style={{ flex: 1, minWidth: 150, border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
+                <input value={fn} onChange={(e) => setFn(e.target.value)} placeholder={fk === "email" ? "Channel + detail, e.g. Telegram — sent guide" : "Error or note (optional)"} style={{ flex: 1, minWidth: 150, border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
                 <button onClick={addStep} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 8, padding: "6px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Add</button>
               </div>
               <span style={{ font: `500 11px ${F_SANS}`, color: "#9aa3b2" }}>A LinkedIn decision of &ldquo;Worked&rdquo; closes the case and marks the account recovered.</span>
