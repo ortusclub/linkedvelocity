@@ -83,7 +83,30 @@ export type CaseAccount = {
   accountIssue?: string | null; // free-text pipeline issue flag ("restricted", "permanently restricted", …)
   restrictionReport?: { type?: "qr_done" | "recovered"; at?: string } | null; // owner self-report from the portal
   outreachEmailAt?: string | null; // a restriction email touch found in the shared outreach log
+  mailEvents?: Array<{ type: string; receivedAt: string; subject: string; bodyText: string }>; // captured LinkedIn appeal/ID/recovery emails
 };
+
+// Captured LinkedIn emails (AccountMailEvent) → chain steps, with the email's REAL date, so an
+// appeal LinkedIn already answered doesn't sit "stale" and the ID/appeal cells reflect reality.
+function mailDerivedSteps(a: CaseAccount): Step[] {
+  const out: Step[] = [];
+  for (const m of a.mailEvents || []) {
+    const t = `${m.subject || ""} ${m.bodyText || ""}`;
+    const at = m.receivedAt;
+    if (m.type === "appeal_update") {
+      if (/reinstat|restored?\b|access (?:has been )?restored|no longer restricted|back online/i.test(t)) out.push({ k: "li", o: "ok", at, note: "LinkedIn: appeal approved (email)" });
+      else if (/remain(?:s)? restricted|does ?n.?t comply|not comply|rejected|declin|unable to (?:restore|reinstate)|will remain restricted/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn: appeal rejected (email)" });
+      else out.push({ k: "li", o: "pending", at, note: "LinkedIn appeal update (email)" });
+    } else if (m.type === "id_verification") {
+      if (/verified|confirmed|successfully/i.test(t)) out.push({ k: "id", o: "ok", at, note: "LinkedIn: ID verified (email)" });
+      else if (/could ?n.?t|unable|failed|didn.?t match|expired|try again/i.test(t)) out.push({ k: "id", o: "fail", at, err: "LinkedIn: ID check failed (email)" });
+      else out.push({ k: "id", o: "pending", at, note: "LinkedIn ID verification (email)" });
+    } else if (m.type === "recovery_appeal" || m.type === "appeal_intake") {
+      out.push({ k: "form", o: "pending", at, note: m.type === "appeal_intake" ? "LinkedIn asked for more info (email)" : "Recovery appeal (email)" });
+    }
+  }
+  return out;
+}
 
 // Signals we backtrack from the account notes (written by the auto-notify / recover-send flows
 // and by hand), so a case reflects history we already have instead of starting blank.
@@ -145,7 +168,8 @@ export function buildCase(a: CaseAccount): { reason: string; steps: Step[] } {
   const logged = (stored.steps || []).filter((s) => STORED_KINDS.includes(s.k) && s.at);
   // A hand-logged email/qr step overrides the auto-derived one, so we don't show both.
   const derived = derivedSteps(a).filter((ds) => !((ds.k === "email" || ds.k === "qr") && logged.some((l) => l.k === ds.k)));
-  const steps = [...derived, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  const mail = mailDerivedSteps(a); // captured LinkedIn emails → id/form/li steps, with their real dates
+  const steps = [...derived, ...mail, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   const log = asLog(a.restrictionLog);
   const lastRestricted = [...log].reverse().find((e) => e.event === "restricted");
   // Reason falls back to the pipeline issue flag when it carries more than the bare keyword.
