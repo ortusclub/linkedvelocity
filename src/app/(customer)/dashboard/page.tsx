@@ -18,6 +18,10 @@ import { AutoRecharge } from "./auto-recharge";
 import { canShowRentalShareLink, isRentalBeingPrepared } from "@/lib/rental-dashboard-access";
 import { startDashboardTour } from "@/lib/dashboard-tour";
 import { canReplaceNow, replacementUnlockAt, REPLACEMENT_HOLD_MS } from "@/lib/replacement";
+import {
+  FIELD_LABEL, FIELD_MAX, MONTHS, experienceRange, isChangeValid, firstPlannedFrom, CHANGE_SPACING_DAYS,
+  type ProfileChangeFieldKey, type ExperiencePayload,
+} from "@/lib/profile-changes";
 import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 
 // Renter Dashboard v2 typography (scoped to this page, no layout change).
@@ -398,6 +402,248 @@ function ReplacementPicker({ rental, onClose, onReplaced }: { rental: Rental; on
   );
 }
 
+// Chip order shown in the Profile-changes modal (matches the v3 prototype).
+const PC_CHIPS: ProfileChangeFieldKey[] = ["banner", "headline", "about", "experience", "location", "other"];
+const monD = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+const EXP_YEARS = Array.from({ length: 37 }, (_, i) => new Date().getFullYear() - i);
+
+// Renter Dashboard v3: renters request profile edits instead of making them (big edits at once
+// get accounts restricted); the LV team applies them ~1 every 2 days. Reuses the Replace modal shell.
+function ProfileChangesModal({ rental, onClose, onSent }: { rental: Rental; onClose: () => void; onSent: (n: number) => void }) {
+  const acctName = rental.linkedinAccount.linkedinName;
+  const past = rental.profileChanges || [];
+  const [selected, setSelected] = useState<Set<ProfileChangeFieldKey>>(new Set());
+  const [headline, setHeadline] = useState("");
+  const [about, setAbout] = useState("");
+  const [location, setLocation] = useState("");
+  const [other, setOther] = useState("");
+  const [banner, setBanner] = useState<{ url: string; name: string } | null>(null);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [bannerErr, setBannerErr] = useState<string | null>(null);
+  const [exp, setExp] = useState<ExperiencePayload>({ action: "add", title: "", company: "", startMonth: null, startYear: null, endMonth: null, endYear: null, isCurrent: false, location: "", description: "" });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = (k: ProfileChangeFieldKey) => setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const remove = (k: ProfileChangeFieldKey) => setSelected((prev) => { const n = new Set(prev); n.delete(k); return n; });
+  const textOf = (k: ProfileChangeFieldKey) => (k === "headline" ? headline : k === "about" ? about : k === "location" ? location : k === "other" ? other : "");
+  const setTextOf = (k: ProfileChangeFieldKey, v: string) => { if (k === "headline") setHeadline(v); else if (k === "about") setAbout(v); else if (k === "location") setLocation(v); else if (k === "other") setOther(v); };
+  const changeObj = (k: ProfileChangeFieldKey) => (k === "banner" ? { field: k, fileUrl: banner?.url ?? null } : k === "experience" ? { field: k, experience: exp } : { field: k, value: textOf(k) });
+
+  const chosen = PC_CHIPS.filter((k) => selected.has(k));
+  const allValid = chosen.length > 0 && chosen.every((k) => isChangeValid(changeObj(k)));
+  const anyIncomplete = chosen.some((k) => !isChangeValid(changeObj(k)));
+
+  // Finish estimate: same scheduling as the server — 2 days after the last pending change
+  // (or tomorrow), then 2 days per additional change.
+  const pendingFuture = past.filter((c) => c.status === "planned" && new Date(c.plannedFor).getTime() > Date.now()).map((c) => new Date(c.plannedFor));
+  const finishDate = (() => { const start = firstPlannedFrom(pendingFuture); const d = new Date(start); d.setDate(start.getDate() + Math.max(0, chosen.length - 1) * CHANGE_SPACING_DAYS); return d; })();
+
+  const summary = chosen.length === 0
+    ? "Pick what you'd like changed."
+    : anyIncomplete
+    ? "Fill in each change to continue."
+    : `${chosen.length} ${chosen.length === 1 ? "change" : "changes"} · we'll finish around ${monD(finishDate)} and email you as each one goes live.`;
+
+  const onBannerFile = async (file: File) => {
+    setBannerErr(null); setBannerUploading(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch(`/api/rentals/${rental.id}/profile-changes/banner`, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) { setBannerErr(data.error || "Upload failed."); return; }
+      setBanner({ url: data.url, name: file.name });
+    } catch { setBannerErr("Upload failed — try again."); } finally { setBannerUploading(false); }
+  };
+
+  const submit = async () => {
+    if (!allValid || submitting) return;
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`/api/rentals/${rental.id}/profile-changes`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes: chosen.map(changeObj) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Couldn't send your request."); setSubmitting(false); return; }
+      onSent(data.created);
+    } catch { setError("Couldn't send your request — try again."); setSubmitting(false); }
+  };
+
+  const inputStyle: React.CSSProperties = { border: "1px solid #d5dbe5", borderRadius: 9, padding: "9px 11px", fontWeight: 500, fontSize: 13.5, color: V.text, width: "100%", boxSizing: "border-box", outline: "none", background: "#fff" };
+  const focusOn = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { e.currentTarget.style.borderColor = V.blue; };
+  const focusOff = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { e.currentTarget.style.borderColor = "#d5dbe5"; };
+  const removeBtn = (k: ProfileChangeFieldKey) => (
+    <button onClick={() => remove(k)} style={{ border: "none", background: "none", color: V.faint, fontWeight: 600, fontSize: 12, cursor: "pointer", textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Remove</button>
+  );
+  const blockHeader = (label: string, hint: React.ReactNode, k: ProfileChangeFieldKey) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
+      <span style={{ fontWeight: 500, fontSize: 12, color: V.faint }}>{hint}</span>
+      <span style={{ marginLeft: "auto" }}>{removeBtn(k)}</span>
+    </div>
+  );
+
+  const monthSelect = (val: number | null | undefined, onChange: (v: number | null) => void, disabled?: boolean) => (
+    <select value={val ?? ""} disabled={disabled} onFocus={focusOn} onBlur={focusOff} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} style={{ ...inputStyle, opacity: disabled ? 0.45 : 1 }}>
+      <option value="">Month</option>
+      {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+    </select>
+  );
+  const yearSelect = (val: number | null | undefined, onChange: (v: number | null) => void, disabled?: boolean) => (
+    <select value={val ?? ""} disabled={disabled} onFocus={focusOn} onBlur={focusOff} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} style={{ ...inputStyle, opacity: disabled ? 0.45 : 1 }}>
+      <option value="">Year</option>
+      {EXP_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+    </select>
+  );
+
+  const pastPill = (c: NonNullable<Rental["profileChanges"]>[number]) => {
+    const when = c.appliedAt || c.plannedFor;
+    const map = {
+      done: { bg: "#e7f7ee", fg: "#0f7a3d", text: `Done ${monD(new Date(when))}` },
+      planned: { bg: "#e8eefc", fg: "#1550e8", text: `Planned ${monD(new Date(c.plannedFor))}` },
+      needs_info: { bg: "#fef3c7", fg: "#b45309", text: "Needs info" },
+      rejected: { bg: "#fdecec", fg: "#b91c1c", text: "Not applied" },
+    } as const;
+    const s = map[c.status];
+    return <span style={{ flex: "none", background: s.bg, color: s.fg, borderRadius: 999, padding: "3px 9px", fontWeight: 700, fontSize: 11 }}>{s.text}</span>;
+  };
+
+  return (
+    <div onClick={onClose} className={jakarta.className} style={{ position: "fixed", inset: 0, background: "rgba(11,18,32,.45)", display: "grid", placeItems: "center", padding: 20, zIndex: 50, color: V.text }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 600, maxHeight: "calc(100vh - 40px)", background: "#fff", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 60px rgba(11,18,32,.25)" }}>
+        {/* Header */}
+        <div style={{ padding: "20px 22px 14px", display: "flex", flexDirection: "column", gap: 6, borderBottom: `1px solid ${V.line}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 800, fontSize: 19 }}>Profile changes · {acctName}</span>
+            <button onClick={onClose} style={{ marginLeft: "auto", border: "none", background: "none", fontWeight: 500, fontSize: 22, color: V.faint, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+          <span style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: V.muted }}>LinkedIn can restrict an account when its profile changes too much at once, so we make the edits for you, about one every two days. Please don&apos;t edit the profile yourself.</span>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflow: "auto", padding: "16px 22px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
+          {/* Requested (past) */}
+          {past.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".07em", color: "#8a93a3", textTransform: "uppercase" }}>Requested</span>
+              {past.map((c) => (
+                <div key={c.id} style={{ border: "1px solid #eef0f4", borderRadius: 10, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ flex: "none", width: 118, fontWeight: 700, fontSize: 12.5 }}>{c.label}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500, fontSize: 12.5, color: V.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.detail}</div>
+                    {(c.status === "needs_info" || c.status === "rejected") && c.adminNote && (
+                      <div style={{ fontWeight: 500, fontSize: 11.5, color: c.status === "rejected" ? "#b91c1c" : "#b45309", marginTop: 2, whiteSpace: "normal" }}>{c.adminNote}</div>
+                    )}
+                  </div>
+                  {pastPill(c)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* What should we change? */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <span style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".07em", color: "#8a93a3", textTransform: "uppercase" }}>What should we change?</span>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+              {PC_CHIPS.map((k) => {
+                const on = selected.has(k);
+                return <button key={k} onClick={() => toggle(k)} style={{ borderRadius: 999, padding: "6px 13px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", border: `1px solid ${on ? V.text : "#d5dbe5"}`, background: on ? V.text : "#fff", color: on ? "#fff" : V.text }}>{FIELD_LABEL[k]}</button>;
+              })}
+            </div>
+          </div>
+
+          {/* One block per selected chip */}
+          {chosen.map((k) => {
+            if (k === "banner") {
+              return (
+                <div key={k} style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {blockHeader("Banner", "1584×396 recommended", k)}
+                  <label onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) onBannerFile(f); }} style={{ display: "block", cursor: "pointer" }}>
+                    <input type="file" accept="image/png,image/jpeg" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onBannerFile(f); }} />
+                    {banner ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, border: "1.5px dashed #d5dbe5", borderRadius: 12, background: "#fafbfc", padding: 12 }}>
+                        <img src={banner.url} alt="Banner preview" style={{ flex: "none", width: 160, height: 40, objectFit: "cover", borderRadius: 6, background: "#e8eefc" }} />
+                        <span style={{ flex: 1, minWidth: 0, fontWeight: 500, fontSize: 12.5, color: V.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{banner.name}</span>
+                        <span style={{ flex: "none", fontWeight: 600, fontSize: 12, color: V.blue }}>Replace</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1.5px dashed #d5dbe5", borderRadius: 12, background: "#fafbfc", padding: "22px 12px", color: V.faint, fontWeight: 600, fontSize: 13 }}>
+                        <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>{bannerUploading ? "Uploading…" : "Upload a banner (PNG or JPG)"}
+                      </div>
+                    )}
+                  </label>
+                  {bannerErr && <span style={{ fontWeight: 500, fontSize: 12, color: "#b91c1c" }}>{bannerErr}</span>}
+                </div>
+              );
+            }
+            if (k === "experience") {
+              const remove_ = exp.action === "remove";
+              const range = experienceRange(exp);
+              return (
+                <div key={k} style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {blockHeader("Experience", range || "Add, edit or remove a role", k)}
+                  <div style={{ background: "#fafbfc", border: "1px solid #e6e9ee", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {(["add", "edit", "remove"] as const).map((a) => {
+                        const on = exp.action === a;
+                        return <button key={a} onClick={() => setExp((p) => ({ ...p, action: a }))} style={{ borderRadius: 999, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", border: `1px solid ${on ? V.blue : "#d5dbe5"}`, background: on ? "#e8eefc" : "#fff", color: on ? V.blue : V.text }}>{a === "add" ? "Add a role" : a === "edit" ? "Edit a role" : "Remove a role"}</button>;
+                      })}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                      <input value={exp.title} placeholder="Title" onFocus={focusOn} onBlur={focusOff} onChange={(e) => setExp((p) => ({ ...p, title: e.target.value }))} style={inputStyle} />
+                      <input value={exp.company} placeholder="Company" onFocus={focusOn} onBlur={focusOff} onChange={(e) => setExp((p) => ({ ...p, company: e.target.value }))} style={inputStyle} />
+                    </div>
+                    {!remove_ && (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                            <span style={{ fontWeight: 600, fontSize: 11.5, color: V.faint }}>Start date</span>
+                            <div style={{ display: "flex", gap: 6 }}>{monthSelect(exp.startMonth, (v) => setExp((p) => ({ ...p, startMonth: v })))}{yearSelect(exp.startYear, (v) => setExp((p) => ({ ...p, startYear: v })))}</div>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                            <span style={{ fontWeight: 600, fontSize: 11.5, color: V.faint }}>End date</span>
+                            <div style={{ display: "flex", gap: 6 }}>{exp.isCurrent ? <span style={{ ...inputStyle, opacity: 0.45, display: "flex", alignItems: "center" }}>Present</span> : <>{monthSelect(exp.endMonth, (v) => setExp((p) => ({ ...p, endMonth: v })))}{yearSelect(exp.endYear, (v) => setExp((p) => ({ ...p, endYear: v })))}</>}</div>
+                          </div>
+                        </div>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 500, fontSize: 12.5, color: V.muted, cursor: "pointer" }}>
+                          <input type="checkbox" checked={!!exp.isCurrent} onChange={(e) => setExp((p) => ({ ...p, isCurrent: e.target.checked }))} />I currently work in this role
+                        </label>
+                        <input value={exp.location || ""} placeholder="Location (optional)" onFocus={focusOn} onBlur={focusOff} onChange={(e) => setExp((p) => ({ ...p, location: e.target.value }))} style={inputStyle} />
+                        <textarea value={exp.description || ""} placeholder="Description (optional)" maxLength={2000} rows={3} onFocus={focusOn} onBlur={focusOff} onChange={(e) => setExp((p) => ({ ...p, description: e.target.value }))} style={{ ...inputStyle, resize: "vertical" }} />
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            // Text fields: headline / about / location / other
+            const max = FIELD_MAX[k];
+            const multiline = k === "about" || k === "other";
+            const val = textOf(k);
+            return (
+              <div key={k} style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {blockHeader(FIELD_LABEL[k], max ? `${val.length}/${max}` : "", k)}
+                {multiline ? (
+                  <textarea value={val} rows={4} maxLength={max} onFocus={focusOn} onBlur={focusOff} onChange={(e) => setTextOf(k, e.target.value)} style={{ ...inputStyle, resize: "vertical" }} />
+                ) : (
+                  <input value={val} maxLength={max} onFocus={focusOn} onBlur={focusOff} onChange={(e) => setTextOf(k, e.target.value)} style={inputStyle} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${V.line}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ flex: "1 1 200px", fontWeight: 500, fontSize: 12.5, lineHeight: 1.45, color: error ? "#b91c1c" : V.muted }}>{error || summary}</span>
+          <button onClick={onClose} style={{ border: "1px solid #d5dbe5", background: "#fff", color: V.text, borderRadius: 9, padding: "9px 14px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+          <button onClick={submit} disabled={!allValid || submitting} style={{ border: "none", background: allValid && !submitting ? V.blue : "#a9c0f7", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: allValid && !submitting ? "pointer" : "default" }}>{submitting ? "Sending…" : "Send request"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Rental {
   id: string;
   status: string;
@@ -425,6 +671,17 @@ interface Rental {
   downtimeCreditDays?: number;
   // Open self-serve proxy-fix case: "swapped" (awaiting the renter's confirm) or "escalated".
   proxyFix?: { status: string; ticketRef: string; openedAt?: string } | null;
+  // Renter-requested profile edits (Renter Dashboard v3) — oldest-planned first.
+  profileChanges?: Array<{
+    id: string;
+    field: ProfileChangeFieldKey;
+    label: string;
+    detail: string;
+    status: "planned" | "done" | "needs_info" | "rejected";
+    plannedFor: string;
+    appliedAt: string | null;
+    adminNote: string | null;
+  }>;
   // The exact email this renter must set GoLogin up with — shown on the "finish setup" card
   // while a rental is still pending access (that's the address we share the profile to).
   gologinLoginEmail?: string | null;
@@ -514,6 +771,10 @@ function DashboardContent() {
   const [linkCopied, setLinkCopied] = useState<string | null>(null);
   const [setupEmailCopied, setSetupEmailCopied] = useState<string | null>(null);
   const [replacingRental, setReplacingRental] = useState<Rental | null>(null);
+  // Profile-change requests (v3): the rental whose "Profile changes" modal is open + a toast.
+  const [profileChangeRental, setProfileChangeRental] = useState<Rental | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNowTick(Date.now()), 60000); return () => clearInterval(t); }, []);
   const refreshRentals = () => {
@@ -1387,6 +1648,10 @@ function DashboardContent() {
                 // available in pending too, so access no longer waits on the grant cron.
                 const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !renterHasGoLogin;
                 const setupEmail = rental.gologinLoginEmail || "";
+                // Profile-change requests (v3): the pill shows on live rows only (not restricted
+                // / being-prepared / paused). Pending = planned changes still in the future.
+                const canRequestEdit = !R && !prep && !rental.paused && rental.status === "active";
+                const pendingChanges = (rental.profileChanges || []).filter((c) => c.status === "planned" && new Date(c.plannedFor).getTime() > Date.now()).length;
 
                 const cDays = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
                 let sc = V.green, sl = "Active", ss = "Ready in GoLogin";
@@ -1448,6 +1713,12 @@ function DashboardContent() {
                         )}
                         {canReportProxy && (
                           <button onClick={() => reportProxy(rental)} disabled={viewAs} title="LinkedIn not loading or acting up in GoLogin? Report the proxy and we'll switch this account to a fresh one." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Proxy not working? Report it</button>
+                        )}
+                        {canRequestEdit && (
+                          <button onClick={() => { if (!viewAs) setProfileChangeRental(rental); }} disabled={viewAs} title="Request edits to this profile — we apply them gradually so LinkedIn doesn't restrict the account." style={{ alignSelf: "flex-start", marginTop: 3, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", border: "none", borderRadius: 999, padding: "3px 10px", fontWeight: 700, fontSize: 11.5, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, background: pendingChanges > 0 ? "#e8eefc" : "#f1f3f6", color: pendingChanges > 0 ? "#1550e8" : "#3b4657" }}>
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden><path d="M7.5 2.5l2 2L4 10H2V8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            {pendingChanges > 0 ? `${pendingChanges} change${pendingChanges === 1 ? "" : "s"} in progress` : "Request profile edit"}
+                          </button>
                         )}
                       </div>
                       {/* billing */}
@@ -1706,6 +1977,18 @@ function DashboardContent() {
           onClose={() => setReplacingRental(null)}
           onReplaced={() => { setReplacingRental(null); refreshRentals(); fetch(vqs("/api/wallet/balance")).then((r) => r.json()).then((d) => { if (d.balance != null) setUsdcBalance(d.balance); }).catch(() => {}); }}
         />
+      )}
+
+      {profileChangeRental && (
+        <ProfileChangesModal
+          rental={profileChangeRental}
+          onClose={() => setProfileChangeRental(null)}
+          onSent={(n) => { setProfileChangeRental(null); refreshRentals(); showToast(`Request sent · ${n} change${n === 1 ? "" : "s"} planned`); }}
+        />
+      )}
+
+      {toast && (
+        <div className={jakarta.className} style={{ position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)", zIndex: 60, background: V.text, color: "#fff", borderRadius: 999, padding: "10px 18px", fontWeight: 700, fontSize: 13, boxShadow: "0 12px 30px rgba(11,18,32,.3)", maxWidth: "calc(100vw - 32px)", textAlign: "center" }}>{toast}</div>
       )}
 
       {/* Edit Listing Modal */}
