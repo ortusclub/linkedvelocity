@@ -43,9 +43,12 @@ export default function RecoverView() {
             <li>On the sign-in screen, tap <strong>&ldquo;Sign in with QR code&rdquo;</strong> (the small QR icon).</li>
             <li>Point that camera at the code below.</li>
           </ol>
-          <div style={{ display: "flex", justifyContent: "center", margin: "8px 0 16px" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={info.qrUrl} alt="LinkedIn verification QR code" style={{ width: "min(320px, 80vw)", height: "auto", borderRadius: 12, border: "1px solid #e5e7eb", background: "#fff", padding: 8 }} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "8px 0 16px" }}>
+            <a href={info.qrUrl} target="_blank" rel="noopener noreferrer" style={{ display: "block", width: "min(560px, 94vw)", maxWidth: "100%" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={info.qrUrl} alt="LinkedIn verification QR code" style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid #e5e7eb", background: "#fff", padding: 8, boxSizing: "border-box" }} />
+            </a>
+            <span style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>Hard to scan? <a href={info.qrUrl} target="_blank" rel="noopener noreferrer">Tap the code to open it full-size</a>.</span>
           </div>
           <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>. If the QR doesn&apos;t work after a couple of tries, reply to our team — we&apos;ll help you verify another way.</p>
         </>
