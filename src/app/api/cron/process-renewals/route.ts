@@ -278,7 +278,9 @@ export async function POST(req: NextRequest) {
           // Grace exhausted — revoke access and mark "expired" so the release pass (section 3)
           // frees the account for others + notifies the waitlist, matching the manual-lapse path.
           await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
-          try { await revokeRentalAccess(r.id); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
+          // Pause (not delete) the public link — the account is held for the reclaim window,
+          // so a renter who re-pays regains access on grant without a fresh link.
+          try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
           try { await sendAccessRevokedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`, fmtDate(graceCutoff), r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
           result.failed++;
         } else {
@@ -333,7 +335,8 @@ export async function POST(req: NextRequest) {
       // The account is HELD for the reclaim window, not released yet.
       if (r.status === "active" && now >= new Date(end.getTime() + DAY)) {
         await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
-        try { await revokeRentalAccess(r.id); } catch (e) { console.error("revoke on lapse", r.id, e); }
+        // Pause (not delete) the public link — account is held for the reclaim window.
+        try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on lapse", r.id, e); }
         enqueue(r, "access_revoked", { account }, { releaseDate: fmtDate(new Date(end.getTime() + RECLAIM_DAYS * DAY)) });
         result.lapsed++;
         continue;
@@ -381,6 +384,15 @@ export async function POST(req: NextRequest) {
       });
       if (reclaimed > 0) { await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "released"] as unknown as Prisma.InputJsonValue } }); continue; }
 
+      // Cut REAL access before freeing the account: delete the public (g.camp) link. If
+      // GoLogin refuses, do NOT mark the account available — surfacing a profile the old
+      // renter can still open is the shadow-leak bug. Hold it and retry next run instead.
+      try {
+        await revokeRentalAccess(r.id, { publicLink: "delete" });
+      } catch (e) {
+        console.error("release: public link delete failed, holding account", r.linkedinAccountId, e);
+        continue;
+      }
       await prisma.linkedInAccount.update({ where: { id: r.linkedinAccountId }, data: { status: "available" } });
       await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "released"] as unknown as Prisma.InputJsonValue } });
       result.released++;
