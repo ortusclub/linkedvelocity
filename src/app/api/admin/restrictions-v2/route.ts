@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { buildCase, deriveCase, buildWorkflow, matchApp, notesSaysPerma, parseStoredCase, type CaseAccount } from "@/lib/recovery-case";
+import { mailTypeLabel } from "@/lib/account-mail";
 import type { RestrictionEvent } from "@/lib/restriction";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,18 @@ export async function GET(req: Request) {
       if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
     }
 
+    // Captured LinkedIn appeal / ID / recovery emails (AccountMailEvent) — seed chain steps with
+    // their real dates and power the email-log panel.
+    const mailRows = ids.length
+      ? await prisma.accountMailEvent.findMany({
+          where: { linkedinAccountId: { in: ids }, type: { in: ["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction"] } },
+          select: { linkedinAccountId: true, type: true, receivedAt: true, subject: true, bodyText: true, severity: true },
+          orderBy: { receivedAt: "asc" },
+        })
+      : [];
+    const mailByAccount = new Map<string, typeof mailRows>();
+    for (const m of mailRows) { const list = mailByAccount.get(m.linkedinAccountId) || []; list.push(m); mailByAccount.set(m.linkedinAccountId, list); }
+
     // A restriction email logged in the shared outreach trail (the pipeline Issue email).
     const matchedIds = [...new Set(relevant.map((a) => appByAccount.get(a.id)?.id).filter((x): x is string => !!x))];
     const outreach = matchedIds.length
@@ -92,11 +105,13 @@ export async function GET(req: Request) {
     const rows = relevant.map((a) => {
       const app = appByAccount.get(a.id);
       const pocResolved = app?.poc || a.poc || "";
+      const mailEvents = (mailByAccount.get(a.id) || []).map((m) => ({ type: m.type, receivedAt: m.receivedAt.toISOString(), subject: m.subject, bodyText: m.bodyText }));
       const acct: CaseAccount = {
         ...a, renterName: renterByAccount.get(a.id) || null, poc: pocResolved,
         accountIssue: app?.accountIssue || null,
         restrictionReport: (app?.restrictionReport as { type?: "qr_done" | "recovered"; at?: string } | null) || null,
         outreachEmailAt: outreachEmailAtFor(app?.id),
+        mailEvents,
       };
       const built = buildCase(acct);
       const d = deriveCase(acct, built, { now, staleDays, ownerSilentHours, cooldownDays });
@@ -129,6 +144,7 @@ export async function GET(req: Request) {
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
         wf: wf.cards, wfNext: wf.next, wfLevel: wf.level,
+        emails: (mailByAccount.get(a.id) || []).map((m) => ({ type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
         renterName: renterByAccount.get(a.id) || null,
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,

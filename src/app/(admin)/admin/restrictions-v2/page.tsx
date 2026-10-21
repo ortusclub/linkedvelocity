@@ -14,6 +14,7 @@ type Flag = { label: string; kind: "repeat" | "stale" | "renter" };
 type Hist = { reason: string; days: number; at: string; how: string; open: boolean };
 type WfAction = { id: string; label: string; variant: "primary" | "danger" | "secondary" };
 type WfCard = { n: number; title: string; sub: string; state: string; stLbl: string; stFg: string; isCurrent: boolean; note?: string; checks?: Array<{ key: "gl" | "pw"; label: string; on: boolean }>; hasPw?: boolean; hasBar?: boolean; pct?: number; barLabel?: string; actions: WfAction[] };
+type MailEvt = { type: string; typeLabel: string; at: string; subject: string; severity: string; body: string };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
   linkedinUrl: string | null; poc: string; phase: { label: string; pr: number };
@@ -22,7 +23,7 @@ type Row = {
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
-  wf: WfCard[]; wfNext: string; wfLevel: string;
+  wf: WfCard[]; wfNext: string; wfLevel: string; emails: MailEvt[];
 };
 
 // PoC avatar colour from the name (same scheme as inventory v2), so a PoC looks identical here.
@@ -212,15 +213,42 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
   );
 }
 
+const MAIL_SEV: Record<string, [string, string]> = { benign: ["#f1f5f9", "#475569"], review: ["#eff6ff", "#1d4ed8"], danger: ["#fef2f2", "#b91c1c"] };
+// Captured LinkedIn appeal / ID / recovery emails for this account (auto-recorded with their real dates).
+function EmailLog({ emails }: { emails: MailEvt[] }) {
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>LinkedIn emails · {emails.length}</span>
+      {!emails.length && <span style={{ font: `500 12.5px ${F_SANS}`, color: "#8a93a3" }}>No LinkedIn appeal / ID emails captured for this account.</span>}
+      {emails.slice().reverse().map((m, i) => {
+        const sev = MAIL_SEV[m.severity] || MAIL_SEV.review; const o = !!open[i];
+        return (
+          <div key={i} onClick={() => setOpen((s) => ({ ...s, [i]: !o }))} style={{ border: "1px solid #eef0f4", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", background: o ? "#fafbfc" : "#fff" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, color: "#5b6779", whiteSpace: "nowrap" }}>↓ LinkedIn</span>
+              <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
+              <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
+            </div>
+            <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{fmt(m.at)}</span>
+            {o && <div style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.55, color: "#334155", borderTop: "1px solid #eef0f4", paddingTop: 8, whiteSpace: "pre-wrap" }}>{m.body}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: number }) {
   const [fk, setFk] = useState<StepKind>("id");
   const [fo, setFo] = useState<"ok" | "fail" | "pending">("fail");
   const [fn, setFn] = useState("");
+  const [fd, setFd] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   const post = async (body: unknown) => { setBusy(true); try { const res = await fetch(`/api/admin/accounts/${r.id}/recovery-case`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const d = await res.json(); if (!res.ok) throw new Error(d.error || "Failed."); reload(); } catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); } };
-  const addStep = () => { post({ action: "add_step", kind: fk, outcome: fo, note: fn.trim() || undefined }); setFn(""); };
+  const addStep = () => { post({ action: "add_step", kind: fk, outcome: fo, note: fn.trim() || undefined, at: fd || undefined }); setFn(""); setFd(""); };
   const sendEmail = async () => { setBusy(true); setMsg(""); try { const res = await fetch(`/api/admin/accounts/${r.id}/recover-send`, { method: "POST" }); const d = await res.json(); if (!res.ok) throw new Error(d.error || "Send failed."); const to = (d.sent || []).map((s: { recipient: string }) => s.recipient).join(" + ") || "—"; setMsg(`Emailed ${to}`); reload(); } catch (e) { setMsg(e instanceof Error ? e.message : "Send failed."); } finally { setBusy(false); } };
 
   type TLItem = { title: string; oLbl: string; dot: string; oc: "ok" | "fail" | "pending" | "none"; at: string; err: string; note: string };
@@ -297,12 +325,16 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
                   <option value="ok">Worked</option><option value="fail">Failed</option><option value="pending">Pending</option>
                 </select>
                 <input value={fn} onChange={(e) => setFn(e.target.value)} placeholder={fk === "email" ? "Channel + detail, e.g. Telegram — sent guide" : "Error or note (optional)"} style={{ flex: 1, minWidth: 150, border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
+                <input type="date" value={fd} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setFd(e.target.value)} title="Date it happened (optional — defaults to today)" style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 8px", font: `500 12px ${F_SANS}`, color: fd ? "#0b1220" : "#8a93a3", outline: "none" }} />
                 <button onClick={addStep} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 8, padding: "6px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Add</button>
               </div>
               <span style={{ font: `500 11px ${F_SANS}`, color: "#9aa3b2" }}>A LinkedIn decision of &ldquo;Worked&rdquo; closes the case and marks the account recovered.</span>
             </div>
           )}
         </div>
+
+        {/* LinkedIn email log (captured appeal / ID / recovery emails) */}
+        <EmailLog emails={r.emails} />
 
         {/* QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

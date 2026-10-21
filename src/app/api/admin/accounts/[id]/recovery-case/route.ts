@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 // post-recovery steps; non-rented accounts go to "under construction" for the warm-up. Relist
 // (→ available) and hand-back close the case for good, archiving its steps into the restriction log.
 const schema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional() }),
+  z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional(), at: z.string().max(40).optional() }),
   z.object({ action: z.literal("toggle_step"), kind: z.enum(["gl", "pw"]), password: z.string().max(200).optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
   z.object({ action: z.literal("set_poc"), poc: z.string().max(80) }),
@@ -131,7 +131,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // add_step — workflow actions + hand-logged steps
     const trimmed = input.note?.trim() || "";
-    const step: Step = { k: input.kind, o: input.outcome, at: now.toISOString(), ...(input.outcome === "fail" && trimmed ? { err: trimmed } : trimmed ? { note: trimmed } : {}) };
+    // Optional backdating: record a step at the date it actually happened (e.g. a LinkedIn email
+    // from last week), never in the future. Side-effect timestamps below still use now.
+    const parsedAt = input.at && Number.isFinite(Date.parse(input.at)) ? Math.min(Date.parse(input.at), now.getTime()) : null;
+    const stepAt = parsedAt ? new Date(parsedAt).toISOString() : now.toISOString();
+    const step: Step = { k: input.kind, o: input.outcome, at: stepAt, ...(input.outcome === "fail" && trimmed ? { err: trimmed } : trimmed ? { note: trimmed } : {}) };
 
     if (input.kind === "relist") { stored.steps.push(step); await closeFinal(id, stored, true); return NextResponse.json({ ok: true, relisted: true }); }
     if (input.kind === "handback") { stored.steps.push(step); await closeFinal(id, stored, false); return NextResponse.json({ ok: true, handedBack: true }); }
