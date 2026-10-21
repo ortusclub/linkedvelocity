@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { buildCase, deriveCase, matchApp, type CaseAccount } from "@/lib/recovery-case";
+import { buildCase, deriveCase, matchApp, notesSaysPerma, type CaseAccount } from "@/lib/recovery-case";
 import type { RestrictionEvent } from "@/lib/restriction";
 
 export const dynamic = "force-dynamic";
@@ -36,11 +36,27 @@ export async function GET(req: Request) {
       orderBy: { restrictedAt: "desc" },
     });
 
-    // Keep only accounts with an open restriction or a recent recovery.
+    // Link each account to its application the way inventory/onboarding do, to borrow the PoC,
+    // the pipeline issue flag and the owner's self-report.
+    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true, accountIssue: true, restrictionReport: true } });
+    const appByAccount = new Map<string, (typeof apps)[number]>();
+    for (const a of accounts) { const app = matchApp(apps, a); if (app) appByAccount.set(a.id, app); }
+
+    const permaFromSignals = (a: (typeof accounts)[number]) => {
+      const app = appByAccount.get(a.id);
+      const logRestricted = asLog(a.restrictionLog).some((e) => e.event === "restricted");
+      const issue = app?.accountIssue || "";
+      if (/permanent/i.test(issue)) return true;
+      if (a.status === "retired" && (logRestricted || /restrict/i.test(issue) || notesSaysPerma(a.notes))) return true;
+      return !!notesSaysPerma(a.notes);
+    };
+
+    // Keep accounts with an open restriction, a recent recovery, or a permanently-restricted signal.
     const relevant = accounts.filter((a) => {
       if (a.restrictedAt) return true;
       const rec = [...asLog(a.restrictionLog)].reverse().find((e) => e.event === "recovered");
-      return rec ? now - Date.parse(rec.at) <= RECOVERED_WINDOW_MS : false;
+      if (rec && now - Date.parse(rec.at) <= RECOVERED_WINDOW_MS) return true;
+      return permaFromSignals(a);
     });
 
     // Resolve the renter impacted (active rental's user) for the flag.
@@ -57,18 +73,27 @@ export async function GET(req: Request) {
       if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
     }
 
-    // Resolve the LV PoC the SAME way inventory/onboarding do: the linked application's poc,
-    // falling back to the account's own. Matched by LinkedIn URL then Owner-email tag.
-    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true } });
-    const pocByAccount = new Map<string, string>();
-    for (const a of relevant) {
-      const app = matchApp(apps, a);
-      const poc = app?.poc || a.poc || "";
-      if (poc) pocByAccount.set(a.id, poc);
-    }
+    // A restriction email logged in the shared outreach trail (the pipeline Issue email).
+    const matchedIds = [...new Set(relevant.map((a) => appByAccount.get(a.id)?.id).filter((x): x is string => !!x))];
+    const outreach = matchedIds.length
+      ? await prisma.ambassadorApplication.findMany({ where: { id: { in: matchedIds } }, select: { id: true, outreachLog: true } })
+      : [];
+    const outreachById = new Map(outreach.map((o) => [o.id, o]));
+    const outreachEmailAtFor = (appId?: string) => {
+      const log = appId ? (Array.isArray(outreachById.get(appId)?.outreachLog) ? (outreachById.get(appId)!.outreachLog as Array<{ ch?: string; text?: string; at?: string }>) : []) : [];
+      const t = log.filter((x) => x.ch === "email" && /restrict/i.test(x.text || "") && x.at).sort((x, y) => Date.parse(x.at!) - Date.parse(y.at!))[0];
+      return t?.at || null;
+    };
 
     const rows = relevant.map((a) => {
-      const acct: CaseAccount = { ...a, renterName: renterByAccount.get(a.id) || null };
+      const app = appByAccount.get(a.id);
+      const pocResolved = app?.poc || a.poc || "";
+      const acct: CaseAccount = {
+        ...a, renterName: renterByAccount.get(a.id) || null, poc: pocResolved,
+        accountIssue: app?.accountIssue || null,
+        restrictionReport: (app?.restrictionReport as { type?: "qr_done" | "recovered"; at?: string } | null) || null,
+        outreachEmailAt: outreachEmailAtFor(app?.id),
+      };
       const built = buildCase(acct);
       const d = deriveCase(acct, built, { now, staleDays, ownerSilentHours });
 
@@ -87,12 +112,14 @@ export async function GET(req: Request) {
           openStart = null;
         }
       }
-      if (a.restrictedAt) history.push({ reason: built.reason, days: Math.round(d.restrictedMs / dayMs), at: typeof a.restrictedAt === "string" ? a.restrictedAt : a.restrictedAt.toISOString(), how: d.lostOutcome ? (d.lostOutcome === "perma" ? "Perma-restricted" : "No contact") : "Open", open: true });
+      const curAt = a.restrictedAt ? (typeof a.restrictedAt === "string" ? a.restrictedAt : a.restrictedAt.toISOString())
+        : (d.lostOutcome ? [...log].reverse().find((e) => e.event === "restricted")?.at || null : null);
+      if (curAt) history.push({ reason: built.reason, days: Math.round(d.restrictedMs / dayMs), at: curAt, how: d.lostOutcome ? (d.lostOutcome === "perma" ? "Perma-restricted" : "No contact") : "Open", open: true });
       history.reverse();
 
       return {
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
-        poc: pocByAccount.get(a.id) || "", phase: d.phase,
+        poc: pocResolved, phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
