@@ -72,6 +72,10 @@ export type CaseAccount = {
   poc?: string | null;
   notes?: string | null;
   renterName?: string | null;
+  // Backtracked from the linked application (pipeline/inventory parity):
+  accountIssue?: string | null; // free-text pipeline issue flag ("restricted", "permanently restricted", …)
+  restrictionReport?: { type?: "qr_done" | "recovered"; at?: string } | null; // owner self-report from the portal
+  outreachEmailAt?: string | null; // a restriction email touch found in the shared outreach log
 };
 
 // Signals we backtrack from the account notes (written by the auto-notify / recover-send flows
@@ -111,13 +115,18 @@ export function parseStoredCase(v: unknown): StoredCase {
 function derivedSteps(a: CaseAccount): Step[] {
   const steps: Step[] = [];
   const sentAt = iso(a.recoverySentAt);
-  const notesEmail = sentAt ? null : notesEmailSent(a.notes); // backtrack: auto-notify / recover-send logged the send to notes
-  if (sentAt) steps.push({ k: "email", o: "ok", at: sentAt, note: a.recoverySentVia ? `Owner link sent via ${a.recoverySentVia}` : "Owner link sent" });
-  else if (notesEmail) steps.push({ k: "email", o: "ok", at: notesEmail.at || iso(a.restrictedAt) || new Date(0).toISOString(), note: "Restriction email sent (from notes)" });
+  // Email sent — backtrack from, in order: the recover-send field, the notes log line, the
+  // shared outreach log (the pipeline Issue email).
+  const notesEmail = sentAt ? null : notesEmailSent(a.notes);
+  const emailAt = sentAt || notesEmail?.at || (notesEmail ? iso(a.restrictedAt) : null) || a.outreachEmailAt || null;
+  if (emailAt) steps.push({ k: "email", o: "ok", at: emailAt, note: sentAt ? (a.recoverySentVia ? `Owner link sent via ${a.recoverySentVia}` : "Owner link sent") : "Restriction email sent (from history)" });
+
   const qrAt = iso(a.recoveryQrAt);
   const outAt = iso(a.recoveryOutcomeAt) || sentAt || qrAt;
+  const report = a.restrictionReport;
   if (a.recoveryOutcome === "worked" && outAt) steps.push({ k: "qr", o: "ok", at: outAt, note: "Owner reported back in" });
   else if (a.recoveryOutcome === "stuck" && outAt) steps.push({ k: "qr", o: "fail", at: outAt, note: "Owner reported still stuck" });
+  else if (report?.type === "qr_done") steps.push({ k: "qr", o: "ok", at: report.at || sentAt || qrAt || emailAt || new Date(0).toISOString(), note: "Owner reported the QR check done" });
   else if (qrAt && sentAt) steps.push({ k: "qr", o: "pending", at: sentAt });
   return steps;
 }
@@ -128,7 +137,10 @@ export function buildCase(a: CaseAccount): { reason: string; steps: Step[] } {
   const steps = [...derivedSteps(a), ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   const log = asLog(a.restrictionLog);
   const lastRestricted = [...log].reverse().find((e) => e.event === "restricted");
-  const reason = stored.reason || lastRestricted?.note || "Restriction";
+  // Reason falls back to the pipeline issue flag when it carries more than the bare keyword.
+  const issue = (a.accountIssue || "").trim();
+  const issueReason = issue && !/^(restricted|permanent(ly)?( restricted)?)$/i.test(issue) ? issue : "";
+  const reason = stored.reason || lastRestricted?.note || issueReason || "Restriction";
   return { reason, steps };
 }
 
@@ -173,11 +185,18 @@ export function deriveCase(
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRecovered = [...log].reverse().find((e) => e.event === "recovered");
   const resolvedAt = !openSince && lastRecovered ? Date.parse(lastRecovered.at) : null;
-  // "lost" only applies to an open restriction. An explicit admin mark wins; otherwise backtrack
-  // a "permanently restricted" note (unless the case was explicitly reopened).
-  const notesPerma = openSince && !stored.outcome && !stored.reopened ? notesSaysPerma(a.notes) : null;
-  const lostOutcome: LostOutcome | null = openSince ? (stored.outcome || (notesPerma ? "perma" : null)) : null;
-  const closedAt = !lostOutcome ? null : stored.closedAt ? Date.parse(stored.closedAt) : notesPerma?.at ? Date.parse(notesPerma.at) : null;
+  // An explicit admin mark wins; otherwise backtrack "permanently restricted" from the account
+  // status (retired), the pipeline issue flag, or a note — unless the case was explicitly reopened.
+  // Perma applies even with no open restrictedAt (a retired account may have had it cleared).
+  const logRestricted = log.some((e) => e.event === "restricted");
+  const issuePerma = /permanent/i.test(a.accountIssue || "");
+  const retiredPerma = a.status === "retired" && (logRestricted || /restrict/i.test(a.accountIssue || "") || !!notesSaysPerma(a.notes));
+  const notesPerma = notesSaysPerma(a.notes);
+  const permaSignal = !stored.reopened && !stored.outcome && (issuePerma || retiredPerma || !!notesPerma);
+  let lostOutcome: LostOutcome | null = null;
+  let closedAt: number | null = null;
+  if (stored.outcome) { lostOutcome = stored.outcome; closedAt = stored.closedAt ? Date.parse(stored.closedAt) : null; }
+  else if (permaSignal) { lostOutcome = "perma"; closedAt = notesPerma?.at ? Date.parse(notesPerma.at) : null; }
 
   const em = lastOf(steps, "email"), qr = lastOf(steps, "qr"), id = lastOf(steps, "id"), fm = lastOf(steps, "form"), li = lastOf(steps, "li");
   const sentAt = iso(a.recoverySentAt);
@@ -208,6 +227,10 @@ export function deriveCase(
   else if (resolvedAt) {
     const restrictBefore = [...log].filter((e) => e.event === "restricted" && Date.parse(e.at) <= resolvedAt).pop();
     restrictedMs = restrictBefore ? resolvedAt - Date.parse(restrictBefore.at) : 0;
+  } else if (lostOutcome) {
+    // Retired/perma with no open restrictedAt — measure from the last logged restriction.
+    const lastR = [...log].reverse().find((e) => e.event === "restricted");
+    restrictedMs = lastR ? (closedAt || now) - Date.parse(lastR.at) : 0;
   }
 
   const errs = steps.filter((s) => s.err);
