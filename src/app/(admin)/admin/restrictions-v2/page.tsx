@@ -353,7 +353,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
   return (
     <div style={{ background: "#f8f9fb", borderBottom: "1px solid #e3e6ec", padding: "14px 18px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        {!closed && <button onClick={sendEmail} disabled={busy} style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 10, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>{r.sentAt ? "Send reminder" : "Send restriction email"}</button>}
+        {!closed && <button onClick={sendEmail} disabled={busy || !r.qrUrl} title={r.qrUrl ? "Email the owner the private QR recovery link to scan on their phone" : "Attach a QR first — this button emails the owner that QR recovery link. (The restriction notice is auto-sent when the account is marked restricted.)"} style={{ border: "none", background: r.qrUrl ? "#0b1220" : "#aab2bf", color: "#fff", borderRadius: 10, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: r.qrUrl ? "pointer" : "not-allowed" }}>{r.sentAt ? "Resend recovery link" : "Send recovery link"}</button>}
         {!closed && <button onClick={() => post({ action: "mark_recovered" })} disabled={busy} style={{ border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 10, padding: "8px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Mark recovered</button>}
         <label style={{ display: "flex", alignItems: "center", gap: 6, font: `700 11px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: "#8a93a3" }}>PoC
           <input defaultValue={r.poc} placeholder="who's handling this" disabled={busy}
