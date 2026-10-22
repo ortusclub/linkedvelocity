@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { businessDomain } from "@/lib/crm-compose";
+import { reconcileCrmPeople } from "@/lib/crm-reconcile";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Renters v3 — Phase 1 (persisted). Reads the unified crm_people overlay and derives
@@ -19,6 +20,9 @@ const VET_TO_REVIEW: Record<string, string> = { Verified: "verified", "Needs rev
 export async function GET() {
   try {
     await requireAdmin();
+
+    // Stage C: pull any new signups / leads into the overlay before reading it (additive, idempotent).
+    try { await reconcileCrmPeople(prisma); } catch (e) { console.error("crm reconcile failed:", e instanceof Error ? e.message : e); }
 
     const people = await prisma.person.findMany({
       include: {
