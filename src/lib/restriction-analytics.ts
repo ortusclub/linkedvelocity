@@ -19,6 +19,7 @@ export type AnalyticsAccount = {
   linkedinName: string;
   linkedinUrl: string | null;
   linkedinVerified: boolean;
+  createdAt: Date | string | null; // when the account joined our inventory — the cohort anchor
   restrictedAt: Date | string | null;
   restrictionLog: unknown;
   connectionCount: number;
@@ -85,8 +86,41 @@ export type OpenRestrictionRow = {
   note?: string; // note on the opening restricted event
 };
 
+// One month on the restriction trend: how many restrictions happened that month, and the
+// rate against accounts live by then (so a growing book doesn't inflate the curve).
+export type TrendMonth = {
+  month: string; // "2026-10"
+  label: string; // "Oct"
+  active: number; // accounts in inventory by end of month (denominator)
+  restrictions: number; // restriction events that month
+  rate: number; // restrictions / active
+  recovDenom: number; // episodes that month old enough to judge 30-day recovery
+  recoveredWithin30: number;
+  recoveryRate: number | null;
+  partial: boolean; // the current (incomplete) month
+};
+
+// One cohort row of "restricted within N days of joining inventory", censored so each cell
+// only counts accounts old enough to have reached that window.
+export type CohortWindowRow = {
+  bucket: string; // "H1 2026" or "Mar 2026"
+  isHalf: boolean; // half-year summary row (bold) vs month row
+  total: number;
+  cells: { days: number; eligible: number; restricted: number; rate: number | null }[];
+};
+
+export type RestrictionTrend = {
+  monthly: TrendMonth[];
+  // First-month restriction rate, among accounts old enough (30d+), overall + by half-year.
+  firstMonth: { bucket: string; total: number; restricted: number; rate: number }[];
+  cohortWindows: CohortWindowRow[];
+  // Retrieval: of restriction episodes old enough, what share recovered within the window.
+  retrieval: { window: number; eligible: number; recovered: number; rate: number | null }[];
+};
+
 export type RestrictionAnalytics = {
   generatedAt: string;
+  trend: RestrictionTrend;
   totals: {
     accounts: number;
     everRestricted: number;
@@ -542,6 +576,106 @@ export function computeRestrictionAnalytics(
   }
   feed.sort((x, y) => y.at.localeCompare(x.at));
 
+  // ----- Time trend (anchored on createdAt) -----
+  // Every restriction episode (a restricted→recovered pair, or an open restriction), with its
+  // start date and how long recovery took — paired sequentially so one recovery closes one
+  // restriction. Falls back to the restrictedAt flag when the log predates event logging.
+  type Episode = { restrictedAt: Date; recovDays: number | null };
+  const episodesOf = (a: AnalyticsAccount): Episode[] => {
+    const eps: Episode[] = [];
+    let openAt: Date | null = null;
+    for (const e of parseLog(a.restrictionLog)) {
+      const d = toDate(e.at);
+      if (!d) continue;
+      if (e.event === "restricted") { if (!openAt) openAt = d; }
+      else if (e.event === "recovered" && openAt) { eps.push({ restrictedAt: openAt, recovDays: (d.getTime() - openAt.getTime()) / DAY }); openAt = null; }
+    }
+    if (openAt) eps.push({ restrictedAt: openAt, recovDays: null });
+    const flag = toDate(a.restrictedAt);
+    if (eps.length === 0 && flag) eps.push({ restrictedAt: flag, recovDays: null });
+    return eps;
+  };
+  const allEps = accounts.flatMap(({ a }) => episodesOf(a));
+  const monthKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = (k: string) => { const [y, m] = k.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }); };
+  const halfBucket = (d: Date) => `${d.getUTCFullYear()} ${d.getUTCMonth() < 6 ? "H1" : "H2"}`;
+  const nowD = new Date(now);
+  const nowMonth = monthKey(nowD);
+
+  // Month axis from the earliest account to now.
+  const createdDates = accountsIn.map((a) => toDate(a.createdAt)).filter((d): d is Date => !!d);
+  const minCreated = createdDates.length ? new Date(Math.min(...createdDates.map((d) => d.getTime()))) : nowD;
+  const months: string[] = [];
+  for (let cur = new Date(Date.UTC(minCreated.getUTCFullYear(), minCreated.getUTCMonth(), 1)); cur <= nowD; cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1))) months.push(monthKey(cur));
+
+  const monthAgg = new Map<string, { restrictions: number; recovDenom: number; rec30: number }>();
+  for (const ep of allEps) {
+    const k = monthKey(ep.restrictedAt);
+    const row = monthAgg.get(k) || { restrictions: 0, recovDenom: 0, rec30: 0 };
+    row.restrictions += 1;
+    if ((now - ep.restrictedAt.getTime()) / DAY >= 30) { row.recovDenom += 1; if (ep.recovDays != null && ep.recovDays <= 30) row.rec30 += 1; }
+    monthAgg.set(k, row);
+  }
+  const monthly: TrendMonth[] = months.map((k) => {
+    const [y, m] = k.split("-").map(Number);
+    const endOfMonth = Date.UTC(y, m, 0, 23, 59, 59); // day 0 of next month = last day of this one
+    const active = accountsIn.filter((a) => { const c = toDate(a.createdAt); return c && c.getTime() <= endOfMonth; }).length;
+    const r = monthAgg.get(k) || { restrictions: 0, recovDenom: 0, rec30: 0 };
+    return { month: k, label: monthLabel(k), active, restrictions: r.restrictions, rate: active ? r.restrictions / active : 0, recovDenom: r.recovDenom, recoveredWithin30: r.rec30, recoveryRate: r.recovDenom ? r.rec30 / r.recovDenom : null, partial: k === nowMonth };
+  });
+
+  // First-month rate + cohort windows, keyed on createdAt. firstRestrictedAt comes from facts.
+  const firstGapDays = (a: AnalyticsAccount, f: AcctFacts): number | null => {
+    const c = toDate(a.createdAt);
+    if (!c || !f.firstRestrictedAt) return null;
+    return (f.firstRestrictedAt.getTime() - c.getTime()) / DAY;
+  };
+  const WINDOWS = [30, 60, 90, 180];
+  const firstMonthAgg = new Map<string, { total: number; restricted: number }>();
+  const cwAgg = new Map<string, { isHalf: boolean; order: number; total: number; cells: Map<number, { eligible: number; restricted: number }> }>();
+  for (const { a, f } of accounts) {
+    const c = toDate(a.createdAt);
+    if (!c) continue;
+    const ageD = (now - c.getTime()) / DAY;
+    const gap = firstGapDays(a, f);
+    const half = halfBucket(c);
+    // First-month rate (only accounts old enough to have had a full first month).
+    for (const key of ["All accounts", half]) {
+      if (ageD < 30) continue;
+      const g = firstMonthAgg.get(key) || { total: 0, restricted: 0 };
+      g.total += 1;
+      if (gap != null && gap <= 30 && gap >= -1) g.restricted += 1;
+      firstMonthAgg.set(key, g);
+    }
+    // Cohort windows (half-year summary row + month row).
+    for (const [key, isHalf, order] of [[half, true, Date.UTC(c.getUTCFullYear(), c.getUTCMonth() < 6 ? 0 : 6, 1)], [monthKey(c), false, Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), 1)]] as [string, boolean, number][]) {
+      const row = cwAgg.get(key) || { isHalf, order, total: 0, cells: new Map() };
+      row.total += 1;
+      for (const w of WINDOWS) {
+        const cell = row.cells.get(w) || { eligible: 0, restricted: 0 };
+        if (ageD >= w) { cell.eligible += 1; if (gap != null && gap <= w && gap >= -1) cell.restricted += 1; }
+        row.cells.set(w, cell);
+      }
+      cwAgg.set(key, row);
+    }
+  }
+  const firstMonthOrder = ["All accounts"];
+  const firstMonth = Array.from(firstMonthAgg.entries())
+    .map(([bucket, g]) => ({ bucket, total: g.total, restricted: g.restricted, rate: g.total ? g.restricted / g.total : 0 }))
+    .sort((x, y) => { const ix = firstMonthOrder.indexOf(x.bucket), iy = firstMonthOrder.indexOf(y.bucket); if (ix !== -1 || iy !== -1) return (ix === -1 ? 99 : ix) - (iy === -1 ? 99 : iy); return x.bucket.localeCompare(y.bucket); });
+  const cohortWindows: CohortWindowRow[] = Array.from(cwAgg.entries())
+    .map(([bucket, r]) => ({ bucket: r.isHalf ? `${bucket.slice(5)} ${bucket.slice(0, 4)}` : `${monthLabel(bucket)} ${bucket.slice(0, 4)}`, isHalf: r.isHalf, order: r.order, total: r.total, cells: WINDOWS.map((w) => { const c = r.cells.get(w) || { eligible: 0, restricted: 0 }; return { days: w, eligible: c.eligible, restricted: c.restricted, rate: c.eligible ? c.restricted / c.eligible : null }; }) }))
+    .sort((x, y) => x.order - y.order || (x.isHalf === y.isHalf ? 0 : x.isHalf ? -1 : 1))
+    .map(({ order: _order, ...row }) => row);
+
+  const retrieval = [30, 180].map((w) => {
+    const elig = allEps.filter((ep) => (now - ep.restrictedAt.getTime()) / DAY >= w);
+    const rec = elig.filter((ep) => ep.recovDays != null && ep.recovDays <= w).length;
+    return { window: w, eligible: elig.length, recovered: rec, rate: elig.length ? rec / elig.length : null };
+  });
+
+  const trend: RestrictionTrend = { monthly, firstMonth, cohortWindows, retrieval };
+
   // WHY they got restricted — group ever-restricted accounts by the cause classified from their
   // captured LinkedIn security mail; accounts with no such email (phone/ID checkpoints) fall into
   // an "unknown" bucket, which is itself a signal.
@@ -566,6 +700,7 @@ export function computeRestrictionAnalytics(
 
   return {
     generatedAt: new Date(now).toISOString(),
+    trend,
     totals: {
       accounts: accounts.length,
       everRestricted,

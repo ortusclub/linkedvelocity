@@ -48,9 +48,15 @@ export async function GET(req: Request) {
 
     // Link each account to its application the way inventory/onboarding do, to borrow the PoC,
     // the pipeline issue flag and the owner's self-report.
-    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true, accountIssue: true, restrictionReport: true } });
+    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true, accountIssue: true, restrictionReport: true, referredBy: true } });
     const appByAccount = new Map<string, (typeof apps)[number]>();
     for (const a of accounts) { const app = matchApp(apps, a); if (app) appByAccount.set(a.id, app); }
+
+    // Referrer display name: the application's referredBy holds the referrer's slug; resolve it to
+    // the Referrer's name (fall back to the slug if there's no matching row).
+    const referrers = await prisma.referrer.findMany({ select: { slug: true, name: true } });
+    const referrerBySlug = new Map(referrers.map((r) => [r.slug, r.name]));
+    const referrerNameFor = (slug?: string | null) => { const s = (slug || "").trim(); return s ? (referrerBySlug.get(s) || s) : null; };
 
     const permaFromSignals = (a: (typeof accounts)[number]) => {
       const app = appByAccount.get(a.id);
@@ -166,7 +172,7 @@ export async function GET(req: Request) {
       return {
         lastTouchAt: lastTouch ? lastTouch[0] : null, lastTouchLabel: lastTouch ? lastTouch[1] : "",
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
-        linkedinUrl: a.linkedinUrl, poc: pocResolved, phase: d.phase,
+        linkedinUrl: a.linkedinUrl, poc: pocResolved, referrerName: referrerNameFor(app?.referredBy), phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
