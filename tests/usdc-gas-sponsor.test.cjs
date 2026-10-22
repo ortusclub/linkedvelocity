@@ -86,7 +86,7 @@ test('read-only status exposes only public gas wallet details, including missing
  const f=fixture({balance:0n});const status=await gasSponsorStatus(f.provider);
  assert.equal(status.address,sponsor.address);assert.equal(status.eth,'0.0');assert.match(status.error,/Fund/);
  assert.equal(JSON.stringify(status).includes(sponsor.privateKey),false);assert.equal(f.signed(),0);
- process.env.GAS_SPONSOR_PRIVATE_KEY='invalid';assert.match((await gasSponsorStatus(f.provider)).error,/configuration/);
+ process.env.GAS_SPONSOR_PRIVATE_KEY='invalid';assert.match((await gasSponsorStatus(f.provider)).error,/not a valid Ethereum private key/);
 });
 test('pasted surrounding whitespace and an unprefixed MetaMask key are accepted',async()=>{
  const f=fixture();
@@ -96,3 +96,15 @@ test('pasted surrounding whitespace and an unprefixed MetaMask key are accepted'
  const prepared=await prepareSponsoredUsdcSweep(f.input);
  assert.equal(ethers.Transaction.from(prepared.rawTransaction).from,sponsor.address);
 });
+
+ test('status distinguishes wrong signer from RPC failure without exposing secret errors',async()=>{
+  const f=fixture();
+  process.env.GAS_SPONSOR_PRIVATE_KEY=ethers.Wallet.createRandom().privateKey;
+  assert.match((await gasSponsorStatus(f.provider)).error,/different wallet/);
+  process.env.GAS_SPONSOR_PRIVATE_KEY=sponsor.privateKey;
+  f.provider.getBalance=async()=>{throw Error('private RPC credential must not escape')};
+  const status=await gasSponsorStatus(f.provider);
+  assert.match(status.error,/key matches/);
+  assert.equal(JSON.stringify(status).includes('credential must not escape'),false);
+  assert.equal(JSON.stringify(status).includes(sponsor.privateKey),false);
+ });
