@@ -29,8 +29,16 @@ export async function POST(req: Request) {
     if (!parsed.success) return json({ error: parsed.error.issues[0]?.message || "Please check your details." }, 400);
     if (!verifyPermit(permit, parsed.data.email)) return json({ error: "Please verify your email first." }, 403);
 
-    const diy = await prisma.referrer.findUnique({ where: { slug: DIY_REFERRER_SLUG }, select: { id: true, slug: true, name: true, type: true } });
-    if (!diy) return json({ error: "Onboarding is not available right now." }, 503);
+    // Attribution: if the owner arrived from a referral link (/become-ambassador?ref=slug or
+    // /r/slug), the client forwards that slug here. Credit the real ACTIVE referrer so they show
+    // on their dashboard and get paid; fall back to the hidden "diy" system referrer otherwise.
+    const refSlug = typeof raw?.ref === "string" ? raw.ref.trim().toLowerCase() : "";
+    const sel = { id: true, slug: true, name: true, type: true, active: true } as const;
+    let referrer = refSlug && refSlug !== DIY_REFERRER_SLUG
+      ? await prisma.referrer.findUnique({ where: { slug: refSlug }, select: sel })
+      : null;
+    if (!referrer || !referrer.active) referrer = await prisma.referrer.findUnique({ where: { slug: DIY_REFERRER_SLUG }, select: sel });
+    if (!referrer) return json({ error: "Onboarding is not available right now." }, 503);
 
     const signedIn = await getSession();
     // The verified LinkedIn email identifies a user only when no one is signed in.
@@ -42,7 +50,7 @@ export async function POST(req: Request) {
     });
     if (submitter.status !== "active") return json({ error: "This LinkedVelocity account is not active. Please contact support." }, 403);
     if (!signedIn && !submitter.emailVerified) await prisma.user.update({ where: { id: submitter.id }, data: { emailVerified: new Date() } });
-    const id = await reserveOnboarding(diy, parsed.data, submitter?.id, { publicOwner: true });
+    const id = await reserveOnboarding(referrer, parsed.data, submitter?.id, { publicOwner: true });
     // Record the chosen tier on the freshly-created application so payouts pay the right bonus.
     if (tier) {
       const s = await prisma.selfServiceOnboarding.findUnique({ where: { id }, select: { applicationId: true, state: true } });
@@ -50,7 +58,7 @@ export async function POST(req: Request) {
     }
     const token = await mintSelfToken(id);
     if (!signedIn) await createSession(submitter.id, submitter.role === "admin");
-    return json({ token, session: await onboardingSummary(id, diy.id) });
+    return json({ token, session: await onboardingSummary(id, referrer.id) });
   } catch (error) {
     if (error instanceof OnboardingError) return json({ error: error.message }, error.status);
     return json({ error: "We couldn't start your onboarding. Please try again." }, 500);
