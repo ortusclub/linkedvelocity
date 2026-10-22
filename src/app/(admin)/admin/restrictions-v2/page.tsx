@@ -17,7 +17,7 @@ type WfCard = { n: number; title: string; sub: string; state: string; stLbl: str
 type MailEvt = { type: string; typeLabel: string; at: string; subject: string; severity: string; body: string };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
-  linkedinUrl: string | null; poc: string; phase: { label: string; pr: number };
+  linkedinUrl: string | null; poc: string; referrerName: string | null; phase: { label: string; pr: number };
   restrictedAt: string | null; reason: string; steps: Step[];
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
@@ -477,7 +477,7 @@ export default function RestrictionsV2Page() {
     done: (r) => r.bucket === "done", lost: (r) => r.bucket === "lost", all: () => true,
   };
   const ql = q.trim().toLowerCase();
-  const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
+  const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.referrerName, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
   const matchPhase = (r: Row) => phaseF === "all" || r.status === phaseF;
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
@@ -596,6 +596,7 @@ export default function RestrictionsV2Page() {
                           <span style={{ width: 16, height: 16, borderRadius: "50%", background: r.poc ? colorOf(r.poc) : "#cbd2dc", color: "#fff", font: `700 8px ${F_SANS}`, display: "grid", placeItems: "center" }}>{r.poc ? iniOf(r.poc) : "–"}</span>
                           {r.poc || "No PoC"}
                         </span>
+                        {r.referrerName && <span title={`Referred by ${r.referrerName}`} style={{ font: `600 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4338ca", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 }}>Ref: {r.referrerName}</span>}
                         <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
                         {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
                       </div>
