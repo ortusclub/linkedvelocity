@@ -83,3 +83,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "Failed to mint appeal mailbox" }, { status });
   }
 }
+
+// DELETE ?id=<mailbox id> — remove an appeal mailbox (e.g. a junk/wrong one). Scoped to this account.
+// After this, a reply to that address no longer maps to the account, so only delete unused ones.
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAdmin();
+    const { id } = await params;
+    const mailboxId = new URL(req.url).searchParams.get("id") || "";
+    if (!mailboxId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    const result = await prisma.appealMailbox.deleteMany({ where: { id: mailboxId, linkedinAccountId: id } });
+    if (result.count === 0) return NextResponse.json({ error: "Address not found for this account" }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    const status = (e as { status?: number })?.status === 401 ? 401 : 500;
+    return NextResponse.json({ error: "Failed to delete appeal mailbox" }, { status });
+  }
+}

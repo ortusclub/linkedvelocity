@@ -287,11 +287,13 @@ function EmailLog({ emails }: { emails: MailEvt[] }) {
 // contact/appeal form (LinkedIn blocks an address already tied to an account). LinkedIn's reply lands
 // back on this case automatically (see the LinkedIn emails panel) via the inbound capture webhook.
 type AppealBox = { id: string; address: string; createdAt: string };
-function AppealMailboxPanel({ accountId }: { accountId: string }) {
+function AppealMailboxPanel({ accountId, accountName }: { accountId: string; accountName: string }) {
   const [list, setList] = useState<AppealBox[] | null>(null);
   const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const firstName = (accountName || "").trim().split(/\s+/)[0] || "";
+  const appealMsg = `${firstName ? `Hi, this is ${firstName}.` : "Hello,"}\n\nI'm trying to recover access to my account and I honestly don't understand why it was restricted. I use LinkedIn for my work as a virtual assistant, so not having access has made it really hard to do my job.\n\nI'm more than willing to verify my identity. I have a valid government ID ready to submit, but the Persona verification keeps failing for me no matter how many times I try. Could you please help me verify another way, or review my account manually?\n\nI'd really appreciate any help getting this resolved. Thank you so much.`;
   useEffect(() => {
     let live = true;
     (async () => {
@@ -309,6 +311,11 @@ function AppealMailboxPanel({ accountId }: { accountId: string }) {
       await copy(d.mailbox.address, "New address copied — paste it into LinkedIn's form");
     } catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
   };
+  const del = async (id: string) => {
+    setBusy(true); setMsg("");
+    try { const res = await fetch(`/api/admin/accounts/${accountId}/appeal-email?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || "Delete failed."); } setList((l) => (l || []).filter((x) => x.id !== id)); setMsg("Address deleted"); }
+    catch (e) { setMsg(e instanceof Error ? e.message : "Delete failed."); } finally { setBusy(false); }
+  };
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 9 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -324,8 +331,18 @@ function AppealMailboxPanel({ accountId }: { accountId: string }) {
           <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${MONO}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</span>
           <span style={{ flex: "none", font: `500 11px ${F_SANS}`, color: "#9aa3b2", whiteSpace: "nowrap" }}>{fmt(b.createdAt).split(",")[0]}</span>
           <button onClick={() => copy(b.address)} style={{ flex: "none", border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 7, padding: "4px 9px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>Copy</button>
+          <button onClick={() => del(b.id)} disabled={busy} title="Delete this address" style={{ flex: "none", border: "1px solid #f3c7c7", background: "#fff", color: "#b91c1c", borderRadius: 7, padding: "4px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>✕</button>
         </div>
       ))}
+      {/* Prefilled appeal message to paste into LinkedIn's contact/appeal form (identity-first, no VPN/automation mention). */}
+      <div style={{ borderTop: "1px solid #eef0f4", paddingTop: 9, display: "flex", flexDirection: "column", gap: 7 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Appeal message</span>
+          <span style={{ flex: 1 }} />
+          <button onClick={() => copy(appealMsg, "Appeal message copied")} style={{ flex: "none", border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 7, padding: "4px 10px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>Copy message</button>
+        </div>
+        <div style={{ font: `500 11.5px ${F_SANS}`, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", background: "#fafbfc", border: "1px solid #eef0f4", borderRadius: 8, padding: "8px 10px", maxHeight: 128, overflow: "auto" }}>{appealMsg}</div>
+      </div>
       {msg && <span style={{ font: `600 11.5px ${F_SANS}`, color: "#0f7a3d" }}>{msg}</span>}
     </div>
   );
@@ -433,7 +450,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
 
         {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <AppealMailboxPanel accountId={r.id} />
+          <AppealMailboxPanel accountId={r.id} accountName={r.name} />
           <QrCard r={r} reload={reload} />
           <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Restriction history · {r.cnt}×</span>
