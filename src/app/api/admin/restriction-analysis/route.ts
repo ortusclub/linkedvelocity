@@ -43,7 +43,7 @@ export async function GET() {
         },
       }),
       prisma.rental.findMany({ select: { linkedinAccountId: true, user: { select: { company: true, fullName: true, email: true } } } }),
-      prisma.accountMailEvent.findMany({ where: { type: { in: ["id_verification", "appeal_update", "recovery_appeal", "appeal_intake", "restriction"] } }, select: { linkedinAccountId: true, type: true } }),
+      prisma.accountMailEvent.findMany({ where: { type: { in: ["id_verification", "appeal_update", "recovery_appeal", "appeal_intake", "restriction"] } }, select: { linkedinAccountId: true, type: true, subject: true, bodyText: true } }),
     ]);
 
     // Renters per account (canonical-ish labels), and a rented-ever flag.
@@ -63,6 +63,19 @@ export async function GET() {
     // Cause signal: an id_verification email means an identity-type restriction. Appeal/recovery
     // mail are responses, not causes, so they don't set the cause on their own.
     const hasIdVerif = new Set(mail.filter((m) => m.type === "id_verification").map((m) => m.linkedinAccountId));
+    // Combined subject+body text per account — LinkedIn encodes the real reason both in the link
+    // tokens (ek=profile_ato_appeal_fake_account) and in the prose ("we suspected someone else might
+    // be using it", "doesn't comply with our Professional Community Policies"), so we read both.
+    const mailTextByAccount = new Map<string, string>();
+    for (const m of mail) mailTextByAccount.set(m.linkedinAccountId, `${mailTextByAccount.get(m.linkedinAccountId) || ""} ${m.subject || ""} ${m.bodyText || ""}`);
+    // Most specific first: ATO/fake-account outranks policy outranks identity.
+    const causeFromText = (text: string, idVerif: boolean): string | null => {
+      if (/profile_ato|fake[_\s-]?account|account[_\s-]?takeover|someone else (might|may|could|is|was)[\w\s]{0,12}using|suspect\w* (that )?someone (else )?(might|may|is|was|could)|unauthoriz|believe .{0,20}not (really )?you/i.test(text)) return "Account takeover / fake account";
+      if (/professional[_\s-]?community[_\s-]?policies|does(n.?t| not) comply|policy[_\s-]?violation|violat\w* .{0,20}(policy|policies|agreement)/i.test(text)) return "Policy violation";
+      if (idVerif || /verify your identity|identity (check|verification)|government[_\s-]?issued|upload .{0,15}id\b/i.test(text)) return "Identity verification";
+      if (/automat|scrap|\bbot\b/i.test(text)) return "Automation";
+      return null;
+    };
 
     const rows = accounts.map((a) => {
       const events = asLog(a.restrictionLog).filter((e) => e && e.at && (e.event === "restricted" || e.event === "recovered")).sort((x, y) => x.at.localeCompare(y.at));
@@ -88,10 +101,10 @@ export async function GET() {
       const loc = (a.proxyLocation || "").toLowerCase();
       const geo = !host ? "none" : /ph|phil/.test(loc) ? "match" : loc ? "mismatch" : "unknown";
       const firstNote = (episodes.length ? events.find((e) => e.event === "restricted")?.note : "") || "";
-      const cause = hasIdVerif.has(a.id) ? "Identity verification"
-        : /automat|bot|scrap/i.test(firstNote) ? "Automation"
+      const cause = causeFromText(`${mailTextByAccount.get(a.id) || ""} ${firstNote}`, hasIdVerif.has(a.id))
+        || (/automat|bot|scrap/i.test(firstNote) ? "Automation"
         : /new account/i.test(firstNote) ? "New-account checkpoint"
-        : everRestricted ? "Unknown / no email" : "—";
+        : everRestricted ? "Unknown / no email" : "—");
 
       // Recovery holding pen: restricted account parked on a consolidation IP after its proxy was
       // freed. Excluded from the proxy-driver rates (reverse causation), still counted everywhere else.
