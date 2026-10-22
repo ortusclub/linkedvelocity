@@ -1,0 +1,1 @@
+PlusJakartaSans.ttf is the variable upright font from https://github.com/google/fonts/tree/main/ofl/plusjakartasans, downloaded 2026-10-22. Distributed under the SIL Open Font License in PlusJakartaSans-OFL.txt. Bundling avoids the next/font/google build failure on extensionless Google Fonts URLs (vercel/next.js#99114).

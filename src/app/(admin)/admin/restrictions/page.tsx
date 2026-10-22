@@ -1,9 +1,9 @@
 "use client";
+import { jakartaSans as jakarta } from "@/lib/jakarta-font";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus_Jakarta_Sans, Space_Grotesk } from "next/font/google";
+import { Space_Grotesk } from "next/font/google";
 
-const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"] });
 const grotesk = Space_Grotesk({ subsets: ["latin"], weight: ["500", "600", "700"] });
 const F = jakarta.style.fontFamily;
 const G = grotesk.style.fontFamily;
