@@ -283,6 +283,54 @@ function EmailLog({ emails }: { emails: MailEvt[] }) {
   );
 }
 
+// Appeal mailbox: mint a fresh, never-used address on the appeal domain to paste into LinkedIn's
+// contact/appeal form (LinkedIn blocks an address already tied to an account). LinkedIn's reply lands
+// back on this case automatically (see the LinkedIn emails panel) via the inbound capture webhook.
+type AppealBox = { id: string; address: string; createdAt: string };
+function AppealMailboxPanel({ accountId }: { accountId: string }) {
+  const [list, setList] = useState<AppealBox[] | null>(null);
+  const [domain, setDomain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try { const res = await fetch(`/api/admin/accounts/${accountId}/appeal-email`); const d = await res.json(); if (live && res.ok) { setList(d.mailboxes || []); setDomain(d.domain || ""); } } catch { if (live) setList([]); }
+    })();
+    return () => { live = false; };
+  }, [accountId]);
+  const copy = async (a: string, note?: string) => { try { await navigator.clipboard.writeText(a); setMsg(note || `Copied ${a}`); } catch { setMsg(a); } };
+  const mint = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch(`/api/admin/accounts/${accountId}/appeal-email`, { method: "POST" });
+      const d = await res.json(); if (!res.ok) throw new Error(d.error || "Failed.");
+      setList((l) => [d.mailbox, ...(l || [])]); if (d.domain) setDomain(d.domain);
+      await copy(d.mailbox.address, "New address copied — paste it into LinkedIn's form");
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 9 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Appeal email{domain ? ` · ${domain}` : ""}</span>
+        <span style={{ flex: 1 }} />
+        <button onClick={mint} disabled={busy} style={{ border: "none", background: "#0a66c2", color: "#fff", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer" }}>+ New appeal email</button>
+      </div>
+      <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3", lineHeight: 1.45 }}>A fresh, never-used address so LinkedIn&apos;s contact/appeal form accepts it. Paste it in the form&apos;s email field — LinkedIn&apos;s reply lands in the LinkedIn emails panel above.</span>
+      {list === null && <span style={{ font: `500 12px ${F_SANS}`, color: "#9aa3b2" }}>Loading…</span>}
+      {list?.length === 0 && <span style={{ font: `500 12px ${F_SANS}`, color: "#9aa3b2" }}>None yet — mint one when you open an appeal or contact form.</span>}
+      {list?.map((b) => (
+        <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #eef0f4", borderRadius: 9, padding: "7px 10px" }}>
+          <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${MONO}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</span>
+          <span style={{ flex: "none", font: `500 11px ${F_SANS}`, color: "#9aa3b2", whiteSpace: "nowrap" }}>{fmt(b.createdAt).split(",")[0]}</span>
+          <button onClick={() => copy(b.address)} style={{ flex: "none", border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 7, padding: "4px 9px", font: `700 11px ${F_SANS}`, cursor: "pointer" }}>Copy</button>
+        </div>
+      ))}
+      {msg && <span style={{ font: `600 11.5px ${F_SANS}`, color: "#0f7a3d" }}>{msg}</span>}
+    </div>
+  );
+}
+
 function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: number }) {
   const [fk, setFk] = useState<StepKind>("id");
   const [fo, setFo] = useState<"ok" | "fail" | "pending">("fail");
@@ -383,8 +431,9 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         {/* LinkedIn email log (captured appeal / ID / recovery emails) */}
         <EmailLog emails={r.emails} />
 
-        {/* QR recovery + history */}
+        {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <AppealMailboxPanel accountId={r.id} />
           <QrCard r={r} reload={reload} />
           <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Restriction history · {r.cnt}×</span>

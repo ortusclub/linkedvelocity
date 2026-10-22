@@ -141,7 +141,9 @@ function extractLocation(body: string): string | undefined {
 }
 
 // Resolve an inbound recipient address to the LinkedInAccount it belongs to. The account's
-// loginEmail IS the address LinkedIn mails; fall back to the onboarding email-setup → session.
+// loginEmail IS the address LinkedIn mails; fall back to the onboarding email-setup → session, then
+// to an appeal mailbox (a fresh per-appeal address on an appeal domain, e.g. maria@myvahub.fyi) so
+// LinkedIn's replies to OUR contact/appeal-form submissions land on the right account's case.
 async function resolveAccountId(toAddr: string): Promise<string | null> {
   const byLogin = await prisma.linkedInAccount.findFirst({
     where: { loginEmail: { equals: toAddr, mode: "insensitive" } },
@@ -152,7 +154,12 @@ async function resolveAccountId(toAddr: string): Promise<string | null> {
     where: { address: toAddr },
     select: { session: { select: { accountId: true } } },
   });
-  return setup?.session?.accountId ?? null;
+  if (setup?.session?.accountId) return setup.session.accountId;
+  const appeal = await prisma.appealMailbox.findFirst({
+    where: { address: { equals: toAddr, mode: "insensitive" } },
+    select: { linkedinAccountId: true },
+  });
+  return appeal?.linkedinAccountId ?? null;
 }
 
 // Capture one inbound LinkedIn email as an AccountMailEvent. Additive + idempotent: deduped by

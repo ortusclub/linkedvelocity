@@ -299,6 +299,7 @@ model LinkedInAccount {
   waitlistEntries       Waitlist[]
   cryptoPayments        CryptoPayment[]
   mailEvents            AccountMailEvent[]
+  appealMailboxes       AppealMailbox[]
   profileChangeRequests ProfileChangeRequest[]
 
   @@map("linkedin_accounts")
@@ -331,6 +332,23 @@ model AccountMailEvent {
   @@index([linkedinAccountId, receivedAt])
   @@index([linkedinAccountId, status])
   @@map("account_mail_events")
+}
+
+// A fresh, never-before-used mailbox on an appeal domain (e.g. maria.delacruz47@myvahub.fyi),
+// minted per restriction appeal so LinkedIn's contact/appeal form accepts it (it blocks addresses
+// already tied to an account). LinkedIn's replies land back here and the inbound webhook maps the
+// address → account via this table (see resolveAccountId in account-mail.ts).
+model AppealMailbox {
+  id                String          @id @default(uuid()) @db.Uuid
+  address           String          @unique
+  linkedinAccountId String          @map("linkedin_account_id") @db.Uuid
+  account           LinkedInAccount @relation(fields: [linkedinAccountId], references: [id], onDelete: Cascade)
+  label             String?                                     // optional human note (e.g. "contact form" / "appeal form")
+  createdBy         String?         @map("created_by")          // admin who minted it
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([linkedinAccountId, createdAt])
+  @@map("appeal_mailboxes")
 }
 
 // One on-chain payment received for an account's off-platform rental.
