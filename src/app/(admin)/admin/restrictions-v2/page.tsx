@@ -54,6 +54,7 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+  const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = async (dataUrl: string) => {
     setBusy(true); setErr("");
@@ -61,6 +62,9 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
     catch (e) { setErr(e instanceof Error ? e.message : "Upload failed."); } finally { setBusy(false); }
   };
   const onPaste = async (e: React.ClipboardEvent) => { const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/")); const f = item?.getAsFile(); if (f) { e.preventDefault(); await upload(await fileToDataUrl(f)); } };
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); if (!drag) setDrag(true); };
+  const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); setDrag(false); };
+  const onDrop = async (e: React.DragEvent) => { e.preventDefault(); setDrag(false); if (busy) return; const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith("image/")); if (f) await upload(await fileToDataUrl(f)); };
   const clearQr = async () => { setBusy(true); try { await fetch(`/api/admin/accounts/${r.id}/recovery-qr`, { method: "DELETE" }); reload(); } finally { setBusy(false); } };
   // Mint the owner's private /recover link and hand it off on the channel they actually use.
   // Copy = just the link; the app buttons open a pre-filled share AND mark the case as sent.
@@ -111,7 +115,7 @@ function QrCard({ r, reload }: { r: Row; reload: () => void }) {
           </div>
         </div>
       ) : (
-        <button onClick={() => fileRef.current?.click()} onPaste={onPaste} tabIndex={0} disabled={busy} style={{ border: "1.5px dashed #cfd5df", background: "#fafbfc", borderRadius: 10, padding: 16, font: `600 12.5px ${F_SANS}`, color: "#5b6779", cursor: "pointer", textAlign: "center" }}>Paste the QR screenshot from GoLogin (⌘V) or click to upload</button>
+        <button onClick={() => fileRef.current?.click()} onPaste={onPaste} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} tabIndex={0} disabled={busy} style={{ border: `1.5px dashed ${drag ? "#2563eb" : "#cfd5df"}`, background: drag ? "#eff4ff" : "#fafbfc", borderRadius: 10, padding: 16, font: `600 12.5px ${F_SANS}`, color: drag ? "#1d4ed8" : "#5b6779", cursor: "pointer", textAlign: "center", transition: "border-color .1s, background .1s" }}>{drag ? "Drop the QR image to attach it" : "Drag a QR screenshot here · paste (⌘V) · or click to upload"}</button>
       )}
       {err && <span style={{ font: `500 11.5px ${F_SANS}`, color: "#b91c1c" }}>{err}</span>}
       {info && <span style={{ font: `600 11.5px ${F_SANS}`, color: "#0f7a3d" }}>{info}</span>}
