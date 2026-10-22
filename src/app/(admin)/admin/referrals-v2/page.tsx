@@ -26,7 +26,7 @@ type App = {
   referralHoldReason: string | null; accountFreshness: string | null;
   accountRestrictedAt: string | null; accountPermanentlyRestricted: boolean; accountStatus: string | null;
 };
-type Payout = { id: string; referrerId: string; type: string; ambassadorApplicationId: string | null; amount: number; paidAt: string | null };
+type Payout = { id: string; referrerId: string; type: string; ambassadorApplicationId: string | null; amount: number; description: string | null; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; notifiedAt: string | null; createdAt: string; referrer?: { name: string; slug: string } | null };
 
 const DAY = 86400000;
 const money = (cur: Currency, n: number) => formatMoney(n, cur);
@@ -88,17 +88,19 @@ export default function ReferralsV2Page() {
   const [sel, setSel] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [np, setNp] = useState({ who: "", type: "Commission", method: "GCash", amount: "", desc: "" });
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/admin/referrers", { cache: "no-store" }).then(r => r.json()),
-      fetch("/api/admin/ambassadors", { cache: "no-store" }).then(r => r.json()),
-      fetch("/api/admin/payouts", { cache: "no-store" }).then(r => r.json()),
-    ]).then(([r, a, p]) => {
-      if (r.error || a.error || p.error) { setError(r.error || a.error || p.error); return; }
-      setRefs(r.referrers || []); setApps(a.applications || []); setPays(p.payouts || []);
-    }).catch(e => setError(e.message));
-  }, []);
+  const load = () => Promise.all([
+    fetch("/api/admin/referrers", { cache: "no-store" }).then(r => r.json()),
+    fetch("/api/admin/ambassadors", { cache: "no-store" }).then(r => r.json()),
+    fetch("/api/admin/payouts", { cache: "no-store" }).then(r => r.json()),
+  ]).then(([r, a, p]) => {
+    if (r.error || a.error || p.error) { setError(r.error || a.error || p.error); return; }
+    setRefs(r.referrers || []); setApps(a.applications || []); setPays(p.payouts || []);
+  });
+  useEffect(() => { load().catch(e => setError(e.message)); }, []);
 
   const now = Date.now();
 
@@ -189,7 +191,46 @@ export default function ReferralsV2Page() {
     const a = document.createElement("a"); a.href = url; a.download = "referrals-v2.csv"; a.click(); URL.revokeObjectURL(url);
   };
 
+  // --- payment writes (same endpoints as /admin/referrals; mark-referral is app-tied + deduped) ---
+  const TYPE_MAP: Record<string, string> = { Commission: "commission", "Day rate": "day_rate", Bonus: "bonus", Other: "other" };
+  const recordPayment = async () => {
+    if (!np.who) { setMsg("Pick who the payment is for."); return; }
+    if (!(Number(np.amount) > 0)) { setMsg("Enter an amount greater than zero."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch("/api/admin/payouts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ referrerId: np.who, type: TYPE_MAP[np.type] || "other", amount: Number(np.amount), description: np.desc || null }) });
+      const d = await res.json(); if (!res.ok) throw new Error(d.error);
+      await fetch(`/api/admin/payouts/${d.payout.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ markPaid: true, method: np.method }) });
+      setNp({ who: "", type: "Commission", method: "GCash", amount: "", desc: "" });
+      await load(); setMsg("Payment recorded as sent.");
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Could not record."); } finally { setBusy(false); }
+  };
+  const patchPayout = async (id: string, body: Record<string, unknown>, ok: string) => {
+    setBusy(true); setMsg("");
+    try { const res = await fetch(`/api/admin/payouts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (!res.ok) throw new Error((await res.json()).error); await load(); setMsg(ok); }
+    catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
+  };
+  const addReceipt = (id: string) => { const url = window.prompt("Paste the receipt link (a Wise/transfer URL also emails the referrer):", ""); if (!url) return; patchPayout(id, { reference: url }, "Receipt added."); };
+  const undoPayout = (id: string) => { if (!window.confirm("Undo this payment? It will no longer count as paid, and any marketer confirmation is dropped.")) return; patchPayout(id, { markPaid: false }, "Payment undone."); };
+  const delPayout = async (id: string) => {
+    if (!window.confirm("Delete this payout row permanently? This cannot be undone.")) return;
+    setBusy(true); setMsg("");
+    try { const res = await fetch(`/api/admin/payouts/${id}`, { method: "DELETE" }); if (!res.ok) throw new Error((await res.json()).error); await load(); setMsg("Payout deleted."); }
+    catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
+  };
+  // Per-ambassador commission (app-tied, server computes the amount, deduped against double-pay).
+  const payAmbassador = async (applicationId: string, name: string) => {
+    if (!window.confirm(`Record the referral commission for ${name} as paid?`)) return;
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch("/api/admin/payouts-ii/mark-referral", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ applicationId }) });
+      const d = await res.json(); if (!res.ok) throw new Error(d.error);
+      await load(); setMsg(d.alreadyPaid ? "Already recorded." : `Commission for ${name} recorded.`);
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
+  };
+
   const sel_ = sel ? rows.find(r => r.id === sel) || null : null;
+  const refName = (p: Payout) => p.referrer?.name || refs?.find(r => r.id === p.referrerId)?.name || "—";
   const pill: React.CSSProperties = { border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 10, padding: "8px 12px", font: `600 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" };
 
   return (
@@ -233,6 +274,8 @@ export default function ReferralsV2Page() {
               <button key={k} onClick={() => setTab(k)} style={{ border: "none", background: tab === k ? "#0b1220" : "transparent", color: tab === k ? "#fff" : "#0b1220", borderRadius: 8, padding: "7px 14px", font: `700 13px ${F}`, cursor: "pointer" }}>{label}</button>
             ))}
           </div>
+
+          {msg && <p role="status" style={{ font: `600 12.5px ${F}`, color: "#2563eb", margin: "-4px 0 0" }}>{msg}</p>}
 
           {tab === "board" && <>
             <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -307,22 +350,59 @@ export default function ReferralsV2Page() {
             </div>
           </>}
 
-          {tab === "pay" && (
-            <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, padding: 24, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-              <span style={{ font: `700 16px ${FN}`, color: "#0b1220" }}>Payments</span>
-              <p style={{ font: `500 13.5px/1.5 ${F}`, color: "#5b6779", margin: 0, maxWidth: 560 }}>Recording and confirming payouts lives on the Referrals page for now — this v2 is read-only while we validate the numbers. The full payments ledger (record, receipts, nudge, undo) moves here in phase 2.</p>
-              <a href="/admin/referrals" style={{ border: "none", background: "#0b1220", color: "#fff", borderRadius: 9, padding: "9px 14px", font: `700 12.5px ${F}`, textDecoration: "none" }}>Open Referrals payments →</a>
-            </div>
-          )}
+          {tab === "pay" && (() => {
+            const ledger = [...pays].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const whoOpts = [...(refs || [])].sort((a, b) => a.name.localeCompare(b.name));
+            const inp: React.CSSProperties = { border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: "#0b1220", outline: "none" };
+            return <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid #eef0f4", background: "#f8f9fb" }}>
+                <select value={np.who} onChange={e => setNp({ ...np, who: e.target.value })} style={{ ...inp, minWidth: 170 }}>
+                  <option value="">Who…</option>
+                  {whoOpts.map(r => <option key={r.id} value={r.id}>{r.name} ({r.slug})</option>)}
+                </select>
+                <select value={np.type} onChange={e => setNp({ ...np, type: e.target.value })} style={inp}><option>Commission</option><option>Day rate</option><option>Bonus</option><option>Other</option></select>
+                <select value={np.method} onChange={e => setNp({ ...np, method: e.target.value })} style={inp}><option>GCash</option><option>Maya</option><option>Maribank</option><option>GoTyme</option><option>Cash</option><option>Wise</option></select>
+                <input value={np.amount} onChange={e => setNp({ ...np, amount: e.target.value })} placeholder="Amount" inputMode="numeric" style={{ ...inp, width: 110, fontFamily: FN }} />
+                <input value={np.desc} onChange={e => setNp({ ...np, desc: e.target.value })} placeholder="What it's for (names, e.g. 3 onboarded)" style={{ ...inp, flex: 1, minWidth: 200, fontWeight: 500 }} />
+                <button onClick={recordPayment} disabled={busy} style={{ border: "none", background: busy ? "#9aa7bd" : "#0f7a3d", color: "#fff", borderRadius: 10, padding: "9px 14px", font: `700 12.5px ${F}`, cursor: busy ? "default" : "pointer", whiteSpace: "nowrap" }}>+ Record payment</button>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ minWidth: 1000 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "150px 100px minmax(240px,2fr) minmax(190px,1.2fr) 150px 150px", gap: 14, padding: "10px 18px", borderBottom: "1px solid #eef0f4", font: `700 10.5px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>
+                    <span>Who</span><span>Amount</span><span>For</span><span>Status</span><span>Receipt</span><span></span>
+                  </div>
+                  {ledger.map(p => {
+                    const st = p.confirmedAt ? { l: "Confirmed", fg: "#0f7a3d", sub: "marketer confirmed" } : p.paidAt ? { l: "Sent", fg: "#2563eb", sub: "awaiting confirmation" } : { l: "Unpaid", fg: "#b45309", sub: "not sent" };
+                    return <div key={p.id} style={{ display: "grid", gridTemplateColumns: "150px 100px minmax(240px,2fr) minmax(190px,1.2fr) 150px 150px", gap: 14, alignItems: "center", padding: "11px 18px", borderBottom: "1px solid #f0f2f5" }}>
+                      <span style={{ font: `700 13px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{refName(p)}</span>
+                      <span style={{ font: `700 14px ${FN}`, color: "#0b1220" }}>₱{Math.round(p.amount).toLocaleString()}</span>
+                      <span title={p.description || ""} style={{ font: `500 12.5px/1.4 ${F}`, color: "#334155", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description || <span style={{ color: "#8a93a3" }}>{p.type}</span>}{p.method ? ` · ${p.method}` : ""}</span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}><span style={{ font: `700 12px ${F}`, color: st.fg }}>{st.l}</span><span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>{st.sub}</span></div>
+                      <div>
+                        {p.reference ? <span title={p.reference} style={{ display: "inline-flex", alignItems: "center", gap: 6, font: `600 12px ${F}`, color: "#2563eb", background: "#eef4ff", borderRadius: 8, padding: "4px 9px", maxWidth: "100%" }}><span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.notifiedAt ? "✉ emailed" : "receipt"}</span></span>
+                          : p.paidAt ? <button onClick={() => addReceipt(p.id)} disabled={busy} style={{ border: "1px dashed #f0c98a", background: "#fff", color: "#b45309", borderRadius: 8, padding: "4px 9px", font: `700 12px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>+ Attach receipt</button>
+                            : <span style={{ font: `500 11.5px ${F}`, color: "#b4bccb" }}>—</span>}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                        {p.paidAt && <button onClick={() => undoPayout(p.id)} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 8, padding: "5px 9px", font: `700 11.5px ${F}`, cursor: "pointer" }}>Undo</button>}
+                        <button onClick={() => delPayout(p.id)} disabled={busy} title="Delete row" style={{ border: "1px solid #f5c2c2", background: "#fff", color: "#dc2626", borderRadius: 8, padding: "5px 9px", font: `700 11.5px ${F}`, cursor: "pointer" }}>Delete</button>
+                      </div>
+                    </div>;
+                  })}
+                  {!ledger.length && <div style={{ padding: 40, textAlign: "center", font: `500 13.5px ${F}`, color: "#8a93a3" }}>No payments recorded yet.</div>}
+                </div>
+              </div>
+            </div>;
+          })()}
         </>}
       </div>
 
-      {sel_ && <Drawer r={sel_} pays={pays} copied={copied} setCopied={setCopied} onClose={() => setSel(null)} />}
+      {sel_ && <Drawer r={sel_} pays={pays} copied={copied} setCopied={setCopied} onClose={() => setSel(null)} onPay={payAmbassador} busy={busy} />}
     </div>
   );
 }
 
-function Drawer({ r, pays, copied, setCopied, onClose }: { r: Row; pays: Payout[]; copied: boolean; setCopied: (v: boolean) => void; onClose: () => void }) {
+function Drawer({ r, pays, copied, setCopied, onClose, onPay, busy }: { r: Row; pays: Payout[]; copied: boolean; setCopied: (v: boolean) => void; onClose: () => void; onPay: (id: string, name: string) => void; busy: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
@@ -349,8 +429,9 @@ function Drawer({ r, pays, copied, setCopied, onClose }: { r: Row; pays: Payout[
     if (restr) { st = "Restricted"; stBg = "#fde8e8"; stFg = "#b91c1c"; }
     else if (earned) { st = "Onboarded"; stBg = "#e7f6ee"; stFg = "#0f7a3d"; }
     else if (on) { st = "Verifying"; stBg = "#e8f0fe"; stFg = "#2563eb"; }
+    const ready = earned && !paidApp.has(a.id) && isReferralReadyToPay(gate);
     const pay = paidApp.has(a.id) ? "Paid" : earned ? (isReferralReadyToPay(gate) ? "Ready" : "In hold") : "";
-    return { id: a.id, name: a.fullName, when: new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }), st, stBg, stFg, path: on ? p.label : "—", amt: earned ? money(r.cur, p.amt) : "", pay, payFg: pay === "In hold" ? "#b45309" : "#0f7a3d" };
+    return { id: a.id, name: a.fullName, when: new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }), st, stBg, stFg, path: on ? p.label : "—", amt: earned ? money(r.cur, p.amt) : "", pay, canPay: ready, payFg: pay === "In hold" ? "#b45309" : "#0f7a3d" };
   });
 
   return <>
@@ -405,12 +486,14 @@ function Drawer({ r, pays, copied, setCopied, onClose }: { r: Row; pays: Payout[
           <span style={{ font: `700 11px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Referred ambassadors · {ams.length}</span>
           <div style={{ border: "1px solid #e3e6ec", borderRadius: 12, overflow: "hidden" }}>
             {ams.map(a => (
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) 110px 120px 60px 70px", gap: 10, alignItems: "center", padding: "9px 12px", borderBottom: "1px solid #f0f2f5" }}>
+              <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) 104px 116px 56px 84px", gap: 9, alignItems: "center", padding: "9px 12px", borderBottom: "1px solid #f0f2f5" }}>
                 <div style={{ minWidth: 0 }}><div style={{ font: `600 13px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div><div style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>{a.when}</div></div>
                 <span><span style={{ font: `700 10.5px ${F}`, padding: "2px 8px", borderRadius: 999, background: a.stBg, color: a.stFg, whiteSpace: "nowrap" }}>{a.st}</span></span>
                 <span style={{ font: `500 11.5px ${F}`, color: "#5b6779", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.path}</span>
                 <span style={{ font: `700 12.5px ${FN}`, color: "#0b1220" }}>{a.amt}</span>
-                <span style={{ font: `700 11.5px ${F}`, color: a.payFg, textAlign: "right" }}>{a.pay}</span>
+                {a.canPay
+                  ? <button onClick={() => onPay(a.id, a.name)} disabled={busy} style={{ border: "none", background: "#0f7a3d", color: "#fff", borderRadius: 7, padding: "5px 8px", font: `700 11px ${F}`, cursor: busy ? "default" : "pointer", justifySelf: "end" }}>Pay</button>
+                  : <span style={{ font: `700 11.5px ${F}`, color: a.payFg, textAlign: "right" }}>{a.pay}</span>}
               </div>
             ))}
             {!ams.length && <div style={{ padding: 18, textAlign: "center", color: "#8a93a3", font: `500 12px ${F}` }}>No referred ambassadors yet.</div>}
