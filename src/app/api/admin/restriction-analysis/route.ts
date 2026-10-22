@@ -13,11 +13,14 @@ export const dynamic = "force-dynamic";
 const DAY = 86400000;
 const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as RestrictionEvent[]) : []);
 
-// Known Proxy6 datacenter egress. 45.32.117.124 is the dead SG box behind the Oct wave; the
-// 168.227.142.x block is Proxy6 PH. Everything else with a proxy is treated as residential
-// (proxy-cheap / Lumina pools). This is best-effort — we don't store a provider field.
-const WAVE_HOST = "45.32.117.124";
-const isDatacenter = (host: string | null) => !!host && (host === WAVE_HOST || host.startsWith("168.227.142."));
+// Recovery holding IPs: when an account's proxy was freed up (to avoid buying more), the
+// already-restricted account gets consolidated onto a shared IP as a recovery holding pen. Its
+// restrictions happened BEFORE the move, so its high restriction rate is reverse causation — the
+// page drops these from the proxy-driver rates so the IP doesn't read as a false cause. We only
+// store an account's CURRENT proxy, never the one it was on when restricted, so this matters.
+const RECOVERY_HOSTS = new Set<string>(["45.32.117.124"]);
+// Known Proxy6 datacenter egress (best-effort — no provider field stored).
+const isDatacenter = (host: string | null) => !!host && host.startsWith("168.227.142.");
 
 const domainOf = (email: string | null): string | null => {
   if (!email) return null;
@@ -90,8 +93,9 @@ export async function GET() {
         : /new account/i.test(firstNote) ? "New-account checkpoint"
         : everRestricted ? "Unknown / no email" : "—";
 
-      // Wave membership: on the dead SG datacenter host with a restriction in Oct 2026.
-      const wave = host === WAVE_HOST && episodes.some((e) => e.at.slice(0, 7) === "2026-10");
+      // Recovery holding pen: restricted account parked on a consolidation IP after its proxy was
+      // freed. Excluded from the proxy-driver rates (reverse causation), still counted everywhere else.
+      const recoveryPool = !!host && RECOVERY_HOSTS.has(host);
 
       const rentersSet = rentersByAccount.get(a.id) || new Set<string>();
       const renters = [...rentersSet].filter((x) => x !== "__rented__");
@@ -105,11 +109,11 @@ export async function GET() {
         rentedEver: rentersSet.size > 0, renters,
         emailDomain: domainOf(a.loginEmail) || domainOf(a.workEmail),
         cause,
-        wave,
+        recoveryPool,
       };
     });
 
-    return NextResponse.json({ now, waveHost: WAVE_HOST, accounts: rows });
+    return NextResponse.json({ now, recoveryHosts: [...RECOVERY_HOSTS], accounts: rows });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "error";
     return NextResponse.json({ error: msg }, { status: msg === "Forbidden" ? 403 : msg === "Unauthorized" ? 401 : 500 });

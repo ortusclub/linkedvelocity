@@ -14,9 +14,9 @@ type Acct = {
   createdAt: string | null; everRestricted: boolean; open: boolean; recovered: boolean; perma: boolean;
   restrictCount: number; firstRestrictedAt: string | null; lastRestrictedAt: string | null; episodes: Episode[];
   proxyHost: string | null; proxyType: "datacenter" | "residential" | "none"; geo: "match" | "mismatch" | "unknown" | "none";
-  ageMonths: number | null; rentedEver: boolean; renters: string[]; emailDomain: string | null; cause: string; wave: boolean;
+  ageMonths: number | null; rentedEver: boolean; renters: string[]; emailDomain: string | null; cause: string; recoveryPool: boolean;
 };
-type Data = { now: number; waveHost: string; accounts: Acct[] };
+type Data = { now: number; recoveryHosts: string[]; accounts: Acct[] };
 
 const DAY = 86400000;
 const pct = (x: number | null | undefined, d = 0) => (x == null ? "—" : `${(x * 100).toFixed(d)}%`);
@@ -73,12 +73,12 @@ function Bar({ w, color = "#dc2626" }: { w: string; color?: string }) {
 
 // Dimension defs (label + accessor + optional caveat) ----------------------
 const DIMS: { key: string; label: string; fn: (a: Acct) => string | null; note?: string }[] = [
-  { key: "proxyType", label: "Proxy type", fn: (a) => (a.proxyType === "datacenter" ? "Datacenter (Proxy6)" : a.proxyType === "residential" ? "Residential (proxy-cheap)" : "No proxy") },
-  { key: "proxyHost", label: "Proxy host", fn: (a) => a.proxyHost || "No proxy" },
-  { key: "geo", label: "Proxy geo vs home region", fn: (a) => (a.geo === "match" ? "Geo matches (PH)" : a.geo === "mismatch" ? "Geo mismatch" : a.geo === "unknown" ? "Proxy · geo unknown" : "No proxy") },
+  { key: "proxyType", label: "Proxy type", fn: (a) => (a.recoveryPool ? null : a.proxyType === "datacenter" ? "Datacenter (Proxy6)" : a.proxyType === "residential" ? "Residential (proxy-cheap)" : "No proxy recorded"), note: "Excludes accounts parked on recovery holding IPs. “No proxy recorded” = no proxy_host in our DB (mostly retired/reclaimed accounts, or a live proxy in GoLogin that didn’t sync), not literally proxyless. And we never store the proxy an account was on WHEN it was restricted, so read proxy-as-cause with care." },
+  { key: "proxyHost", label: "Proxy host", fn: (a) => (a.recoveryPool ? null : a.proxyHost || "No proxy recorded"), note: "Excludes recovery holding IPs (restricted accounts consolidated there after their proxy was freed)." },
+  { key: "geo", label: "Proxy geo vs home region", fn: (a) => (a.recoveryPool ? null : a.geo === "match" ? "Geo matches (PH)" : a.geo === "mismatch" ? "Geo mismatch" : a.geo === "unknown" ? "Proxy · geo unknown" : "No proxy") },
   { key: "age", label: "Account age", fn: (a) => ageBucket(a.ageMonths) },
   { key: "rented", label: "Rented vs never rented", fn: (a) => (a.rentedEver ? "Rented at least once" : "Never rented") },
-  { key: "renter", label: "Renter", fn: (a) => (a.renters.length ? a.renters[0] : null), note: "An account rented by several renters counts under the first. Renters get accounts after provisioning — read this alongside Rented vs never." },
+  { key: "renter", label: "Renter", fn: (a) => (a.renters.length ? a.renters[0] : null), note: "⚠ Over-attributes. This is ever-rented × ever-restricted, NOT restricted-while-rented — an account restricted before a renter opened it (or while still pending access) still counts against them. Don't read this as a renter's fault rate; it only shows which renters hold restriction-prone stock." },
   { key: "email", label: "Login email domain", fn: (a) => a.emailDomain || "No login email" },
   { key: "cohort", label: "Creation cohort", fn: (a) => (a.createdAt ? halfOf(a.createdAt) : null) },
   { key: "cause", label: "Restriction cause", fn: (a) => (a.everRestricted ? a.cause : null), note: "Cause comes from captured LinkedIn security email. Most restrictions are phone/Persona checkpoints with no email, so Unknown dominates." },
@@ -90,7 +90,6 @@ export default function RestrictionAnalysisPage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"ov" | "dr" | "cmp" | "coh">("ov");
-  const [exOn, setExOn] = useState(false);
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [cmpA, setCmpA] = useState("proxyType:Datacenter (Proxy6)");
   const [cmpB, setCmpB] = useState("proxyType:Residential (proxy-cheap)");
@@ -99,15 +98,15 @@ export default function RestrictionAnalysisPage() {
 
   const now = data?.now ?? Date.now();
   const allAccts = data?.accounts ?? [];
-  const base = useMemo(() => (exOn ? allAccts.filter((a) => !a.wave) : allAccts), [allAccts, exOn]);
-  const waveCount = useMemo(() => allAccts.filter((a) => a.wave).length, [allAccts]);
+  const base = allAccts;
+  const recoveryCount = useMemo(() => allAccts.filter((a) => a.recoveryPool).length, [allAccts]);
 
   const m = useMemo(() => metricsOf(base, now), [base, now]);
 
-  // Monthly trend (rate = restrictions ÷ accounts live by then). Wave split for the striped bar.
+  // Monthly trend (rate = restrictions ÷ accounts live by then).
   const monthly = useMemo(() => {
     const created = allAccts.map((a) => a.createdAt).filter((x): x is string => !!x);
-    if (!created.length) return [] as { k: string; label: string; active: number; total: number; wave: number; rate: number; partial: boolean }[];
+    if (!created.length) return [] as { k: string; label: string; active: number; total: number; rate: number; partial: boolean }[];
     const min = created.reduce((a, b) => (a < b ? a : b));
     const months: string[] = [];
     for (let cur = new Date(Date.UTC(+min.slice(0, 4), +min.slice(5, 7) - 1, 1)); cur <= new Date(now); cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1))) months.push(cur.toISOString().slice(0, 7));
@@ -116,9 +115,9 @@ export default function RestrictionAnalysisPage() {
       const [y, mo] = k.split("-").map(Number);
       const endMs = Date.UTC(y, mo, 0, 23, 59, 59);
       const active = base.filter((a) => a.createdAt && Date.parse(a.createdAt) <= endMs).length;
-      let total = 0, wave = 0;
-      for (const a of base) for (const e of a.episodes) if (monthKey(e.at) === k) { total += 1; if (a.wave) wave += 1; }
-      return { k, label: monthLabel(k), active, total, wave, rate: active ? total / active : 0, partial: k === nowK };
+      let total = 0;
+      for (const a of base) for (const e of a.episodes) if (monthKey(e.at) === k) total += 1;
+      return { k, label: monthLabel(k), active, total, rate: active ? total / active : 0, partial: k === nowK };
     });
   }, [base, allAccts, now]);
   const maxRate = Math.max(0.0001, ...monthly.map((x) => x.rate));
@@ -146,8 +145,8 @@ export default function RestrictionAnalysisPage() {
 
   // Proxy type summary (our real stand-in for pool vs non-pool).
   const proxySummary = useMemo(() => ["datacenter", "residential", "none"].map((t) => {
-    const list = base.filter((a) => a.proxyType === t);
-    return { t, label: t === "datacenter" ? "Datacenter (Proxy6)" : t === "residential" ? "Residential (proxy-cheap)" : "No proxy", n: list.length, ever: list.filter((a) => a.everRestricted).length, now: list.filter((a) => a.open).length, lost: list.filter((a) => a.perma).length };
+    const list = base.filter((a) => !a.recoveryPool && a.proxyType === t);
+    return { t, label: t === "datacenter" ? "Datacenter (Proxy6)" : t === "residential" ? "Residential (proxy-cheap)" : "No proxy recorded", n: list.length, ever: list.filter((a) => a.everRestricted).length, now: list.filter((a) => a.open).length, lost: list.filter((a) => a.perma).length };
   }), [base]);
 
   // Drivers ranked by gap.
@@ -159,8 +158,8 @@ export default function RestrictionAnalysisPage() {
     const mk = (label: string, aFn: (a: Acct) => boolean, bFn: (a: Acct) => boolean, aL: string, bL: string) => { const ra = rateOf(aFn), rb = rateOf(bFn); const g = ra - rb; return { label, gap: g, detail: `${aL} ${pct(ra, 0)} vs ${bL} ${pct(rb, 0)}`, strong: Math.abs(g) >= 0.1 }; };
     return [
       mk("Rented vs never rented", (a) => a.rentedEver, (a) => !a.rentedEver, "rented", "never"),
-      mk("Datacenter vs residential", (a) => a.proxyType === "datacenter", (a) => a.proxyType === "residential", "datacenter", "residential"),
-      mk("Geo mismatch vs match", (a) => a.geo === "mismatch", (a) => a.geo === "match", "mismatch", "match"),
+      mk("Datacenter vs residential", (a) => !a.recoveryPool && a.proxyType === "datacenter", (a) => !a.recoveryPool && a.proxyType === "residential", "datacenter", "residential"),
+      mk("Geo mismatch vs match", (a) => !a.recoveryPool && a.geo === "mismatch", (a) => !a.recoveryPool && a.geo === "match", "mismatch", "match"),
       mk("Young (<1yr) vs aged (3yr+)", (a) => a.ageMonths != null && a.ageMonths < 12, (a) => a.ageMonths != null && a.ageMonths >= 36, "young", "aged"),
     ];
   }, [base]);
@@ -216,10 +215,6 @@ export default function RestrictionAnalysisPage() {
           <h1 style={{ font: `600 28px ${G}`, margin: "0 0 4px", letterSpacing: "-.01em" }}>Restriction analysis</h1>
           <p style={{ ...sub, fontSize: 13.5 }}>Is it getting worse, what is driving it, and which segments to fix or retire. {allAccts.length} accounts · events logged since Mar 2026.</p>
         </div>
-        <button onClick={() => setExOn((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${exOn ? "#fde68a" : "#dde1e8"}`, background: exOn ? "#fffbeb" : "#fff", borderRadius: 10, padding: "7px 12px", font: `600 12.5px ${F}`, color: "#0b1220", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <span style={{ width: 30, height: 18, borderRadius: 999, background: exOn ? "#f59e0b" : "#cbd2dc", display: "flex", alignItems: "center", padding: 2, justifyContent: exOn ? "flex-end" : "flex-start" }}><span style={{ width: 14, height: 14, borderRadius: "50%", background: "#fff" }} /></span>
-          Exclude Oct-20 proxy wave · {waveCount} accounts
-        </button>
       </div>
 
       {/* Tabs */}
@@ -227,7 +222,7 @@ export default function RestrictionAnalysisPage() {
         <div style={{ display: "flex", background: "#fff", border: "1px solid #e3e6ec", borderRadius: 11, padding: 3, gap: 2, flexWrap: "wrap" }}>
           {TABS.map(([k, label]) => <button key={k} onClick={() => setTab(k)} style={{ border: "none", background: tab === k ? "#0b1220" : "transparent", color: tab === k ? "#fff" : "#5b6779", borderRadius: 8, padding: "7px 14px", font: `700 13px ${F}`, cursor: "pointer" }}>{label}</button>)}
         </div>
-        {exOn && <span style={{ font: `600 12.5px ${F}`, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 999, padding: "5px 12px" }}>Oct-20 wave excluded: {waveCount} accounts removed from counts & rates</span>}
+        {recoveryCount > 0 && <span style={{ font: `600 12px ${F}`, color: "#5b6779" }}>{recoveryCount} account{recoveryCount === 1 ? "" : "s"} on recovery holding IPs are excluded from the proxy-driver rates only.</span>}
       </div>
 
       {/* ===== OVERVIEW ===== */}
@@ -254,16 +249,12 @@ export default function RestrictionAnalysisPage() {
           <div style={{ ...card, flex: "2 1 560px", minWidth: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div><span style={h3}>Restricted each month</span><p style={sub}>Restrictions ÷ accounts live by then, so a growing book doesn&apos;t inflate the trend. Click a count to see the accounts.</p></div>
-              {!exOn && waveCount > 0 && <div style={{ display: "flex", gap: 12, font: `600 11.5px ${F}`, color: "#5b6779" }}><span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "#dc2626" }} />Restrictions</span><span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "repeating-linear-gradient(135deg,#f59e0b 0 3px,#fde68a 3px 6px)" }} />Oct-20 wave</span></div>}
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", height: 190, borderBottom: "1px solid #e6e9ee" }}>
               {monthly.map((mm) => (
                 <div key={mm.k} style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", gap: 5 }}>
                   <span style={{ font: `700 11.5px ${G}`, color: "#0b1220" }}>{pct(mm.rate, 0)}</span>
-                  <div style={{ width: "100%", maxWidth: 44, height: `${Math.max(2, (mm.rate / maxRate) * 100)}%`, display: "flex", flexDirection: "column", borderRadius: "6px 6px 0 0", overflow: "hidden" }}>
-                    {!exOn && mm.wave > 0 && <div style={{ height: `${(mm.wave / mm.total) * 100}%`, background: "repeating-linear-gradient(135deg,#f59e0b 0 4px,#fde68a 4px 8px)" }} />}
-                    <div style={{ flex: 1, background: mm.partial ? "repeating-linear-gradient(135deg,#dc2626 0 6px,rgba(220,38,38,.5) 6px 12px)" : "#dc2626" }} />
-                  </div>
+                  <div style={{ width: "100%", maxWidth: 44, height: `${Math.max(2, (mm.rate / maxRate) * 100)}%`, borderRadius: "6px 6px 0 0", overflow: "hidden", background: mm.partial ? "repeating-linear-gradient(135deg,#dc2626 0 6px,rgba(220,38,38,.5) 6px 12px)" : "#dc2626" }} />
                 </div>
               ))}
             </div>
@@ -275,7 +266,7 @@ export default function RestrictionAnalysisPage() {
                 </div>
               ))}
             </div>
-            <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>* current month is partial. {!exOn && waveCount > 0 ? "Striped = the Oct-20 dead-proxy wave — toggle it off above to see the organic trend." : "Organic trend (wave excluded)."}</span>
+            <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>* current month is partial. A one-off infra event (e.g. a dead proxy) can spike a single month — read spikes alongside the drivers below.</span>
           </div>
 
           {/* Six-month buckets */}
@@ -336,7 +327,7 @@ export default function RestrictionAnalysisPage() {
                 <span style={{ font: `700 14px ${G}`, color: "#0b1220" }}>{p.lost}</span>
               </div>
             ))}
-            <span style={{ font: `500 12px ${F}`, color: "#5b6779", lineHeight: 1.45 }}>Datacenter is a best-effort flag from known Proxy6 ranges (45.32.117.124 + 168.227.142.x).</span>
+            <span style={{ font: `500 12px ${F}`, color: "#5b6779", lineHeight: 1.45 }}>Datacenter is a best-effort flag from the known Proxy6 range (168.227.142.x). Accounts on recovery holding IPs are excluded — they were restricted before being parked there.</span>
           </div>
         </div>
       </>}
