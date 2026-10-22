@@ -206,7 +206,7 @@ export type DerivedCase = {
   openSince: number | null;
   lastErr: string;
   phase: { label: string; pr: number };
-  flags: Array<{ label: string; kind: "repeat" | "stale" | "renter" }>;
+  flags: Array<{ label: string; kind: "repeat" | "stale" | "renter" | "noqr" }>;
   chain: Array<{ k: StepKind | "na"; label: string; outcome: Outcome | "none" | "na"; tip: string }>;
 };
 
@@ -310,6 +310,9 @@ export function deriveCase(
   if (cnt >= 3) flags.push({ label: `${ord(cnt)} restriction`, kind: "repeat" });
   if (openCase && restrictedMs / H / 24 > staleDays) flags.push({ label: `Stale ${Math.floor(restrictedMs / H / 24)}d`, kind: "stale" });
   if (a.renterName && openCase && a.status === "rented") flags.push({ label: a.renterName, kind: "renter" });
+  // Owner's been contacted but no QR is attached yet — someone needs to grab it from GoLogin so
+  // the owner can actually clear the checkpoint. Only once recovery is underway (not pre-email).
+  if (openCase && em && !a.recoveryQrAt) flags.push({ label: "No QR", kind: "noqr" });
 
   const chip = (s: Step | null, k: StepKind, emptyTip: string) =>
     s ? { k, label: OUT_LABEL[s.k][s.o], outcome: s.o, tip: `${STEP_TITLES[s.k]}: ${OUT_LABEL[s.k][s.o]}` } : { k, label: "—", outcome: "none" as const, tip: emptyTip };
