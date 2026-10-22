@@ -190,8 +190,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     stored.steps.push(step);
     if (input.kind === "pw" && input.password?.trim()) await setPassword(id, input.password);
 
-    // A successful QR / ID / appeal / LinkedIn step restores the account — case stays open.
-    if (input.outcome === "ok" && (input.kind === "qr" || input.kind === "id" || input.kind === "form" || input.kind === "li")) {
+    // A successful QR / ID / LinkedIn-decision step restores the account — case stays open. NOT a
+    // "form" step: submitting an appeal/contact form isn't recovery (the appeal is then pending
+    // LinkedIn's decision), so "Appeal form · Worked" just logs the submission.
+    if (input.outcome === "ok" && (input.kind === "qr" || input.kind === "id" || input.kind === "li")) {
       if (input.kind !== "li") stored.steps.push({ k: "li", o: "ok", at: now.toISOString() });
       await recoverKeepOpen(id, stored, now);
       return NextResponse.json({ ok: true, recovered: true });
