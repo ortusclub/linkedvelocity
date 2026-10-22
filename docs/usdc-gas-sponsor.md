@@ -67,7 +67,7 @@ this flag does not pause all deposit processing.
 Run these offline tests without production environment variables:
 
 ```sh
-node --test tests/usdc-gas-sponsor.test.cjs tests/deposit-sweep.test.cjs tests/treasury-deposits.test.cjs tests/treasury.test.cjs
+node --test tests/usdc-gas-sponsor.test.cjs tests/deposit-sweep.test.cjs tests/treasury-deposits.test.cjs tests/treasury.test.cjs tests/treasury-sponsor-ui.test.cjs
 ./node_modules/.bin/tsc --noEmit --incremental false
 ```
 
