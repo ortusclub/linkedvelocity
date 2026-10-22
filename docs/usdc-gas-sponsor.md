@@ -79,3 +79,7 @@ ambiguous broadcasts, confirmation timeouts, and manual-only sponsorship.
 
 References: [ERC-3009](https://eips.ethereum.org/EIPS/eip-3009),
 [Base network fees](https://docs.base.org/specifications/transactions/network-fees).
+
+## Sweep all funded wallets
+
+Treasury's **Sweep all funded wallets** scans every deposit page without sending funds. The review lists eligible balances, destination and skipped-wallet reasons. **Confirm sweep all** submits each reviewed wallet sequentially through the existing authenticated, locked single-wallet endpoint. Each endpoint rechecks balances and destination; the batch stops on a failure or uncertain response without retrying. Confirmed transaction links remain visible after a partial failure. Keep the page open while processing; this is not a background job. Closing it may leave the current request running, so check wallet activity before starting again. Central gas configuration errors still block affected USDC wallets. The per-transfer fee limit applies separately to each transfer, not to the entire batch.

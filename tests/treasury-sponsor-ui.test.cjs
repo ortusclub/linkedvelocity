@@ -12,7 +12,7 @@ function render({ sponsor, sourceEth = '0', usdc = '55', usdt = '0', awaitingCre
  const react={...React,useState:()=>[states[index++],()=>{}],useRef:()=>({current:null}),useEffect:()=>{},useCallback:fn=>fn};
  const exports_={};
  const code=ts.transpileModule(fs.readFileSync('src/components/admin/TreasuryDeposits.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}}).outputText;
- new Function('require','exports',code)(name=>{if(name==='react')return react;if(name==='react/jsx-runtime')return require(name);throw new Error(name)},exports_);
+ new Function('require','exports',code)(name=>{if(name==='@/lib/sweep-all') return {};if(name==='react')return react;if(name==='react/jsx-runtime')return require(name);throw new Error(name)},exports_);
  const html=renderToStaticMarkup(React.createElement(exports_.default,{onSwept:async()=>{}}));
  const button=html.match(/<button[^>]*>Sweep to main wallet<\/button>/)[0];
  return {html,disabled:button.includes('disabled=')};
