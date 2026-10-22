@@ -170,8 +170,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const trimmed = input.note?.trim() || "";
     // Optional backdating: record a step at the date it actually happened (e.g. a LinkedIn email
     // from last week), never in the future. Side-effect timestamps below still use now.
-    const parsedAt = input.at && Number.isFinite(Date.parse(input.at)) ? Math.min(Date.parse(input.at), now.getTime()) : null;
-    const stepAt = parsedAt ? new Date(parsedAt).toISOString() : now.toISOString();
+    // A bare date from the date picker ("2026-10-22") parses as MIDNIGHT UTC, which reads 8h early
+    // in PH ("9h ago" on a note just added). So: today's date → the real current time (a note
+    // added now reads as now); a past date → noon UTC (shows the right calendar day in any tz).
+    const dateOnly = typeof input.at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.at);
+    let stepAt: string;
+    if (dateOnly) {
+      stepAt = input.at! >= now.toISOString().slice(0, 10) ? now.toISOString() : new Date(`${input.at}T12:00:00Z`).toISOString();
+    } else if (input.at && Number.isFinite(Date.parse(input.at))) {
+      stepAt = new Date(Math.min(Date.parse(input.at), now.getTime())).toISOString();
+    } else {
+      stepAt = now.toISOString();
+    }
     const step: Step = { k: input.kind, o: input.outcome, at: stepAt, ...(input.outcome === "fail" && trimmed ? { err: trimmed } : trimmed ? { note: trimmed } : {}) };
 
     if (input.kind === "relist") { stored.steps.push(step); await closeFinal(id, stored, true); return NextResponse.json({ ok: true, relisted: true }); }
