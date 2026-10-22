@@ -21,6 +21,7 @@ function fixture(options = {}) {
   const route = load('src/app/api/admin/treasury/deposits/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => ({ body, status: init.status, headers: init.headers }) } },
     ethers: { ethers },
+    '@/lib/usdc-gas-sponsor': { gasSponsorStatus: async () => ({ enabled: true, address: treasury, eth: '0', error: 'Fund central wallet' }) },
     '@/lib/auth': { requireAdmin: async () => { if (options.auth) throw new Error(options.auth); } },
     '@/lib/prisma': { prisma: { depositAddress: {
       findUnique: async ({ where }) => { calls.push(['find', where.id]); return options.missing ? null : { id: where.id }; },
@@ -32,7 +33,7 @@ function fixture(options = {}) {
       getUsdtContract: () => ({ balanceOf: async () => { if (options.rpcError) throw new Error('rpc'); return 1_000_000n; } }),
       formatUsdc: x => ethers.formatUnits(x, 6), parseUsdc: x => ethers.parseUnits(x, 6),
     },
-    '@/lib/deposit-detector': { sweepDeposits: async (selected, onFailure) => { calls.push(['sweep', selected]); if (options.failed) onFailure('USDT'); return options.failed ? [] : [{ txHash: 'test-hash', token: 'USDT', amount: '1' }]; } },
+    '@/lib/deposit-detector': { sweepDeposits: async (selected, onFailure, _assertActive, relayOptions) => { assert.equal(relayOptions.allowSponsored, true); calls.push(['sweep', selected]); if (options.failed) onFailure('USDT'); return options.failed ? [] : [{ txHash: 'test-hash', token: 'USDT', amount: '1' }]; } },
     '@/lib/deposit-job': { DepositJobBusy, withDepositJob: async fn => { if (options.busy) throw new DepositJobBusy('Already running'); return fn(async () => {}); } },
   });
   return { ...route, calls };
@@ -71,6 +72,7 @@ test('one selected wallet is swept, and contention or missing wallet cannot swee
 test('read-only listing distinguishes pending credit and unavailable balances', async () => {
   const f = fixture(); const r = await f.GET(request());
   assert.equal(r.body.signingConfigured, true);
+  assert.equal(r.body.gasSponsor.error, 'Fund central wallet');
   assert.equal(r.body.rows[0].usdc, '5.0');
   assert.equal(r.body.rows[0].awaitingCredit, true);
   assert.equal(r.headers['Cache-Control'], 'private, no-store');

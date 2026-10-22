@@ -147,7 +147,7 @@ export default function TreasuryPage() {
         </section>
       </div>
       <section className="overflow-hidden rounded-2xl" style={card}>
-        <div className="border-b p-5" style={{ borderColor: "var(--divider)" }}><h2 className="font-semibold">Crypto balances</h2><p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>Customer deposit wallets need their own ETH on Base for sweep fees. The receiving wallet needs no private key on the server.</p></div>
+        <div className="border-b p-5" style={{ borderColor: "var(--divider)" }}><h2 className="font-semibold">Crypto balances</h2><p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>USDC sweeps can use a central gas wallet. Check its status under customer deposits. The receiving wallet needs no private key on the server.</p></div>
         <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead style={{ color: "var(--muted)" }}><tr><th className="p-5">Asset</th><th className="p-5">Balance</th><th className="p-5">USD estimate</th><th className="p-5">SwissBorg transfer</th></tr></thead>
           <tbody>{data.crypto.assets.map(a => <tr key={a.token} className="border-t" style={{ borderColor: "var(--divider)" }}><th className="p-5 font-semibold">{a.token}<span className="mt-1 block text-xs font-normal" style={{ color: "var(--muted)" }}>Base{a.token === "USDT" ? " · bridged USDT" : ""}</span></th>
             <td className="p-5" title={a.amount ?? undefined}>{a.amount === null ? <span style={{ color: "var(--warn-num)" }}>{a.error}</span> : amountText(a.amount)}</td><td className="p-5">{a.usdValue === null ? "Unavailable" : usd(a.usdValue)}</td>

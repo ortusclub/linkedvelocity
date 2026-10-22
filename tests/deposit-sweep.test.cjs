@@ -18,8 +18,14 @@ function load(file, dependencies) {
 }
 
 function fixture(options = {}) {
-  const calls = { sends: [], funding: [], ledger: [], journals: [], resets: [], errors: [] };
+  const calls = { sends: [], funding: [], ledger: [], journals: [], resets: [], errors: [], events: [] };
   const provider = {
+    broadcastTransaction: async raw => {
+      calls.events.push('broadcast');
+      calls.sends.push({ symbol: 'USDC', raw });
+      if (options.broadcastError) throw new Error('Connection lost');
+      return { hash: 'relay-hash', wait: async () => { if (options.timeout) throw new Error('timeout'); return { status: options.status ?? 1, hash: 'relay-hash' }; } };
+    },
     getTransactionReceipt: async () => options.receipt ?? null,
     getNetwork: async () => ({ chainId: options.chainId ?? 8453n }),
     getTransactionCount: async (_address, tag) => tag === 'pending' && options.pending ? 1 : 0,
@@ -36,8 +42,8 @@ function fixture(options = {}) {
     },
   });
   const prisma = {
-    transaction: { findMany: async () => options.journals ?? [], create: async entry => { calls.journals.push(entry.data); return { id: "journal" }; } },
-    depositAddress: { findMany: async () => [{ id: 'deposit', address: '0xabc', userId: 'customer', derivationIndex: 7, lastSeenBalance: options.lastSeen ?? '100' }] },
+    transaction: { findMany: async () => options.journals ?? [], create: async entry => { calls.events.push('journal'); if (options.journalError) throw new Error('database failure'); calls.journals.push(entry.data); return { id: "journal" }; } },
+    depositAddress: { findMany: async () => options.deposits ?? [{ id: 'deposit', address: '0xabc', userId: 'customer', derivationIndex: 7, lastSeenBalance: options.lastSeen ?? '100' }] },
     $transaction: async fn => fn({
       transaction: { update: async entry => calls.ledger.push(entry.data) },
       depositAddress: { update: async entry => calls.resets.push(entry) },
@@ -58,6 +64,15 @@ function fixture(options = {}) {
     formatUsdc: value => ethers.formatUnits(value, 6),
   };
   return { calls, ...load('src/lib/deposit-detector.ts', {
+    '@/lib/usdc-gas-sponsor': {
+      sponsorshipEnabled: () => !!options.sponsored,
+      prepareSponsoredUsdcSweep: async input => {
+        calls.events.push('prepare');
+        assert.equal(input.destination, process.env.TREASURY_WALLET_ADDRESS);
+        await input.assertActive();
+        return { rawTransaction: 'test-raw', hash: 'relay-hash' };
+      },
+    },
     '@/lib/prisma': { prisma }, ethers: { ethers }, '@/lib/wallet': wallet, '@/services/email': {},
   }) };
 }
@@ -183,4 +198,44 @@ test('missing treasury private key does not prevent a funded deposit sweep', asy
   assert.equal((await f.sweepDeposits()).length, 1);
   assert.equal(f.calls.sends[0].to, process.env.TREASURY_WALLET_ADDRESS);
  } finally { if (previous !== undefined) process.env.TREASURY_PRIVATE_KEY = previous; }
+});
+
+
+test('sponsored USDC sweeps an ETH-empty deposit and journals before broadcast', async () => {
+ const f = fixture({ sponsored: true, USDC: 55_000_000n, eth: 0n });
+ const result = await f.sweepDeposits('deposit', undefined, async () => {}, { allowSponsored: true });
+ assert.equal(result[0].amount, '55.0');
+ assert.deepEqual(f.calls.events, ['prepare', 'journal', 'broadcast']);
+ assert.equal(f.calls.resets.length, 1);
+ assert.equal(f.calls.journals[0].description, 'Pending treasury sweep:USDC:deposit:relayed');
+});
+test('cron cannot initiate sponsored transfers', async () => {
+ const f = fixture({ sponsored: true, USDC: 55_000_000n });
+ assert.deepEqual(await f.sweepDeposits(), []);
+ assert.deepEqual(f.calls.events, []);
+});
+test('failed pre-broadcast journal cannot send a relay transaction', async () => {
+ const f = fixture({ sponsored: true, USDC: 55_000_000n, journalError: true });
+ await f.sweepDeposits('deposit', undefined, async () => {}, { allowSponsored: true });
+ assert.equal(f.calls.sends.length, 0);
+});
+test('ambiguous relay broadcast blocks subsequent relay sends in the same job', async () => {
+ const f = fixture({ sponsored: true, USDC: 1_000_000n, broadcastError: true,
+  deposits: ['one','two'].map(id => ({id,address:'0xabc',userId:'customer',derivationIndex:7,lastSeenBalance:'1'})) });
+ await f.sweepDeposits(undefined, undefined, async () => {}, { allowSponsored: true });
+ assert.equal(f.calls.sends.length, 1);
+ assert.equal(f.calls.journals.length, 1);
+ assert.equal(f.calls.resets.length, 0);
+});
+test('unconfirmed relay journal blocks the central signer across deposits and jobs', async () => {
+ const f = fixture({ sponsored: true, USDC: 1_000_000n,
+  journals: [{id:'j',txHash:'relay-hash',description:'Pending treasury sweep:USDC:other-deposit:relayed'}] });
+ await f.sweepDeposits('deposit', undefined, async () => {}, { allowSponsored: true });
+ assert.equal(f.calls.events.length, 0);
+});
+test('timed-out relay remains pending and never resets customer credit tracking', async () => {
+ const f = fixture({ sponsored: true, USDC: 1_000_000n, timeout: true });
+ await f.sweepDeposits('deposit', undefined, async () => {}, { allowSponsored: true });
+ assert.equal(f.calls.journals.length, 1);
+ assert.equal(f.calls.resets.length, 0);
 });

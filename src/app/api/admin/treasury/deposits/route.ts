@@ -6,6 +6,7 @@ import { getBaseProvider, getUsdcContract, getUsdtContract, formatUsdc, parseUsd
 import { sweepDeposits } from "@/lib/deposit-detector";
 import { DepositJobBusy, withDepositJob } from "@/lib/deposit-job";
 import type { DepositRow, DepositSnapshot } from "@/lib/deposit-snapshot";
+import { gasSponsorStatus } from "@/lib/usdc-gas-sponsor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
       })));
     }
     const snapshot: DepositSnapshot = { rows, page, hasMore: deposits.length > 20, checkedAt: new Date().toISOString(), treasury: destination(),
-      signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE };
+      signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE, gasSponsor: await gasSponsorStatus(provider) };
     return reply(snapshot);
   } catch { return reply({ error: "Customer deposit balances could not be loaded. Please retry." }, 503); }
 }
@@ -68,12 +69,12 @@ export async function POST(req: NextRequest) {
       const deposit = await prisma.depositAddress.findUnique({ where: { id: input.depositId } });
       if (!deposit) return null;
       const failures: string[] = [];
-      const sweeps = await sweepDeposits(deposit.id, token => { failures.push(token); }, assertActive);
+      const sweeps = await sweepDeposits(deposit.id, token => { failures.push(token); }, assertActive, { allowSponsored: true });
       return { sweeps, failures };
     });
     if (!result) return reply({ error: "Deposit address not found" }, 404);
     return reply({ ...result, message: result.failures.length
-      ? "Some tokens could not be swept. Deposit wallets need ETH on Base for network fees. Refresh balances and check wallet activity before retrying; a transaction may still be pending."
+      ? "Some tokens could not be swept. Check the gas wallet balance and fee limit for sponsored USDC; other transfers need ETH in the deposit wallet. Refresh balances and check wallet activity before retrying; a transaction may still be pending."
       : result.sweeps.length ? "Sweep confirmed on Base. Funds moved to the main wallet."
       : "No funds were swept. The scheduled job may already have moved them. Refresh balances." });
   } catch (e) {

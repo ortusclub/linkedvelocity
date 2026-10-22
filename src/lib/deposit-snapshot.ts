@@ -5,4 +5,5 @@ export type DepositRow = {
 export type DepositSnapshot = {
   rows: DepositRow[]; page: number; hasMore: boolean; checkedAt: string;
   treasury: string | null; signingConfigured: boolean;
+  gasSponsor?: { enabled: boolean; address: string | null; eth: string | null; error: string | null };
 };
