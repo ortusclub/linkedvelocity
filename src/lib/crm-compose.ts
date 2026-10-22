@@ -50,19 +50,19 @@ export function normaliseContact(raw?: string | null): string | null {
   s = s.replace(/^telegram:/, "").replace(/^whatsapp:/, "").replace(/[\s()+\-]/g, "").replace(/^@/, "");
   return s || null;
 }
-function channelFromContactNumber(raw?: string | null): { channel: "WA" | "TG" | null; contact: string | null } {
+export function channelFromContactNumber(raw?: string | null): { channel: "WA" | "TG" | null; contact: string | null } {
   if (!raw) return { channel: null, contact: null };
   if (raw.startsWith("telegram:")) return { channel: "TG", contact: raw.slice(9).trim() || null };
   if (raw.startsWith("whatsapp:")) return { channel: "WA", contact: raw.slice(9).trim() || null };
   return { channel: null, contact: raw.trim() || null };
 }
-function channelFromInbound(ch?: string | null): "WA" | "TG" | null {
+export function channelFromInbound(ch?: string | null): "WA" | "TG" | null {
   const s = (ch || "").toLowerCase();
   if (s.includes("telegram")) return "TG";
   if (s.includes("whatsapp")) return "WA";
   return null;
 }
-function leadStageFrom(stage?: string | null): "warm" | "cold" | null {
+export function leadStageFrom(stage?: string | null): "warm" | "cold" | null {
   const s = (stage || "").toLowerCase();
   if (s === "warm" || s === "new" || s === "active") return "warm";
   if (s === "cold" || s === "lost" || s === "previously_active") return "cold";
@@ -76,7 +76,7 @@ function convTypeFrom(channel?: string): "Note" | "Call" | "WhatsApp" | "Telegra
   if (s.includes("call") || s.includes("meeting") || s.includes("booking")) return "Call";
   return "Note";
 }
-function companyLabel(domain: string): string {
+export function companyLabel(domain: string): string {
   return domain.split(".")[0].replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 function localPart(email?: string | null) { return email ? email.split("@")[0].toLowerCase() : ""; }
