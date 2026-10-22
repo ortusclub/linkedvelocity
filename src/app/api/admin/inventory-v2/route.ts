@@ -24,7 +24,10 @@ export async function GET(_req: NextRequest) {
       },
       include: {
         rentals: {
-          where: { status: { in: ["active", "payment_failed"] }, isShadow: false },
+          // Include pending_access too: a paid rental whose GoLogin share hasn't gone out
+          // yet still has a real renter — show their name (awaiting access), not
+          // "Shadow / no renter". Rented is rented, regardless of access state.
+          where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false },
           include: { user: { select: { id: true, fullName: true, email: true } } },
           orderBy: { createdAt: "desc" },
           take: 1,
