@@ -156,7 +156,15 @@ export default function ReferralsV2Page() {
   }, [refs, apps, pays, now]);
 
   const inactive = (r: Row) => r.lastDays > 30 && r.owed === 0 && r.held === 0;
-  const isRisk = (r: Row) => !r.fam && r.onb >= 3 && r.res / r.onb >= 0.15;
+  // Restrictions are systemic here (most referrers sit high), so a fixed % flags everyone.
+  // Quality-risk = notably WORSE than the cohort: well above the average restriction rate,
+  // with a floor so a low-restriction cohort still needs a real problem to flag.
+  const qualifying = rows.filter(r => !r.fam && r.onb >= 3);
+  const baseOnb = qualifying.reduce((a, r) => a + r.onb, 0);
+  const baseRes = qualifying.reduce((a, r) => a + r.res, 0);
+  const baselineRate = baseOnb ? baseRes / baseOnb : 0;
+  const riskCut = Math.max(0.5, baselineRate * 1.4); // 1.4x the average, never below 50%
+  const isRisk = (r: Row) => !r.fam && r.onb >= 3 && r.res / r.onb >= riskCut;
   const top5 = useMemo(() => [...rows].sort((a, b) => b.onb - a.onb).slice(0, 5).map(r => r.id), [rows]);
 
   const FILTERS: Record<string, (r: Row) => boolean> = {
@@ -194,7 +202,7 @@ export default function ReferralsV2Page() {
     ["all", "All", "#64748b", "Everyone"],
     ["top", "Top 5", "#16a34a", "Most onboarded"],
     ["owed", "Owed money", "#d97706", "Ready or in hold"],
-    ["risk", "Quality risk", "#dc2626", "≥15% of onboarded restricted · min 3 · family buckets excluded · a signal, not proof"],
+    ["risk", "Quality risk", "#dc2626", `Restriction rate over ${Math.round(riskCut * 100)}% (cohort avg ~${Math.round(baselineRate * 100)}%) · min 3 onboarded · family excluded · a signal, not proof`],
     ["slow", "Slowing down", "#f59e0b", "Was active, signups dropped to half or less of the prior 2 weeks"],
     ["ver", "Verifying", "#60a5fa", "Has onboarded signups awaiting QC"],
   ];
