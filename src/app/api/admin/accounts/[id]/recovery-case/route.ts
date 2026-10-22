@@ -23,6 +23,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("mark_lost"), outcome: z.enum(["perma", "nocontact"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("reopen") }),
+  z.object({ action: z.literal("undo_step") }),
 ]);
 
 const asJson = (v: unknown) => v as unknown as Prisma.InputJsonValue;
@@ -127,6 +128,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       else { stored.steps.push({ k: input.kind, o: "ok", at: now.toISOString() }); if (input.kind === "pw" && input.password?.trim()) await setPassword(id, input.password); }
       await persistCase(id, stored);
       return NextResponse.json({ ok: true });
+    }
+
+    if (input.action === "undo_step") {
+      // Go back: remove the last thing someone logged. Covers a hand-logged step (incl. the
+      // "Worked → recovered" pair), re-restricting the account if that step had recovered it, and
+      // — when there are no hand-logged steps — clears an owner/referrer self-report
+      // (restriction_report = qr_done/recovered) so a misclicked "QR done" is undone too.
+      const full = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true, restrictedAt: true, restrictionLog: true, linkedinUrl: true, notes: true } });
+      if (!full) return NextResponse.json({ error: "Account not found" }, { status: 404 });
+
+      if (stored.steps.length) {
+        const popped = stored.steps.pop()!;
+        // "Worked → recovered" logs a verify step then an auto {li,ok}; undo the pair together.
+        if (popped.k === "li" && popped.o === "ok" && !popped.note) {
+          const prev = stored.steps[stored.steps.length - 1];
+          if (prev && (prev.k === "qr" || prev.k === "id" || prev.k === "form") && prev.o === "ok") stored.steps.pop();
+        }
+        const stillRecovered = stored.steps.some((s) => (s.k === "li" || s.k === "qr" || s.k === "id" || s.k === "form") && s.o === "ok");
+        if (stored.resolvedAt && !stillRecovered) {
+          // The undone step had recovered the account — reopen the case and re-restrict it.
+          delete stored.resolvedAt;
+          const fields = await restrictionUpdate({ id, restrictedAt: full.restrictedAt, restrictionLog: full.restrictionLog }, true);
+          await prisma.linkedInAccount.update({ where: { id }, data: { recoveryCase: asJson(stored), restrictedAt: fields.restrictedAt, ...(fields.restrictionLog ? { restrictionLog: asJson(fields.restrictionLog) } : {}) } });
+          return NextResponse.json({ ok: true, reRestricted: true });
+        }
+        await persistCase(id, stored);
+        return NextResponse.json({ ok: true });
+      }
+
+      const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, restrictionReport: true } });
+      const app = matchApp(apps, { linkedinUrl: full.linkedinUrl, notes: full.notes });
+      if (app && (app as { restrictionReport?: unknown }).restrictionReport) {
+        await prisma.ambassadorApplication.update({ where: { id: app.id }, data: { restrictionReport: Prisma.DbNull } });
+        return NextResponse.json({ ok: true, selfReport: true });
+      }
+      return NextResponse.json({ error: "Nothing to undo." }, { status: 400 });
     }
 
     // add_step — workflow actions + hand-logged steps

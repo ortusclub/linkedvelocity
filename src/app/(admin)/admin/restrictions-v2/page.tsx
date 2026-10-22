@@ -349,7 +349,10 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
           </div>
           {!closed && (
             <div style={{ borderTop: "1px solid #eef0f4", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Log a step</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Log a step</span>
+                <button onClick={() => post({ action: "undo_step" })} disabled={busy} title="Remove the last step you logged. If that step recovered the account, it's re-restricted. Also clears a misclicked owner QR/recovered self-report." style={{ border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 8, padding: "4px 10px", font: `700 11.5px ${F_SANS}`, cursor: "pointer" }}>↶ Undo last step</button>
+              </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <select value={fk} onChange={(e) => setFk(e.target.value as StepKind)} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 8px", font: `600 12.5px ${F_SANS}`, color: "#0b1220" }}>
                   <option value="email">Owner contacted</option><option value="id">ID verification</option><option value="form">Appeal form</option><option value="li">LinkedIn decision</option><option value="note">Note</option>
