@@ -109,7 +109,10 @@ export type RestrictionAnalytics = {
     connections: CohortRow[];
     emailDomain: CohortRow[];
     client: CohortRow[]; // restriction rate by renter (only rented accounts)
+    proxyHost: CohortRow[]; // restriction rate by specific proxy IP/host (shared hosts, 2+ accounts)
   };
+  // WHY accounts got restricted, from LinkedIn's own words in captured security mail.
+  reasonBreakdown: Array<{ cause: string; restricted: number; open: number; recovered: number }>;
   timing: CohortRow[]; // restriction timing relative to onboarding (denominator = ever-restricted)
   stageAtRestriction: StageEventRow[]; // HISTORICAL: which stage each restriction happened at
   openRestrictions: OpenRestrictionRow[]; // currently-restricted roster, longest-down first
@@ -275,6 +278,19 @@ const connBucket = (c: number): string => {
 };
 const CONN_ORDER = ["0–99", "100–299", "300–499", "500–999", "1,000–4,999", "5,000+"];
 
+// Classify WHY an account was restricted, from LinkedIn's own words in its captured security
+// mail (appeal replies, ID-verification notices, restriction emails). Priority: the specific
+// behavioural signal ("excessive/systematic viewing") over the generic "doesn't comply", since
+// that's the actionable root cause.
+export function classifyRestrictionCause(text: string): string {
+  const t = (text || "").toLowerCase();
+  if (/excessively high number of|systematically view|systematic\w* (viewing|form)|third[- ]party (software|app|tool|application)|browser (plugin|extension)|\bscrap|\bautomat|\bbots?\b/.test(t)) return "Automation / excessive activity";
+  if (/more than one account|multiple accounts|duplicate account/.test(t)) return "Duplicate account";
+  if (/verify your identity|identity (check|verification)|government id|\bpersona\b|two[- ]?step|verification code|confirm it.?s you|new device|unusual (sign|activity)|please verify/.test(t)) return "Identity / verification";
+  if (/does ?n.?t (comply|meet)|not comply|professional community|user agreement|violat|misuse/.test(t)) return "Policy violation (generic)";
+  return "Other LinkedIn notice";
+}
+
 export function computeRestrictionAnalytics(
   accountsIn: AnalyticsAccount[],
   appsIn: AnalyticsApp[],
@@ -284,6 +300,8 @@ export function computeRestrictionAnalytics(
   // Every distinct client (renter) that has rented each account — for the by-client
   // restriction rate. An account rented by two clients counts under both.
   clientsByAccountId: Record<string, string[]> = {},
+  // Pre-classified restriction cause per account id (from captured LinkedIn security mail).
+  reasonByAccountId: Record<string, string> = {},
   now: number = Date.now(),
 ): RestrictionAnalytics {
   // Match an account to its application the same way the rest of admin does: by unique
@@ -524,6 +542,28 @@ export function computeRestrictionAnalytics(
   }
   feed.sort((x, y) => y.at.localeCompare(x.at));
 
+  // WHY they got restricted — group ever-restricted accounts by the cause classified from their
+  // captured LinkedIn security mail; accounts with no such email (phone/ID checkpoints) fall into
+  // an "unknown" bucket, which is itself a signal.
+  const reasonAgg = new Map<string, { restricted: number; open: number; recovered: number }>();
+  for (const { a, f } of accounts) {
+    if (!f.everRestricted) continue;
+    const cause = reasonByAccountId[a.id] || "Unknown · no LinkedIn email (phone/ID checkpoint)";
+    const row = reasonAgg.get(cause) || { restricted: 0, open: 0, recovered: 0 };
+    row.restricted += 1;
+    if (f.open) row.open += 1;
+    if (f.recovered) row.recovered += 1;
+    reasonAgg.set(cause, row);
+  }
+  const reasonBreakdown = Array.from(reasonAgg.entries()).map(([cause, r]) => ({ cause, ...r })).sort((x, y) => y.restricted - x.restricted);
+
+  // By specific proxy IP/host — surfaces shared or datacenter IPs under several accounts, a major
+  // restriction driver (one bad IP can take down everything on it). Shared hosts only (2+ accounts).
+  const proxyHost = cohort(accounts, (a) => a.proxyHost || null)
+    .filter((r) => r.total >= 2)
+    .sort((x, y) => y.restricted - x.restricted || y.restrictionRate - x.restrictionRate)
+    .slice(0, 15);
+
   return {
     generatedAt: new Date(now).toISOString(),
     totals: {
@@ -548,7 +588,9 @@ export function computeRestrictionAnalytics(
       connections: cohort(accounts, (a) => connBucket(a.connectionCount), CONN_ORDER),
       emailDomain,
       client,
+      proxyHost,
     },
+    reasonBreakdown,
     timing,
     stageAtRestriction,
     openRestrictions,

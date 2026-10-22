@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { computeRestrictionAnalytics } from "@/lib/restriction-analytics";
+import { computeRestrictionAnalytics, classifyRestrictionCause } from "@/lib/restriction-analytics";
 
 // Canonical renter display names for the by-client restriction breakdown, keyed by the
 // renter's email (stable across duplicate user rows). Returns null for renters to leave out
@@ -64,7 +64,21 @@ export async function GET() {
       }
     }
 
-    const analytics = computeRestrictionAnalytics(accounts, apps, rentalStartById, clientsByAccountId);
+    // Classify WHY each account was restricted from its captured LinkedIn security mail
+    // (appeal replies / ID-verification / restriction notices) — powers the reason breakdown.
+    const acctIds = accounts.map((a) => a.id);
+    const mail = acctIds.length
+      ? await prisma.accountMailEvent.findMany({
+          where: { linkedinAccountId: { in: acctIds }, type: { in: ["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction"] } },
+          select: { linkedinAccountId: true, subject: true, bodyText: true },
+        })
+      : [];
+    const textByAcct = new Map<string, string>();
+    for (const m of mail) textByAcct.set(m.linkedinAccountId, `${textByAcct.get(m.linkedinAccountId) || ""} ${m.subject || ""} ${m.bodyText || ""}`);
+    const reasonByAccountId: Record<string, string> = {};
+    for (const [aid, text] of textByAcct) reasonByAccountId[aid] = classifyRestrictionCause(text);
+
+    const analytics = computeRestrictionAnalytics(accounts, apps, rentalStartById, clientsByAccountId, reasonByAccountId);
     return NextResponse.json(analytics);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "error";

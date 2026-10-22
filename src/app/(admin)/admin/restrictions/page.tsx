@@ -27,7 +27,9 @@ type Analytics = {
   cohorts: {
     verified: CohortRow[]; lifecycle: CohortRow[]; proxy: CohortRow[]; proxyGeo: CohortRow[];
     age: CohortRow[]; connections: CohortRow[]; emailDomain: CohortRow[]; client: CohortRow[];
+    proxyHost: CohortRow[];
   };
+  reasonBreakdown: { cause: string; restricted: number; open: number; recovered: number }[];
   timing: CohortRow[];
   stageAtRestriction: StageEventRow[];
   openRestrictions: OpenRestrictionRow[];
@@ -278,6 +280,36 @@ export default function RestrictionsPage() {
         Rates are exact from when event logging started. A restrict→recover that happened before then (flag already cleared, no log entry) isn&apos;t counted, so older history is undercounted. Every restriction/recovery from the pipeline or inventory now writes to the shared log.
       </div>
 
+      {/* Why they got restricted — cause breakdown from captured LinkedIn mail */}
+      {data.reasonBreakdown.length > 0 && (() => {
+        const maxR = Math.max(...data.reasonBreakdown.map((r) => r.restricted), 1);
+        const TONE: Record<string, string> = {
+          "Automation / excessive activity": "var(--danger)",
+          "Identity / verification": "#2563eb",
+          "Policy violation (generic)": "var(--warn-num)",
+          "Duplicate account": "#7c3aed",
+        };
+        return (
+          <Card>
+            <h3 style={{ font: `700 15px ${F_GRO}`, color: "var(--text)", margin: "0 0 4px" }}>Why they got restricted</h3>
+            <p style={{ font: `500 12px ${F_SANS}`, color: "var(--muted)", margin: "0 0 14px" }}>Cause of each ever-restricted account, read from LinkedIn&apos;s own words in captured appeal / ID-verification mail. &ldquo;Unknown&rdquo; = no email on file (phone / Persona checkpoints don&apos;t email).</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              {data.reasonBreakdown.map((r) => (
+                <div key={r.cause} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, font: `600 12.5px ${F_SANS}`, color: "var(--text)" }}>
+                    <span>{r.cause}</span>
+                    <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}><b style={{ color: "var(--text)" }}>{r.restricted}</b> restricted · {r.open} still down · {r.recovered} recovered</span>
+                  </div>
+                  <div style={{ height: 8, borderRadius: 999, background: "var(--card-border)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${(r.restricted / maxR) * 100}%`, background: TONE[r.cause] || "var(--muted)", borderRadius: 999 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        );
+      })()}
+
       {/* Currently-restricted roster */}
       <OpenRestrictionsTable rows={data.openRestrictions} />
 
@@ -291,6 +323,7 @@ export default function RestrictionsPage() {
         <CohortTable title="Account age" rows={data.cohorts.age} />
         <CohortTable title="Connection count" rows={data.cohorts.connections} />
         <CohortTable title="By client (renter)" hint="Restriction rate of the accounts each renter holds; an account rented by several clients counts under each." rows={data.cohorts.client} denomLabel="rented" />
+        <CohortTable title="By proxy IP (shared hosts)" hint="Specific proxy hosts carrying 2+ accounts, worst first — surfaces shared or datacenter IPs where one bad IP can take down everything on it." rows={data.cohorts.proxyHost} />
         <CohortTable title="Login email domain" hint="Domains with 3+ accounts; the rest grouped." rows={data.cohorts.emailDomain} />
         <CohortTable title="Restriction timing vs onboarding" hint="Among restricted accounts: when the first restriction hit relative to onboarding." rows={data.timing} denomLabel="restricted" />
       </div>
