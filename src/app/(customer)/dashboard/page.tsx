@@ -1642,11 +1642,13 @@ function DashboardContent() {
                 // end (install + sign in with the exact email we share to). We keep auto-granting
                 // every ~30 min, so this clears itself once they've signed in — but until then we
                 // show them exactly what to do instead of a dead "awaiting access" label.
-                // Show the GoLogin install walkthrough only for genuinely-new renters (no active
-                // rental yet). Established renters get the self-serve "Open in GoLogin" link
-                // directly (ready), so they don't need the walkthrough. The public link is now
-                // available in pending too, so access no longer waits on the grant cron.
-                const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !renterHasGoLogin;
+                // The install walkthrough is a LAST RESORT, shown only when there's no public link
+                // to open yet (!ready). Whenever a public g.camp link exists (ready) we ALWAYS
+                // offer the self-serve "Open in GoLogin" button instead — for first-time renters
+                // too. The link is login-agnostic, so it sidesteps the fragile exact-email share
+                // that used to trap new renters in pending_access (their email share 400s, so the
+                // rental never flips to active, so they never got offered the link that just works).
+                const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !renterHasGoLogin && !ready;
                 const setupEmail = rental.gologinLoginEmail || "";
                 // Profile-change requests (v3): the pill shows on live rows only (not restricted
                 // / being-prepared / paused). Pending = planned changes still in the future.
@@ -1830,7 +1832,7 @@ function DashboardContent() {
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
                           {[
-                            "Open the link in a browser signed in to GoLogin with this same email",
+                            "Open this link while signed in to GoLogin — any GoLogin account works, the email doesn't matter.",
                             "Refresh GoLogin: Cmd + R on Mac, Ctrl + R on Windows",
                             "Find it under “Shared with me”. It can take a minute or two.",
                           ].map((step, si) => (
@@ -1840,6 +1842,7 @@ function DashboardContent() {
                             </div>
                           ))}
                         </div>
+                        <span style={{ fontWeight: 500, fontSize: 12, color: V.faint }}>Don&apos;t have GoLogin yet? <a href="https://gologin.com/download" target="_blank" rel="noopener noreferrer" style={{ fontWeight: 700, color: V.blue, textDecoration: "none" }}>Download it free ↗</a> — it&apos;s how you run this profile.</span>
                       </div>
                     )}
 
