@@ -36,7 +36,7 @@ export async function GET() {
       select: {
         id: true, linkedinName: true, linkedinHeadline: true, linkedinUrl: true,
         location: true, connectionCount: true, accountAgeMonths: true,
-        loginEmail: true, accountPassword: true, twoFactor: true,
+        loginEmail: true, accountPassword: true, twoFactor: true, twoFactorResetNeeded: true,
         gologinProfileId: true, gologinShareLink: true,
         status: true, restrictedAt: true, payoutHoldReason: true, monthlyPrice: true, ambassadorPayment: true,
         notes: true,
@@ -50,6 +50,7 @@ export async function GET() {
         accountFreshness: true, paidAt: true, verifiedAt: true,
         monthlyPayouts: true, paymentMethod: true, paypalEmail: true, wiseEmail: true,
         paymentDetails: true, payoutName: true, accountIssue: true, status: true,
+        qcChecks: true, onboardingFix: true, onboardingMethod: true,
       },
     });
 
@@ -112,6 +113,27 @@ export async function GET() {
       // No QC date → not due yet; the account is still in onboarding (handled below).
       const setupDue = setupFeeReadyDate(app?.verifiedAt || null);
 
+      // Security gate for the INITIAL payment only: the setup fee doesn't become payable
+      // until the account is actually secured and clean — mirrors the pipeline's
+      // "Mark onboarded (live)" unlock. All three signals come from already-stored fields:
+      //   2FA on file (and not pending a post-rental reset),
+      //   no open "Chase an issue" (login issue OR unresolved onboarding-fix chips),
+      //   the live-onboard security checklist ticked (same items that unlock the button).
+      const twoFaMissing = !a.twoFactor || a.twoFactorResetNeeded;
+      const fix = (app?.onboardingFix as { issues?: unknown[] } | null) || null;
+      const issueOpen = !!(app?.accountIssue && app.accountIssue.trim())
+        || (!!fix && Array.isArray(fix.issues) && fix.issues.length > 0);
+      // Same items that unlock "Mark onboarded (live)" in the pipeline (pipeline-panel secItems):
+      // sessionsOut + noRememberedPw always, plus gologinRemoved for a computer onboarding.
+      const qc = (app?.qcChecks as Record<string, boolean> | null) || null;
+      const needGologin = app?.onboardingMethod === "computer";
+      const checklistDone = !!qc && !!qc.sessionsOut && !!qc.noRememberedPw
+        && (!needGologin || !!qc.gologinRemoved);
+      const securityBlockReason = twoFaMissing ? "Secure 2FA first"
+        : issueOpen ? "Resolve open issue first"
+        : !checklistDone ? "Finish security checklist"
+        : null;
+
       // Categorise. Bucket meaning:
       //  setup   → one-time ₱1,000 initial payment still outstanding
       //  overdue → a monthly payout is due and unpaid (or on hold)
@@ -127,6 +149,10 @@ export async function GET() {
       // Passed QC but still inside the 1-week maturation hold → not payable yet, shown as
       // upcoming (not in the pay-now "Initial payment due" list).
       let maturing = false;
+      // Matured + setup not yet paid, but the account isn't cleared to pay yet (2FA / open
+      // issue / security checklist). Held out of the pay-now list in its own "Not cleared"
+      // group, distinct from time-based maturing.
+      let blocked = false;
       let dueISO: string | null = nextDue ? new Date(nextDue).toISOString() : null;
 
       if (a.restrictedAt) { bucket = "na"; reason = "Restricted"; }
@@ -155,6 +181,11 @@ export async function GET() {
           // as the pipeline) — keep it visible as upcoming, out of the pay-now due list.
           maturing = true; dueISO = setupDue.toISOString(); overdue = false;
           reason = "Maturing";
+        } else if (securityBlockReason) {
+          // Matured and unpaid, but not cleared to pay — keep it visible out of the pay-now
+          // list with the specific reason, until the security step is done in the pipeline.
+          blocked = true; dueISO = setupDue ? setupDue.toISOString() : null; overdue = false;
+          reason = securityBlockReason;
         } else {
           dueISO = setupDue ? setupDue.toISOString() : null;
           overdue = !!setupDue && manilaDay(setupDue.getTime()) < todayManila;
@@ -202,6 +233,7 @@ export async function GET() {
         holdReason: a.payoutHoldReason || null,
         awaitingReceipt,
         maturing,
+        blocked,
         overdue,
         daysLate,
         ownerName,

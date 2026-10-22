@@ -50,6 +50,7 @@ interface Row {
   holdReason: string | null;
   awaitingReceipt: boolean;
   maturing: boolean;
+  blocked: boolean;
   overdue: boolean;
   daysLate: number;
   ownerName: string | null;
@@ -229,11 +230,11 @@ function AccountRow({ r, onMarkPaid, onUpdatePayout, onHold }: { r: Row; onMarkP
   const dueLabel = r.overdue && r.nextDueISO ? `${fmtDate(r.nextDueISO)} · ${r.daysLate}d late` : fmtDate(r.nextDueISO);
   // A payout already logged this cycle but awaiting its receipt shouldn't offer "Mark paid"
   // again (that would double-log) — the next step is attaching the receipt in the record below.
-  const canMark = (r.bucket === "setup" || r.bucket === "overdue" || r.bucket === "due") && !r.awaitingReceipt && !r.maturing;
+  const canMark = (r.bucket === "setup" || r.bucket === "overdue" || r.bucket === "due") && !r.awaitingReceipt && !r.maturing && !r.blocked;
   // Something's wrong: a payment is being asked for on an account we can't log
   // into (no credentials) or can't run (no GoLogin profile/share). A still-maturing
   // setup isn't payable yet, so don't flag it for missing creds/GoLogin.
-  const payable = (r.bucket === "setup" || r.bucket === "overdue" || r.bucket === "due") && !r.maturing;
+  const payable = (r.bucket === "setup" || r.bucket === "overdue" || r.bucket === "due") && !r.maturing && !r.blocked;
   const missingCreds = payable && (!r.loginEmail || !r.accountPassword);
   const missingGologin = payable && !r.gologinProfileId && !r.gologinShareLink;
   const flagColor = missingCreds ? "var(--st-cancel-fg,#c0392b)" : missingGologin ? "var(--warn-badge-text,#b7791f)" : null;
@@ -542,7 +543,10 @@ export default function PayoutsIIPage() {
   // Still inside the 1-week maturation hold — passed QC but not payable yet. Kept out of the
   // pay-now groups and shown on its own, matching the pipeline's Level 4 "maturing" state.
   const setupMaturing = useMemo(() => setupAll.filter((r) => r.maturing), [setupAll]);
-  const setupReady = useMemo(() => setupAll.filter((r) => !r.maturing), [setupAll]);
+  // Matured but not cleared to pay (2FA missing / open issue / security checklist not done) —
+  // held out of the pay-now groups in its own section, with the specific reason per row.
+  const setupBlocked = useMemo(() => setupAll.filter((r) => !r.maturing && r.blocked), [setupAll]);
+  const setupReady = useMemo(() => setupAll.filter((r) => !r.maturing && !r.blocked), [setupAll]);
   const setupNoCreds = useMemo(() => setupReady.filter((r) => !hasCreds(r)), [setupReady]);
   const setupNoGologin = useMemo(() => setupReady.filter((r) => hasCreds(r) && !hasGologin(r)), [setupReady]);
   const setup = useMemo(() => setupReady.filter((r) => hasCreds(r) && hasGologin(r)), [setupReady]);
@@ -662,6 +666,9 @@ export default function PayoutsIIPage() {
           <Section title="Initial payment due" tone="var(--blue-chip-text,#2b5fd0)" note="signup bonus based on referral source and onboarding option · soonest due first" rows={setup} byDue setup onMarkPaid={onMarkPaid} onUpdatePayout={updatePayout} onHold={setAccountHold} />
           {setupMaturing.length > 0 && (
             <Section title="Maturing — not payable yet" tone="var(--warn-badge-text,#b7791f)" note="passed QC, still in the 1-week hold (Level 4 → 5) · becomes due on the date shown" rows={setupMaturing} byDue setup onMarkPaid={onMarkPaid} onUpdatePayout={updatePayout} onHold={setAccountHold} />
+          )}
+          {setupBlocked.length > 0 && (
+            <Section title="Not cleared — secure before paying" tone="var(--st-cancel-fg,#c0392b)" note="matured, but held until the account is secured in the pipeline · needs 2FA on file, no open issue, and the security checklist done" rows={setupBlocked} byDue setup onMarkPaid={onMarkPaid} onUpdatePayout={updatePayout} onHold={setAccountHold} />
           )}
           <Section title="Payment overdue" tone="var(--st-cancel-fg,#c0392b)" note="monthly due / on hold · most overdue first" rows={overdue} byDue onMarkPaid={onMarkPaid} onUpdatePayout={updatePayout} onHold={setAccountHold} />
           <Section title="Payment due" tone="var(--warn-badge-text,#b7791f)" note="monthly coming up · soonest due first" rows={due} byDue onMarkPaid={onMarkPaid} onUpdatePayout={updatePayout} onHold={setAccountHold} />
