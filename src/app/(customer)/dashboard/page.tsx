@@ -1,4 +1,5 @@
 "use client";
+import { jakartaSans as jakarta } from "@/lib/jakarta-font";
 
 import { useEffect, useState, Suspense, Fragment } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -22,10 +23,10 @@ import {
   FIELD_LABEL, FIELD_MAX, MONTHS, experienceRange, isChangeValid, firstPlannedFrom, CHANGE_SPACING_DAYS,
   type ProfileChangeFieldKey, type ExperiencePayload,
 } from "@/lib/profile-changes";
-import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 
 // Renter Dashboard v2 typography (scoped to this page, no layout change).
-const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], display: "swap" });
+
 const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["500", "700"], display: "swap" });
 
 // v2 palette
@@ -1111,7 +1112,6 @@ function DashboardContent() {
   const hasRealRentals = currentRentals.length > 0 || pastRentals.length > 0;
   const showRenterSide = !isAmbassador || hasRealRentals; // pure ambassadors hide renter-only bits
 
-
   if (loading) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -1954,7 +1954,6 @@ function DashboardContent() {
       )}
       </div>
       {/* ===== end reordered account sections ===== */}
-
 
 
       {/* Remove Account Modal */}

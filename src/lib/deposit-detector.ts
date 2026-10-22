@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ethers } from "ethers";
 import { getBaseProvider, getUsdcContract, getUsdtContract, getChildWallet, getTreasuryAddress, formatUsdc, parseUsdc } from "@/lib/wallet";
 import { sendTopUpNotification, sendTopUpConfirmation } from "@/services/email";
+import { sponsorshipEnabled, prepareSponsoredUsdcSweep } from "@/lib/usdc-gas-sponsor";
 
 // Persist broadcast hashes so a timeout can be reconciled before any later credit/sweep.
 const pendingPrefix = "Pending treasury sweep:";
@@ -103,8 +104,10 @@ export async function detectDeposits(assertActive: () => Promise<void> = async (
   return results;
 }
 
-export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}) {
+export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}, options: { allowSponsored?: boolean } = {}) {
   const blocked = await reconcilePendingSweeps(assertActive);
+  // An uncertain broadcast must be reconciled before reusing the central signer.
+  let relayUncertain = blocked.size > 0;
   const deposits = await prisma.depositAddress.findMany({ where: depositId ? { id: depositId } : undefined });
   const provider = getBaseProvider();
   const treasury = getTreasuryAddress();
@@ -128,6 +131,10 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
         const balance: bigint = await token.contract(provider).balanceOf(deposit.address);
 
         if (balance > BigInt(0)) {
+          const sponsored = token.symbol === "USDC" && sponsorshipEnabled();
+          // Sponsored transfers are explicitly initiated by the admin, not the cron.
+          if (sponsored && !options.allowSponsored) continue;
+          if (sponsored && relayUncertain) throw new Error("Reconcile pending sweeps before using the central gas wallet.");
           // Never move USDC that the detector has not yet credited.
           if (token.resetsLastSeen && balance > parseUsdc(String(deposit.lastSeenBalance))) {
             throw new Error("USDC is awaiting deposit credit; retry after the scheduled check");
@@ -142,21 +149,31 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
             throw new Error("Cannot sweep a deposit to itself");
           }
 
-          // Only the source wallet signs. The receiving treasury is address-only.
-          // Deposit wallets must already hold ETH on Base for network fees.
-          const childEthBalance = await provider.getBalance(deposit.address);
-          if (childEthBalance === BigInt(0)) {
-            throw new Error("Deposit wallet needs ETH on Base for sweep fees");
+          let tx: ethers.TransactionResponse;
+          let journal: { id: string };
+          if (sponsored) {
+            const prepared = await prepareSponsoredUsdcSweep({ provider, owner: childWallet,
+              source: deposit.address, destination: treasury, amount: balance, assertActive });
+            await assertActive();
+            // Write BEFORE broadcast: a timeout/crash cannot cause an untracked retry.
+            journal = await prisma.transaction.create({ data: {
+              userId: deposit.userId, type: "sweep", amount: formatUsdc(balance), txHash: prepared.hash,
+              description: `${pendingPrefix}USDC:${deposit.id}:relayed`,
+            } });
+            relayUncertain = true;
+            await assertActive();
+            tx = await provider.broadcastTransaction(prepared.rawTransaction);
+            if (tx.hash !== prepared.hash) throw new Error("Unexpected relay transaction hash.");
+          } else {
+            // USDT and legacy USDC still pay fees from the deposit wallet.
+            if (await provider.getBalance(deposit.address) === BigInt(0)) throw new Error("Deposit wallet needs ETH on Base for sweep fees");
+            await assertActive();
+            tx = await token.contract(childWallet).transfer(treasury, balance);
+            journal = await prisma.transaction.create({ data: {
+              userId: deposit.userId, type: "sweep", amount: formatUsdc(balance), txHash: tx.hash,
+              description: `${pendingPrefix}${token.symbol}:${deposit.id}`,
+            } });
           }
-
-          const tokenWithSigner = token.contract(childWallet);
-
-          await assertActive();
-          const tx = await tokenWithSigner.transfer(treasury, balance);
-          const journal = await prisma.transaction.create({ data: {
-            userId: deposit.userId, type: "sweep", amount: formatUsdc(balance), txHash: tx.hash,
-            description: `${pendingPrefix}${token.symbol}:${deposit.id}`,
-          } });
           const receipt = await tx.wait(1, 45_000);
           if (!receipt || receipt.status !== 1) throw new Error("Token sweep failed");
 
@@ -176,6 +193,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
               });
             }
           });
+          if (sponsored) relayUncertain = false;
 
           results.push({
             address: deposit.address,
@@ -186,7 +204,8 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
         }
       } catch (error) {
         onFailure?.(token.symbol);
-        console.error(`Error sweeping ${token.symbol} at ${deposit.address}:`, error);
+        // RPC error objects can contain signed authorizations or raw transactions.
+        console.error(`Error sweeping ${token.symbol} at ${deposit.address}`, error instanceof Error && "code" in error ? "RPC operation failed; check the pending journal" : "Sweep checks or confirmation failed");
       }
     }
   }
