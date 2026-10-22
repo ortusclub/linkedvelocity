@@ -206,5 +206,21 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
       locationLabel: location ?? null,
     },
   });
+
+  // If this landed on an APPEAL mailbox (a LinkedIn reply to one of our contact/appeal-form
+  // submissions on an appeal domain, e.g. myvahub.fyi), ping the team — these are time-sensitive and
+  // easy to miss. Best-effort + idempotent; never blocks or fails the capture.
+  try {
+    const appeal = await prisma.appealMailbox.findFirst({ where: { address: { equals: toAddr, mode: "insensitive" } }, select: { account: { select: { linkedinName: true } } } });
+    if (appeal) {
+      await onboardingMailRequest("/emails", {
+        from: process.env.RESEND_FROM_EMAIL || "LinkedVelocity <info@linkedvelocity.com>",
+        to: [process.env.ADMIN_NOTIFICATION_EMAIL || "info@linkedvelocity.com"],
+        subject: `LinkedIn replied on appeal · ${appeal.account.linkedinName}`,
+        text: `LinkedIn replied to the appeal address ${toAddr} (${appeal.account.linkedinName}).\n\nSubject: ${(msg.subject || "").slice(0, 200)}\n\n${bodyText.slice(0, 1500)}\n\nOpen the case: https://linkedvelocity.com/admin/restrictions-v2`,
+      }, `appeal-reply-notify-${emailId}`);
+    }
+  } catch { /* notification is best-effort — never block capture */ }
+
   return { stored: true };
 }

@@ -22,8 +22,20 @@ const LAST = ["delacruz", "santos", "reyes", "ramos", "mercado", "aquino", "nava
   "aguilar", "velasco", "rosales", "tolentino", "cabrera", "gallardo", "escobar", "lucero"];
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
-function mintAddress(): string {
-  return `${pick(FIRST)}.${pick(LAST)}${10 + Math.floor(Math.random() * 90)}@${APPEAL_DOMAIN}`;
+// firstname.lastname from the account's own LinkedIn profile name, so the appeal address matches the
+// identity LinkedIn sees (e.g. "Pamela Cambrera" -> pamela.cambrera@…). Falls back to a plausible
+// random name only when the account has no usable name.
+function slugName(name: string | null | undefined): string | null {
+  const parts = (name || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/\s+/).map((s) => s.replace(/[^a-z]/g, "")).filter(Boolean);
+  if (!parts.length) return null;
+  const base = (parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : parts[0]).slice(0, 40);
+  return base || null;
+}
+function mintAddress(name: string | null | undefined, attempt: number): string {
+  const base = slugName(name) || `${pick(FIRST)}.${pick(LAST)}`;
+  // First try the clean name; only add a small natural-looking number if that address is taken.
+  const suffix = attempt === 0 ? "" : String(10 + Math.floor(Math.random() * 90));
+  return `${base}${suffix}@${APPEAL_DOMAIN}`;
 }
 
 // GET — list this account's appeal mailboxes, newest first (for the case panel).
@@ -48,12 +60,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     const admin = await requireAdmin();
     const { id } = await params;
-    const acct = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true } });
+    const acct = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true, linkedinName: true } });
     if (!acct) return NextResponse.json({ error: "Account not found" }, { status: 404 });
 
     // Retry on the rare address collision (unique constraint on address).
     for (let attempt = 0; attempt < 6; attempt++) {
-      const address = mintAddress();
+      const address = mintAddress(acct.linkedinName, attempt);
       try {
         const row = await prisma.appealMailbox.create({
           data: { address, linkedinAccountId: id, createdBy: admin.email ?? admin.fullName ?? null },
