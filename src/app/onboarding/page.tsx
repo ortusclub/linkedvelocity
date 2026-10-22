@@ -1,7 +1,7 @@
 "use client";
 
 import { MeetingBooker } from "@/components/meeting-booker";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { OnboardingPrice } from "@/components/onboarding-price";
 
 // Public DIY landing page — post it anywhere, no referrer needed. Presents the three
@@ -30,6 +30,13 @@ export default function DIYPage() {
   const [bookingToken, setBookingToken] = useState("");
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+  // Referral slug from /become-ambassador?ref=slug (or /r/slug) so a referrer who sent this
+  // owner to the DIY page still gets credited instead of the signup defaulting to "diy".
+  const [ref, setRef] = useState("");
+
+  useEffect(() => {
+    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || ""; if (r) setRef(r); } catch {}
+  }, []);
 
   const update = (k: keyof typeof form, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -49,7 +56,7 @@ export default function DIYPage() {
           email: form.email.trim(),
           contactNumber: `${form.contactMethod}:${form.contactHandle.trim()}`,
           linkedinUrl: form.linkedinUrl.trim() || undefined,
-          referredBy: "diy",
+          referredBy: ref || "diy",
           referralSource: "DIY page",
           diyTier: tier,
         }),

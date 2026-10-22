@@ -30,11 +30,15 @@ export default function SelfSetupStart() {
   const [error, setError] = useState("");
   const [lead, setLead] = useState(false);
   const [reviewReason, setReviewReason] = useState("");
+  // Referral slug carried over from /become-ambassador?ref=slug (or /r/slug), so the referrer
+  // who sent this owner here still gets credited for the self-serve signup.
+  const [ref, setRef] = useState("");
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
     try { const t = new URLSearchParams(window.location.search).get("tier"); if (t === "partial" || t === "full") setTier(t); } catch {}
+    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || ""; if (r) setRef(r); } catch {}
     fetch("/api/self-onboarding/config").then((r) => r.json()).then((d: Cfg) => {
       // Bank transfer needs a multi-field sub-form; keep DIY to single-field payout methods.
       const methods = (d.payoutMethods || []).filter((m) => m !== "Bank transfer");
@@ -83,7 +87,7 @@ export default function SelfSetupStart() {
           fullName: form.fullName, email: form.email, linkedinUrl: form.linkedinUrl, country: form.country,
           contactNumber: `${form.contactMethod}:${form.contactHandle.trim()}`, accountFreshness: form.accountFreshness,
           paymentMethod: form.paymentMethod, paymentDetails: form.paymentDetails, payoutName: form.payoutName,
-          linkedinVerified: form.linkedinVerified, consent: true, permit, tier,
+          linkedinVerified: form.linkedinVerified, consent: true, permit, tier, ref: ref || undefined,
         }),
       });
       const d = await res.json();
