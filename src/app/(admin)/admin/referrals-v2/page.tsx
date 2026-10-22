@@ -13,10 +13,6 @@ import { referralCurrency, CURRENCY_CONFIG, formatMoney, type Currency } from "@
 
 const F = "system-ui,-apple-system,sans-serif";
 
-// Referrers whose restriction rate should NOT be flagged as quality-risk (known family buckets
-// where relatives share a surname, not fraud). Edit this list as needed. Slugs, lowercased.
-const FAMILY_EXCLUDE = new Set<string>(["omblero", "virrey"]);
-
 type Referrer = { id: string; slug: string; name: string; type: string; email: string | null; paymentMethod: string | null; paymentDetails: string | null; paymentName: string | null; createdAt: string };
 type App = {
   id: string; fullName: string; referredBy: string | null; status: string; createdAt: string;
@@ -75,7 +71,7 @@ function spark(w: number[], width: number, height: number) {
 type Row = {
   id: string; slug: string; name: string; team: string; cur: Currency; sym: string;
   sign: number; onb: number; res: number; ver: number; earned: number; ready: number; held: number; paid: number; owed: number;
-  w: number[]; lastDays: number; trend: ReturnType<typeof trendOf>; apps: App[]; fam: boolean;
+  w: number[]; lastDays: number; trend: ReturnType<typeof trendOf>; apps: App[];
 };
 
 export default function ReferralsV2Page() {
@@ -149,7 +145,7 @@ export default function ReferralsV2Page() {
       out.push({
         id: r.id, slug: r.slug, name: r.name, team: teamOf(r.type), cur, sym: cfg.symbol,
         sign: group.length, onb, res, ver, earned, ready, held, paid, owed,
-        w, lastDays, trend: trendOf(w, lastDays), apps: group, fam: FAMILY_EXCLUDE.has(norm(r.slug)),
+        w, lastDays, trend: trendOf(w, lastDays), apps: group,
       });
     }
     return out;
@@ -159,12 +155,12 @@ export default function ReferralsV2Page() {
   // Restrictions are systemic here (most referrers sit high), so a fixed % flags everyone.
   // Quality-risk = notably WORSE than the cohort: well above the average restriction rate,
   // with a floor so a low-restriction cohort still needs a real problem to flag.
-  const qualifying = rows.filter(r => !r.fam && r.onb >= 3);
+  const qualifying = rows.filter(r => r.onb >= 3);
   const baseOnb = qualifying.reduce((a, r) => a + r.onb, 0);
   const baseRes = qualifying.reduce((a, r) => a + r.res, 0);
   const baselineRate = baseOnb ? baseRes / baseOnb : 0;
   const riskCut = Math.max(0.5, baselineRate * 1.4); // 1.4x the average, never below 50%
-  const isRisk = (r: Row) => !r.fam && r.onb >= 3 && r.res / r.onb >= riskCut;
+  const isRisk = (r: Row) => r.onb >= 3 && r.res / r.onb >= riskCut;
   const top5 = useMemo(() => [...rows].sort((a, b) => b.onb - a.onb).slice(0, 5).map(r => r.id), [rows]);
 
   const FILTERS: Record<string, (r: Row) => boolean> = {
@@ -202,7 +198,7 @@ export default function ReferralsV2Page() {
     ["all", "All", "#64748b", "Everyone"],
     ["top", "Top 5", "#16a34a", "Most onboarded"],
     ["owed", "Owed money", "#d97706", "Ready or in hold"],
-    ["risk", "Quality risk", "#dc2626", `Restriction rate over ${Math.round(riskCut * 100)}% (cohort avg ~${Math.round(baselineRate * 100)}%) · min 3 onboarded · family excluded · a signal, not proof`],
+    ["risk", "Quality risk", "#dc2626", `Restriction rate over ${Math.round(riskCut * 100)}% (cohort avg ~${Math.round(baselineRate * 100)}%) · min 3 onboarded · a signal, not proof`],
     ["slow", "Slowing down", "#f59e0b", "Was active, signups dropped to half or less of the prior 2 weeks"],
     ["ver", "Verifying", "#60a5fa", "Has onboarded signups awaiting QC"],
   ];
@@ -272,7 +268,6 @@ export default function ReferralsV2Page() {
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <span style={{ font: `700 13.5px ${F}` }}>{r.name}</span>
                     {r.team !== "Standard" && <span style={{ font: `700 10px ${F}`, padding: "1px 7px", borderRadius: 999, background: "var(--chip,#eef0f4)", color: "var(--muted,#5b6779)" }}>{r.team}</span>}
-                    {r.fam && <span style={{ font: `700 10px ${F}`, padding: "1px 7px", borderRadius: 999, background: "var(--chip,#eef0f4)", color: "var(--muted,#5b6779)" }}>family</span>}
                     {isRisk(r) && <span style={{ font: `700 10px ${F}`, padding: "1px 7px", borderRadius: 999, background: "#fde8e8", color: "#b91c1c" }}>quality risk</span>}
                   </div>
                   <span style={{ font: `500 11.5px ${F}`, color: "var(--muted,#8a93a3)" }}>ref {r.slug}</span>
