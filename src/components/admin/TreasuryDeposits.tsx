@@ -129,7 +129,7 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
     <dialog ref={dialog} aria-labelledby="sweep-title" onCancel={e => { if (busy) e.preventDefault(); else { setSelected(null); setPlan(null); } }} className="m-auto w-[min(94vw,560px)] rounded-2xl p-6 backdrop:bg-black/60" style={{ ...card, color: "var(--text)" }}>
       <h2 id="sweep-title" className="text-xl font-semibold">{plan ? "Review all funded wallets" : "Sweep to main wallet"}</h2>
       {plan ? <>
-        <p className="mt-3">{plan.rows.length} eligible wallets across all pages. Each wallet is swept separately and pays its own transaction fee.</p>
+        <p className="mt-3">{plan.rows.length} eligible wallets across all pages. Each wallet is swept separately, with a separate transaction fee.</p>
         <p className="mt-3 break-all font-mono text-xs">To: {plan.treasury}</p>
         <div className="mt-3 max-h-64 overflow-y-auto">{plan.rows.map(row => <p key={row.id} className="mb-3 break-all text-xs">{row.address}<br />{row.usdc} USDC + {row.usdt} USDT</p>)}
           {plan.skipped.map(row => <p key={row.address} className="mb-3 break-all text-xs">Skipped {row.address}: {row.reason}</p>)}</div>

@@ -30,14 +30,25 @@ function config() {
 // No keys or authorization signatures are returned to the browser.
 export async function gasSponsorStatus(provider: ethers.Provider) {
   if (!sponsorshipEnabled()) return { enabled: false, address: null, eth: null, error: null };
-  let address: string | null = null;
+  let settings: ReturnType<typeof config>;
+  try { settings = config(); }
+  catch {
+    return { enabled: true, address: null, eth: null, error: "Central gas wallet configuration is incomplete or its fee limit is invalid. Check the production address, private key and fee limit." };
+  }
+  const address = settings.address;
+  let signer: ethers.Wallet;
+  try { signer = new ethers.Wallet(settings.key); }
+  catch {
+    return { enabled: true, address, eth: null, error: "GAS_SPONSOR_PRIVATE_KEY is not a valid Ethereum private key. Save the private key (not the wallet address or recovery phrase) in the production secret, then redeploy. Never paste it into chat." };
+  }
+  if (signer.address !== address) {
+    return { enabled: true, address, eth: null, error: "The saved gas private key belongs to a different wallet. Replace GAS_SPONSOR_PRIVATE_KEY with the key for the central gas address shown above, then redeploy." };
+  }
   try {
-    const settings = config(); address = settings.address;
-    if (new ethers.Wallet(settings.key).address !== address) throw new Error("Central gas wallet key does not match its address.");
     const eth = await provider.getBalance(address, "pending");
     return { enabled: true, address, eth: ethers.formatEther(eth), error: eth === BigInt(0) ? "Fund this central wallet with ETH on Base before sweeping USDC." : null };
   } catch {
-    return { enabled: true, address, eth: null, error: "Central gas wallet configuration or balance is unavailable. Check settings and refresh." };
+    return { enabled: true, address, eth: null, error: "The gas private key matches, but its Base ETH balance could not be loaded. Refresh to retry the RPC connection." };
   }
 }
 
