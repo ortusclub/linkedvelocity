@@ -88,3 +88,11 @@ test('read-only status exposes only public gas wallet details, including missing
  assert.equal(JSON.stringify(status).includes(sponsor.privateKey),false);assert.equal(f.signed(),0);
  process.env.GAS_SPONSOR_PRIVATE_KEY='invalid';assert.match((await gasSponsorStatus(f.provider)).error,/configuration/);
 });
+test('pasted surrounding whitespace and an unprefixed MetaMask key are accepted',async()=>{
+ const f=fixture();
+ process.env.GAS_SPONSOR_PRIVATE_KEY=' '+sponsor.privateKey.slice(2)+'\n';
+ process.env.GAS_SPONSOR_ADDRESS=' '+sponsor.address+'\n';
+ assert.equal((await gasSponsorStatus(f.provider)).error,null);
+ const prepared=await prepareSponsoredUsdcSweep(f.input);
+ assert.equal(ethers.Transaction.from(prepared.rawTransaction).from,sponsor.address);
+});

@@ -17,8 +17,8 @@ const abi = [
 export function sponsorshipEnabled() { return process.env.USDC_GAS_SPONSOR_ENABLED === "true"; }
 
 function config() {
-  const address = process.env.GAS_SPONSOR_ADDRESS;
-  const key = process.env.GAS_SPONSOR_PRIVATE_KEY;
+  const address = process.env.GAS_SPONSOR_ADDRESS?.trim();
+  const key = process.env.GAS_SPONSOR_PRIVATE_KEY?.trim();
   if (!address || !ethers.isAddress(address) || address === ethers.ZeroAddress || !key) {
     throw new Error("Configure the central gas wallet address and signing key.");
   }
