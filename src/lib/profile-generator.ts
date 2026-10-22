@@ -13,7 +13,7 @@ export interface ProfileBuild {
   appliedAt?: string | null; // set when "Mark saved" writes the short headline + location to inventory
   lane: ProfileLane;
   headline: string;
-  location: string; // "City, State, United States"
+  location: string; // "City, USA"
   zip: string;
   industry: string;
   about: string;
@@ -126,13 +126,13 @@ export function generateProfile(name: string, laneChoice?: ProfileLane | "auto")
   const totalYrs = Math.max(2, Math.round((r1Dur + r2Dur) / 12));
   const [deg, field] = pick(PH_DEGREES);
   const eduEnd = r1Start.getFullYear() - rint(0, 1);
-  const [city, state, zip] = pick(US_LOCATIONS);
+  const [city, , zip] = pick(US_LOCATIONS);
   return {
     generatedAt: new Date().toISOString(),
     appliedAt: null,
     lane,
     headline: pick(HEADLINES[lane]),
-    location: `${city}, ${state}, United States`,
+    location: `${city}, USA`,
     zip,
     industry: INDUSTRIES[lane],
     about: ABOUTS[lane].replace("{yrs}", String(totalYrs)),

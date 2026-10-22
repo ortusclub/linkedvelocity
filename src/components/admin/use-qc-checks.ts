@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { latestSaveQueue } from "@/lib/latest-save-queue";
-type Checks = Partial<Record<"photo" | "headline" | "about" | "connections" | "experiences" | "education" | "sessionsOut" | "noRememberedPw" | "gologinRemoved", boolean>>;
+type Checks = Partial<Record<"photo" | "headline" | "about" | "connections" | "experiences" | "education" | "sessionsOut" | "noRememberedPw" | "gologinRemoved" | "phoneRemoved", boolean>>;
 export function useQcChecks(id: string, server: Checks | null) {
   const [checks, setChecks] = useState<Checks>(server || {});
   const current = useRef(checks);

@@ -192,9 +192,10 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
   // Pre-onboarding security handover check (Step 5), stored in the same qcChecks object. The
   // GoLogin item only applies to full-service (onboardingMethod "computer"), where the referrer
   // was given GoLogin access to do the sign-in; other types never had it.
-  const secItems: ["sessionsOut" | "noRememberedPw" | "gologinRemoved", string][] = [
+  const secItems: ["sessionsOut" | "noRememberedPw" | "gologinRemoved" | "phoneRemoved", string][] = [
     ["sessionsOut", "Signed out of all other sessions on LinkedIn"],
     ["noRememberedPw", "No other device remembers the password"],
+    ["phoneRemoved", "Phone number removed from the account"],
     ...(r.onboardingMethod === "computer" ? [["gologinRemoved", "Referrer's GoLogin access removed"] as ["gologinRemoved", string]] : []),
   ];
   const allSec = secItems.every(([k]) => qc[k]);
