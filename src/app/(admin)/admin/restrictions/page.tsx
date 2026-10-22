@@ -17,8 +17,17 @@ type CohortRow = {
 type StageEventRow = { stage: string; events: number; share: number; recovered: number; open: number; recoveryRate: number | null };
 type OpenRestrictionRow = { account: string; url: string | null; since: string | null; days: number | null; verified: boolean; status: string; stage: string; clients: string[]; note?: string };
 type FeedItem = { at: string; event: "restricted" | "recovered"; account: string; note?: string; creditedDays?: number };
+type TrendMonth = { month: string; label: string; active: number; restrictions: number; rate: number; recovDenom: number; recoveredWithin30: number; recoveryRate: number | null; partial: boolean };
+type CohortWindowRow = { bucket: string; isHalf: boolean; total: number; cells: { days: number; eligible: number; restricted: number; rate: number | null }[] };
+type Trend = {
+  monthly: TrendMonth[];
+  firstMonth: { bucket: string; total: number; restricted: number; rate: number }[];
+  cohortWindows: CohortWindowRow[];
+  retrieval: { window: number; eligible: number; recovered: number; rate: number | null }[];
+};
 type Analytics = {
   generatedAt: string;
+  trend: Trend;
   totals: {
     accounts: number; everRestricted: number; everRestrictedRate: number; open: number;
     recovered: number; recoveryRate: number | null; repeatRestricted: number; loggedEvents: number;
@@ -228,6 +237,86 @@ function OpenRestrictionsTable({ rows }: { rows: OpenRestrictionRow[] }) {
   );
 }
 
+// Restrictions each month as a share of the accounts live by then, so a growing book doesn't
+// inflate the curve. This is the "is it getting worse?" headline. Bar height scales to the rate.
+function TrendCard({ months }: { months: TrendMonth[] }) {
+  const maxRate = Math.max(0.0001, ...months.map((m) => m.rate));
+  return (
+    <Card style={{ padding: "16px 18px" }}>
+      <h3 style={{ font: `700 14px ${F_GRO}`, color: "var(--text)", margin: 0 }}>Restricted each month</h3>
+      <p style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted)", margin: "4px 0 14px" }}>
+        Restrictions that month ÷ accounts live by then. The rate controls for a growing book. Last bar is the current, partial month.
+      </p>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 170, borderBottom: "1px solid var(--divider)", paddingBottom: 2 }}>
+        {months.map((m) => (
+          <div key={m.month} style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+            <span style={{ font: `700 11.5px ${F_GRO}`, color: "var(--danger)", whiteSpace: "nowrap" }}>{pct(m.rate, 0)}</span>
+            <div title={`${m.restrictions} restrictions of ${m.active} accounts`} style={{ width: "100%", maxWidth: 40, height: `${Math.max(2, (m.rate / maxRate) * 100)}%`, background: m.partial ? "repeating-linear-gradient(135deg,var(--danger) 0 5px,rgba(220,38,38,0.45) 5px 10px)" : "var(--danger)", borderRadius: "5px 5px 0 0" }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+        {months.map((m) => (
+          <div key={m.month} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
+            <span style={{ font: `700 11.5px ${F_SANS}`, color: "var(--text)" }}>{m.label}{m.partial && <span style={{ color: "var(--muted)" }}>*</span>}</span>
+            <span style={{ font: `500 10.5px ${F_SANS}`, color: "var(--muted)", whiteSpace: "nowrap" }}>{m.restrictions}</span>
+          </div>
+        ))}
+      </div>
+      <p style={{ font: `500 11px ${F_SANS}`, color: "var(--muted)", margin: "10px 0 0" }}>* current month is partial. A one-off infra event (e.g. a dead-proxy wave) can spike a single month — read spikes alongside the proxy-host cohort below.</p>
+    </Card>
+  );
+}
+
+// Restricted within N days of joining inventory, by creation cohort. Reading DOWN a column
+// compares cohorts at the same age — the fair test of whether provisioning is getting worse.
+// Cells are censored: "too new" when no account in that cohort has reached the window yet.
+function CohortWindowTable({ rows }: { rows: CohortWindowRow[] }) {
+  const windows = rows[0]?.cells.map((c) => c.days) ?? [30, 60, 90, 180];
+  const rateTone = (r: number | null) => (r == null ? "var(--muted)" : r > 0.4 ? "var(--danger)" : r > 0.2 ? "var(--warn-num)" : "var(--text)");
+  return (
+    <Card style={{ padding: "16px 18px" }}>
+      <h3 style={{ font: `700 14px ${F_GRO}`, color: "var(--text)", margin: 0 }}>Restricted within N days of joining</h3>
+      <p style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted)", margin: "4px 0 10px" }}>
+        Each row is the accounts added that period. Read down a column to compare cohorts at the same age. The 30-day column is the first-month restriction rate.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", font: `500 12.5px ${F_SANS}` }}>
+          <thead>
+            <tr style={{ color: "var(--muted)", textAlign: "left", font: `600 11px ${F_SANS}` }}>
+              <th style={{ padding: "6px 8px 6px 0", fontWeight: 600 }}>Cohort</th>
+              <th style={{ padding: "6px 8px", textAlign: "right" }}>accounts</th>
+              {windows.map((w) => <th key={w} style={{ padding: "6px 8px", textAlign: "right" }}>{w} days</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={2 + windows.length} style={{ padding: "12px 0", color: "var(--muted)" }}>No data.</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.bucket} style={{ borderTop: "1px solid var(--divider)", background: r.isHalf ? "var(--track)" : undefined }}>
+                <td style={{ padding: "9px 8px 9px 0", color: "var(--text)", fontWeight: r.isHalf ? 700 : 600 }}>{r.bucket}</td>
+                <td style={{ padding: "9px 8px", textAlign: "right", color: "var(--muted)" }}>{r.total}</td>
+                {r.cells.map((c) => (
+                  <td key={c.days} style={{ padding: "9px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {c.rate == null ? (
+                      <span style={{ color: "var(--muted)", font: `500 11px ${F_SANS}` }}>too new</span>
+                    ) : (
+                      <>
+                        <span style={{ font: `700 12.5px ${F_GRO}`, color: rateTone(c.rate) }}>{pct(c.rate, 0)}</span>
+                        <span style={{ font: `500 10.5px ${F_SANS}`, color: "var(--muted)" }}>{c.eligible < r.total ? ` ·${c.eligible}` : ""}</span>
+                      </>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ font: `500 11px ${F_SANS}`, color: "var(--muted)", margin: "10px 0 0" }}>&ldquo;·N&rdquo; = only N of the cohort are old enough for that window (the rest are censored, not counted as safe).</p>
+    </Card>
+  );
+}
+
 export default function RestrictionsPage() {
   const [data, setData] = useState<Analytics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -309,6 +398,26 @@ export default function RestrictionsPage() {
           </Card>
         );
       })()}
+
+      {/* Trend headline: first-month + retrieval tiles */}
+      {(() => {
+        const fm = data.trend.firstMonth.find((b) => b.bucket === "All accounts");
+        const r30 = data.trend.retrieval.find((r) => r.window === 30);
+        const r180 = data.trend.retrieval.find((r) => r.window === 180);
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(178px,1fr))", gap: 12 }}>
+            <StatTile label="Restricted in first month" value={fm ? pct(fm.rate, 0) : "—"} sub={fm ? `${fm.restricted} of ${fm.total} aged 30d+` : "building"} tone="danger" />
+            <StatTile label="Retrieved ≤ 30 days" value={r30 ? pct(r30.rate, 0) : "—"} sub={r30 ? `${r30.recovered} of ${r30.eligible} episodes` : "building"} tone="green" />
+            <StatTile label="Retrieved ≤ 6 months" value={r180 && r180.eligible ? pct(r180.rate, 0) : "—"} sub={r180 && r180.eligible ? `${r180.recovered} of ${r180.eligible} episodes` : "no episode is 6mo old yet"} tone={r180 && r180.eligible ? "green" : undefined} />
+          </div>
+        );
+      })()}
+
+      {/* Trend over time + cohort windows */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(380px,1fr))", gap: 14, alignItems: "start" }}>
+        <TrendCard months={data.trend.monthly} />
+        <CohortWindowTable rows={data.trend.cohortWindows} />
+      </div>
 
       {/* Currently-restricted roster */}
       <OpenRestrictionsTable rows={data.openRestrictions} />

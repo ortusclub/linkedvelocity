@@ -35,7 +35,7 @@ export async function GET() {
       prisma.linkedInAccount.findMany({
         where: { status: { not: "removed" } },
         select: {
-          id: true, linkedinName: true, linkedinUrl: true, linkedinVerified: true,
+          id: true, linkedinName: true, linkedinUrl: true, linkedinVerified: true, createdAt: true,
           restrictedAt: true, restrictionLog: true, connectionCount: true,
           accountAgeMonths: true, loginEmail: true, workEmail: true,
           proxyHost: true, proxyLocation: true, status: true, notes: true,
