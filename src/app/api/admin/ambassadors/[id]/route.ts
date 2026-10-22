@@ -71,6 +71,7 @@ const updateSchema = z.object({
     sessionsOut: z.boolean().optional(),
     noRememberedPw: z.boolean().optional(),
     gologinRemoved: z.boolean().optional(),
+    phoneRemoved: z.boolean().optional(),
   }).nullable().optional(),
   // Recurring ₱500/month payout: append a receipt, or remove one by index.
   // A receipt can carry proof-of-payment and its notified / acknowledged audit trail.
