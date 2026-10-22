@@ -230,6 +230,13 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
               <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".05em", textTransform: "uppercase", color: w.stFg }}>{w.stLbl}</span>
               <span style={{ font: `700 14px ${F_SANS}`, color: w.state === "lock" || w.state === "skip" ? "#8a93a3" : "#0b1220" }}>{w.title}</span>
               <span style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.45, color: "#5b6779" }}>{w.sub}</span>
+              {(w.n === 2 || w.n === 3) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 1 }}>
+                  {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/TS-F-APPEAL" target="_blank" rel="noopener noreferrer" style={{ font: `700 11.5px ${F_SANS}`, color: "#0a66c2", textDecoration: "none" }}>↗ Open the appeal form</a>}
+                  {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/LI-DEFAULT-NEW" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ General contact form (try this first)</a>}
+                  <a href="https://linkedvelocity.com/guide/restricted-account" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ What to put in each field (guide)</a>
+                </div>
+              )}
               {w.checks?.map((ck) => (
                 <label key={ck.key} style={{ display: "flex", gap: 8, alignItems: "center", font: `600 12.5px ${F_SANS}`, color: "#0b1220", cursor: "pointer" }}>
                   <input type="checkbox" checked={ck.on} onChange={() => toggle(ck.key)} style={{ width: 15, height: 15, accentColor: "#16a34a" }} />{ck.label}
