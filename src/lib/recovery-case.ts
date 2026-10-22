@@ -110,7 +110,23 @@ function mailDerivedSteps(a: CaseAccount): Step[] {
       out.push({ k: "form", o: "pending", at, note: m.type === "appeal_intake" ? "LinkedIn asked for more info (email)" : "Recovery appeal (email)" });
     }
   }
-  return out;
+  // Collapse repeated identical email-derived steps — LinkedIn re-sends the same ID-verification /
+  // 2-step challenge many times, which otherwise floods the timeline with duplicate rows. Same
+  // kind+outcome+note becomes one row with a "×N" count, keeping the latest date. The raw per-email
+  // rows still live in the LinkedIn emails panel.
+  const byKey = new Map<string, Step & { n: number }>();
+  const order: string[] = [];
+  for (const s of out) {
+    const key = `${s.k}|${s.o}|${s.note || s.err || ""}`;
+    const prev = byKey.get(key);
+    if (prev) { prev.n += 1; if (Date.parse(s.at) > Date.parse(prev.at)) prev.at = s.at; }
+    else { byKey.set(key, { ...s, n: 1 }); order.push(key); }
+  }
+  return order.map((key) => {
+    const { n, ...step } = byKey.get(key)!;
+    if (n > 1) { if (step.note) step.note = `${step.note} ×${n}`; else if (step.err) step.err = `${step.err} ×${n}`; }
+    return step;
+  });
 }
 
 // Signals we backtrack from the account notes (written by the auto-notify / recover-send flows
