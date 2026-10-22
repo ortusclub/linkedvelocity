@@ -41,7 +41,7 @@ const ST: Record<string, [string, string, string]> = {
   rented: ["Rented", "#eff6ff", "#1d4ed8"], under_construction: ["Under construction", "#f1f5f9", "#475569"],
   available: ["Onboarded", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
 };
-const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"] };
+const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"], noqr: ["#eef2ff", "#4338ca"] };
 const TITLES: Record<StepKind, string> = { email: "Owner contacted", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note", gl: "GoLogin login", pw: "Password reset", relist: "Relisted", handback: "Handed back" };
 
 const dur = (ms: number) => { const h = Math.floor(ms / 3600e3); return h < 24 ? h + "h" : Math.floor(h / 24) + "d " + (h % 24) + "h"; };
