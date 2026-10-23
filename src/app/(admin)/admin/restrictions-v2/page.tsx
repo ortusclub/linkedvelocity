@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
+import { buildAppealMessage } from "@/lib/appeal-message";
 
 const F_SANS = "var(--font-sans),'Plus Jakarta Sans',system-ui,sans-serif";
 const F_GRO = "var(--font-grotesk),'Space Grotesk',system-ui,sans-serif";
@@ -204,7 +205,12 @@ function ContactCreds({ r }: { r: Row }) {
 // GoLogin / password-reset steps (the password field saves the new password to the account).
 const WF_MAP: Record<string, Record<string, unknown>> = {
   qr_sent: { action: "add_step", kind: "qr", outcome: "pending" }, qr_ok: { action: "add_step", kind: "qr", outcome: "ok" }, qr_fail: { action: "add_step", kind: "qr", outcome: "fail", note: "QR didn't work" },
-  id_sent: { action: "add_step", kind: "id", outcome: "pending" }, id_ok: { action: "add_step", kind: "id", outcome: "ok" }, id_fail: { action: "add_step", kind: "id", outcome: "fail", note: "ID verification failed" },
+  id_sent: { action: "add_step", kind: "id", outcome: "pending" }, id_ok: { action: "add_step", kind: "id", outcome: "ok" },
+  // "ID unaccepted" = LinkedIn rejected the doc → log it and reopen Step 2 for a resubmit (not the appeal).
+  id_reject: { action: "id_resubmit" },
+  // These two DO fail the ID step → the appeal (Step 3) opens. They differ only by the reason recorded.
+  id_owner_fail: { action: "add_step", kind: "id", outcome: "fail", note: "Owner can't verify (no valid ID / Persona keeps failing)" },
+  id_fail: { action: "add_step", kind: "id", outcome: "fail", note: "ID didn't work — reason unclear" },
   form_sent: { action: "add_step", kind: "form", outcome: "pending" }, form_ok: { action: "add_step", kind: "form", outcome: "ok" }, form_fail: { action: "add_step", kind: "form", outcome: "fail", note: "Appeal rejected" },
   perma: { action: "mark_lost", outcome: "perma" }, relist: { action: "add_step", kind: "relist", outcome: "ok" }, handback: { action: "add_step", kind: "handback", outcome: "ok" },
   recovered: { action: "mark_recovered" },
@@ -292,8 +298,8 @@ function AppealMailboxPanel({ accountId, accountName }: { accountId: string; acc
   const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const firstName = (accountName || "").trim().split(/\s+/)[0] || "";
-  const appealMsg = `${firstName ? `Hi, this is ${firstName}.` : "Hello,"}\n\nI'm trying to recover access to my account and I honestly don't understand why it was restricted. I use LinkedIn for my work as a virtual assistant, so not having access has made it really hard to do my job.\n\nI'm more than willing to verify my identity. I have a valid government ID ready to submit, but the Persona verification keeps failing for me no matter how many times I try. Could you please help me verify another way, or review my account manually?\n\nI'd really appreciate any help getting this resolved. Thank you so much.`;
+  // Varied per-account appeal message (never the same template across accounts — see appeal-message.ts).
+  const appealMsg = buildAppealMessage({ name: accountName, seed: accountId });
   useEffect(() => {
     let live = true;
     (async () => {

@@ -70,6 +70,10 @@
     {
       "path": "/api/cron/auto-start-maturing",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/poll-appeal-mail",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

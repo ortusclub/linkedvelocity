@@ -23,6 +23,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("mark_lost"), outcome: z.enum(["perma", "nocontact"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("reopen") }),
+  z.object({ action: z.literal("id_resubmit") }),
   z.object({ action: z.literal("undo_step") }),
 ]);
 
@@ -120,6 +121,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       stored.reopened = true;
       await persistCase(id, stored);
       return NextResponse.json({ ok: true });
+    }
+
+    if (input.action === "id_resubmit") {
+      // LinkedIn rejected the submitted ID (unreadable / unsupported / face not visible). Their own
+      // reply says to resend — try a passport — so we DON'T fail the ID step (which would push the
+      // case to the appeal). Instead we drop the pending submission and log the rejection as a note,
+      // which reopens Step 2 for another go. Each rejection is one "ID unaccepted (attempt N)" note.
+      const lastIdx = [...stored.steps].reverse().findIndex((s) => s.k === "id");
+      if (lastIdx !== -1) { const i = stored.steps.length - 1 - lastIdx; if (stored.steps[i].o === "pending") stored.steps.splice(i, 1); }
+      const attempt = stored.steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length + 1;
+      stored.steps.push({ k: "note", o: "fail", at: now.toISOString(), note: `ID unaccepted (attempt ${attempt}) — resend, try a passport` });
+      await persistCase(id, stored);
+      return NextResponse.json({ ok: true, attempt });
     }
 
     if (input.action === "toggle_step") {
