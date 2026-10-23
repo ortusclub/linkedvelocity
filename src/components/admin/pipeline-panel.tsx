@@ -322,7 +322,7 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
   );
 }
 
-export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: Row; onAccount: (patch: Record<string, unknown>, reload?: boolean) => void; onApp: (patch: Record<string, unknown>) => void; onDeleteEvent: (at: string) => void }) {
+export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent, onNote }: { r: Row; onAccount: (patch: Record<string, unknown>, reload?: boolean) => void; onApp: (patch: Record<string, unknown>) => void; onDeleteEvent: (at: string) => void; onNote?: (text: string) => void }) {
   const hasAcct = !!r.accountId;
   const issue = (r.accountIssue || "").toLowerCase();
   const restrictIssue = issue.includes("withdrawn") || issue.includes("permanent") || issue.includes("restricted");
@@ -346,13 +346,16 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: 
         if (!window.confirm(`Mark ${name} restricted?\n\nOnly do this if LinkedIn actually restricted the account.${rented ? " It pauses the renter's billing." : ""}`)) return;
         const notifyOwnerReferrer = window.confirm(`Email the owner + referrer now that ${name} is restricted?\n\nSends the "account restricted / payment suspended" message (includes their login details + 2FA recovery link when a password is on file) and logs it on the account. Cancel just marks it restricted without emailing.`);
         onAccount({ restrictedAt: new Date().toISOString(), notifyOwnerReferrer, ...undead }, true);
+        onNote?.(`Marked restricted${notifyOwnerReferrer ? " · emailed owner + referrer" : ""}`);
         return;
       }
       const patch: Record<string, unknown> = key === "active" ? { restrictedAt: null, ...undead } : key === "retired" ? { status: "retired", restrictedAt: new Date().toISOString() } : { status: "removed" };
       if (key === "active" && restrictIssue) patch.accountIssue = null;
       onAccount(patch, true);
+      onNote?.(key === "active" ? "Marked active (recovered)" : key === "retired" ? "Marked permanently restricted" : "Marked withdrawn");
     } else {
       onApp({ accountIssue: key === "active" ? null : key === "restricted" ? "Restricted" : key === "retired" ? "Permanently restricted" : "Withdrawn" });
+      onNote?.(key === "active" ? "Marked active" : key === "restricted" ? "Marked restricted" : key === "retired" ? "Marked permanently restricted" : "Marked withdrawn");
     }
   };
   const opts: { key: "active" | "restricted" | "retired" | "withdrawn"; label: string; tone: [string, string] }[] = [
@@ -746,7 +749,7 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
               {r.accountId && editToggle("cred", credEditing)}
             </div>
           }>
-            <div><div style={{ ...labelCss, marginBottom: 6 }}>Status</div><RestrictionControl r={r} onAccount={acctSave} onApp={(patch) => patchApp(r.id, patch)} onDeleteEvent={(at) => { if (r.accountId) deleteRestrictionEvent(r.accountId, at); }} /></div>
+            <div><div style={{ ...labelCss, marginBottom: 6 }}>Status</div><RestrictionControl r={r} onAccount={acctSave} onApp={(patch) => patchApp(r.id, patch)} onDeleteEvent={(at) => { if (r.accountId) deleteRestrictionEvent(r.accountId, at); }} onNote={(text) => { void logTouch(r.id, "note", text, ""); }} /></div>
             {r.accountId && (
               <div><div style={{ ...labelCss, marginBottom: 6 }}>Warm-up</div>
                 <button onClick={(e) => { e.stopPropagation(); acctSave({ warmupStartedAt: r.warmupStartedAt ? null : new Date().toISOString() }, true); }} disabled={busy} title="Toggle whether this account is actively being warmed up (Ortus app)" style={{ font: `600 11.5px ${F_SANS}`, padding: "5px 11px", borderRadius: 999, cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", border: "1px solid", borderColor: r.warmupStartedAt ? "transparent" : "var(--input-border,#dcdce0)", background: r.warmupStartedAt ? "var(--warn-badge-bg,#fef3c7)" : "transparent", color: r.warmupStartedAt ? "var(--warn-badge-text,#b7791f)" : "var(--muted,#647189)" }}>{r.warmupStartedAt ? `🔥 ${ageDays(r.warmupStartedAt)}d` : "Not warming up"}</button>
