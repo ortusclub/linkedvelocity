@@ -11,6 +11,16 @@ import { rentalReadyStatus, type ChecklistState } from "@/lib/rental-ready";
 //   - utilisation  : lifetime rented share = rented-days / days-since-we-got-it (0..1).
 // It is intentionally separate from the live inventory route: the live page stays
 // fast and untouched while v2 iterates. Consolidate when v2 is promoted.
+//
+// It ALSO returns a top-line `grossCollectedAllTime`. The per-account `earnedTotal`
+// CANNOT see wallet-funded rentals: the real cash-in is a `deposit` with no rentalId
+// (so it can't be attributed to an account), and the rental itself is stored as a
+// NEGATIVE wallet-debit that we clamp to 0 — so summing earnedTotal badly under-counts.
+// For the headline figure we sum the ledger directly instead, counting each payment once:
+//   wallet deposits(+) + direct rental_payments(+) + off-platform crypto − refunds.
+// Sweeps (internal crypto moves — may double-count deposits) and adjustments (manual
+// credits, not "collected") are excluded. Off-ledger billing (e.g. ProfilePartner's
+// manual period bumps) is invisible to any ledger sum and is NOT captured here.
 
 const DAY = 86400000;
 
@@ -185,7 +195,17 @@ export async function GET(_req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ accounts: out });
+    // ── Top-line gross collected, all-time (ledger-direct; see header note) ──
+    const grossRows = await prisma.$queryRaw<{ gross: number | string | null }[]>`
+      SELECT
+          COALESCE((SELECT SUM(amount)      FROM transactions   WHERE type = 'deposit'        AND amount > 0), 0)
+        + COALESCE((SELECT SUM(amount)      FROM transactions   WHERE type = 'rental_payment' AND amount > 0), 0)
+        + COALESCE((SELECT SUM(amount)      FROM crypto_payments),                                            0)
+        - COALESCE((SELECT SUM(ABS(amount)) FROM transactions   WHERE type = 'refund'),                       0)
+        AS gross`;
+    const grossCollectedAllTime = Math.max(0, Math.round(Number(grossRows[0]?.gross ?? 0)));
+
+    return NextResponse.json({ accounts: out, grossCollectedAllTime });
   } catch (error) {
     if (error instanceof Error && error.message === "Forbidden") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     if (error instanceof Error && error.message === "Unauthorized") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
