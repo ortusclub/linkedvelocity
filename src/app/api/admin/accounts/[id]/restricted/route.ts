@@ -69,6 +69,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 }
 
+// Admin: replace the whole restriction history with an edited version (fix dates, flip an
+// event's type, edit/clear a note, add a past entry, or drop one). A manual correction tool —
+// it does NOT touch rental credits or send notifications (unlike POST). The live `restrictedAt`
+// flag is recomputed from the edited log: the account is "currently restricted" iff its most
+// recent event (by `at`) is a restriction. creditedDays on an existing entry is preserved when
+// its `at` is unchanged.
+// Body: { log: { at: string; event: "restricted" | "recovered"; note?: string }[] }
+export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAdmin();
+    const { id } = await params;
+    const body = await req.json().catch(() => ({}));
+    const raw = Array.isArray(body.log) ? body.log : null;
+    if (!raw) return NextResponse.json({ error: "Missing log array" }, { status: 400 });
+
+    const account = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true, restrictionLog: true } });
+    if (!account) return NextResponse.json({ error: "Account not found" }, { status: 404 });
+    const prev: RestrictionEvent[] = Array.isArray(account.restrictionLog) ? (account.restrictionLog as RestrictionEvent[]) : [];
+    const creditByAt = new Map(prev.filter((e) => e.creditedDays != null).map((e) => [e.at, e.creditedDays]));
+
+    // Validate + normalise each entry.
+    const cleaned: RestrictionEvent[] = [];
+    for (const e of raw) {
+      const atStr = typeof e?.at === "string" ? e.at : "";
+      const d = atStr ? new Date(atStr) : null;
+      if (!d || isNaN(d.getTime())) return NextResponse.json({ error: `Invalid date: ${atStr || "(empty)"}` }, { status: 400 });
+      if (e?.event !== "restricted" && e?.event !== "recovered") return NextResponse.json({ error: "Each entry needs event 'restricted' or 'recovered'" }, { status: 400 });
+      const at = d.toISOString();
+      const note = typeof e?.note === "string" ? e.note.trim() : "";
+      const credited = creditByAt.get(at);
+      cleaned.push({ at, event: e.event, ...(note ? { note } : {}), ...(credited != null ? { creditedDays: credited } : {}) });
+    }
+    // Chronological order (oldest first), matching how restrictionUpdate appends.
+    cleaned.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+    const last = cleaned[cleaned.length - 1];
+    const restrictedAt = last && last.event === "restricted" ? new Date(last.at) : null;
+
+    const updated = await prisma.linkedInAccount.update({
+      where: { id },
+      data: { restrictionLog: cleaned, restrictedAt },
+    });
+    return NextResponse.json({ restrictedAt: updated.restrictedAt, restrictionLog: updated.restrictionLog });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "error";
+    const code = msg === "Forbidden" ? 403 : msg === "Unauthorized" ? 401 : 500;
+    return NextResponse.json({ error: msg }, { status: code });
+  }
+}
+
 // Admin: delete a single event from the restriction history (a mistaken restrict/recover
 // entry). Identified by its `at` timestamp. If the deleted event was the account's current
 // open restriction (its `at` matches restrictedAt), we also clear restrictedAt so the flag

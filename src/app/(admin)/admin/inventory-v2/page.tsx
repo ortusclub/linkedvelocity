@@ -1307,6 +1307,83 @@ function RentalHistory({ accountId, fallbackRate }: { accountId: string; fallbac
   );
 }
 
+// Restriction history card — read-only timeline with an inline "Edit" mode that lets admins
+// fix dates, flip an event's type, edit/clear notes, delete a mistaken entry, or add a past
+// one. Saves the whole log via PUT /restricted (a correction: no rental credits, no emails).
+// The live "currently restricted" flag is recomputed server-side from the latest event.
+type RhRow = { at: string; event: "restricted" | "recovered"; note: string; origAt?: string };
+function RestrictionHistory({ accountId, log, onSaved }: { accountId: string; log: RestrictEvent[]; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState<RhRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const rCnt = log.filter((e) => e.event === "restricted").length;
+  const newestFirst = log.slice().sort((a, b) => b.at.localeCompare(a.at));
+  const display = newestFirst.slice(0, 10);
+
+  const begin = () => {
+    setRows(newestFirst.map((e) => ({ at: e.at.slice(0, 10), event: e.event, note: e.note || "", origAt: e.at })));
+    setErr(""); setEditing(true);
+  };
+  const cancel = () => { setEditing(false); setErr(""); };
+  const setRow = (i: number, patch: Partial<RhRow>) => setRows((p) => p.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  const delRow = (i: number) => setRows((p) => p.filter((_, j) => j !== i));
+  const addRow = () => setRows((p) => [{ at: new Date().toISOString().slice(0, 10), event: "restricted", note: "" }, ...p]);
+
+  // Keep the original instant (time-of-day + any credit match) when the date is unchanged;
+  // otherwise anchor a changed/new date at noon UTC so it never day-shifts across time zones.
+  const toIso = (ymd: string, origAt?: string) => (origAt && origAt.slice(0, 10) === ymd ? origAt : new Date(`${ymd}T12:00:00.000Z`).toISOString());
+
+  const save = async () => {
+    for (const row of rows) { if (!row.at || isNaN(new Date(row.at).getTime())) { setErr("Every entry needs a valid date."); return; } }
+    setSaving(true); setErr("");
+    try {
+      const payload = rows.map((row) => ({ at: toIso(row.at, row.origAt), event: row.event, note: row.note.trim() || undefined }));
+      const res = await fetch(`/api/admin/accounts/${accountId}/restricted`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ log: payload }) });
+      if (!res.ok) { const d = await res.json().catch(() => ({} as { error?: string })); setErr(d.error || `Error ${res.status}`); return; }
+      setEditing(false); onSaved();
+    } catch { setErr("Network error — try again."); } finally { setSaving(false); }
+  };
+
+  const rhInp: React.CSSProperties = { border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 8px", font: `500 12.5px ${F}`, color: INK, outline: "none", minWidth: 0 };
+  return (
+    <Card pad="14px">
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Lbl>Restriction history</Lbl>
+        {!editing && <span style={{ font: `700 12px ${F}`, color: rCnt ? REDD : GREEND }}>{rCnt ? `${rCnt} restriction${rCnt === 1 ? "" : "s"}` : "clean"}</span>}
+        {editing
+          ? <button onClick={cancel} disabled={saving} style={{ marginLeft: "auto", border: "none", background: "none", color: MUT, font: `700 12px ${F}`, cursor: "pointer", padding: 0 }}>Cancel</button>
+          : <button onClick={begin} style={{ marginLeft: "auto", border: "1px solid #dde1e8", background: "#fff", color: SUB, borderRadius: 8, padding: "4px 10px", font: `700 11.5px ${F}`, cursor: "pointer" }}>Edit</button>}
+      </div>
+      {editing ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>
+          {rows.map((row, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "128px 108px minmax(0,1fr) 22px", gap: 6, alignItems: "center" }}>
+              <input type="date" value={row.at} onChange={(e) => setRow(i, { at: e.target.value })} style={rhInp} />
+              <select value={row.event} onChange={(e) => setRow(i, { event: e.target.value as RhRow["event"] })} style={{ ...rhInp, color: row.event === "recovered" ? GREEND : REDD, fontWeight: 700 }}>
+                <option value="restricted">Restricted</option>
+                <option value="recovered">Recovered</option>
+              </select>
+              <input value={row.note} onChange={(e) => setRow(i, { note: e.target.value })} placeholder="note (optional)" style={rhInp} />
+              <button onClick={() => delRow(i)} title="Delete entry" style={{ border: "none", background: "none", color: MUT, font: `700 15px ${F}`, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
+            <button onClick={addRow} style={{ border: `1px dashed #cbd2db`, background: "#fff", color: SUB, borderRadius: 8, padding: "5px 10px", font: `700 12px ${F}`, cursor: "pointer" }}>+ Add entry</button>
+            <button onClick={save} disabled={saving} style={{ marginLeft: "auto", border: "none", background: INK, color: "#fff", borderRadius: 8, padding: "7px 14px", font: `700 12.5px ${F}`, cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>{saving ? "Saving…" : "Save history"}</button>
+          </div>
+          {err && <span style={{ font: `600 11.5px ${F}`, color: REDD }}>{err}</span>}
+          {rows.length === 0 && <span style={{ font: `500 12px ${F}`, color: MUT }}>No entries — Save to record a clean history, or add one.</span>}
+        </div>
+      ) : display.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>{display.map((h, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "96px 86px minmax(0,1fr)", gap: 8, font: `500 12.5px ${F}`, color: SUB }}><span style={{ color: MUT }}>{fmtDY(h.at)}</span><b style={{ color: h.event === "recovered" ? GREEND : REDD }}>{h.event === "recovered" ? "Recovered" : "Restricted"}</b><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={h.note || ""}>{h.note || (h.creditedDays ? `+${h.creditedDays}d credit` : "—")}</span></div>
+        ))}</div>
+      ) : <span style={{ font: `500 12.5px ${F}`, color: MUT }}>Never restricted.</span>}
+    </Card>
+  );
+}
+
 function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, release, onRentalReady, patch, patchApp, reload }: {
   r: Account; tab: "account" | "mail" | "activity" | "overview"; setTab: (t: "account" | "mail" | "activity" | "overview") => void; busy: boolean; price: number;
   setState: (pill: "active" | "restricted" | "perm" | "withdrawn") => void; recheck: () => void;
@@ -1557,8 +1634,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
 
       {tab === "activity" && (() => {
         const connLog = hist.map((p, i) => ({ at: p.at, count: p.count, delta: i > 0 ? p.count - hist[i - 1].count : null })).reverse().slice(0, 8);
-        const rh = restr.slice().reverse().slice(0, 10);
-        const touches = (r.ownerOutreachLog || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 10);
+        const touches =(r.ownerOutreachLog || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 10);
         const appId = r.ownerApplicationId;
         const saveOwnerConn = () => { const body: Record<string, unknown> = { linkedinJoinedAt: joined ? new Date(joined + "-01T00:00:00Z").toISOString() : null }; const n = parseInt(connVal.replace(/[^0-9]/g, ""), 10); if (!Number.isNaN(n)) body.connectionCount = n; patch(r.id, body); };
         const logTouch = (ch: string) => { if (!appId) return; patchApp(appId, { addTouch: { ch, text: note.trim() || undefined, by: who.trim() || undefined } }).then(() => setNote("")); };
@@ -1601,12 +1677,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
                   <div key={i} style={{ display: "grid", gridTemplateColumns: "96px 56px minmax(0,1fr)", gap: 8, font: `500 12.5px ${F}`, color: SUB }}><span style={{ color: MUT }}>{fmtDY(c.at)}</span><b style={{ color: INK, fontFamily: G }}>{c.count}</b>{c.delta != null && c.delta !== 0 && <span style={{ color: c.delta > 0 ? GREEND : REDD, fontWeight: 600 }}>{c.delta > 0 ? "+" : ""}{c.delta}</span>}</div>
                 ))}</div>}
               </Card>
-              <Card pad="14px">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Restriction history</Lbl><span style={{ marginLeft: "auto", font: `700 12px ${F}`, color: rCnt ? REDD : GREEND }}>{rCnt ? `${rCnt} restriction${rCnt === 1 ? "" : "s"}` : "clean"}</span></div>
-                {rh.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>{rh.map((h, i) => (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "96px 86px minmax(0,1fr)", gap: 8, font: `500 12.5px ${F}`, color: SUB }}><span style={{ color: MUT }}>{fmtDY(h.at)}</span><b style={{ color: h.event === "recovered" ? GREEND : REDD }}>{h.event === "recovered" ? "Recovered" : "Restricted"}</b><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={h.note || ""}>{h.note || (h.creditedDays ? `+${h.creditedDays}d credit` : "—")}</span></div>
-                ))}</div> : <span style={{ font: `500 12.5px ${F}`, color: MUT }}>Never restricted.</span>}
-              </Card>
+              <RestrictionHistory accountId={r.id} log={restr} onSaved={reload} />
             </div>
           </div>
         );
