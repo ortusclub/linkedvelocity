@@ -5,12 +5,49 @@ import { prisma } from "@/lib/prisma";
 // every time an account was restricted or recovered. Both the pipeline and the
 // inventory views write through this one helper, so the history is shared, not
 // duplicated per surface.
+// Snapshot of the proxy the account was on AT THE MOMENT of the event. Stamped on
+// every "restricted" event so we can later attribute restrictions to a proxy/IP/geo
+// without guessing (proxy assignment itself isn't timestamped elsewhere).
+export type RestrictionProxy = {
+  host: string | null;
+  port: number | null;
+  provider?: string | null;
+  type?: string | null;       // residential | datacenter | mobile
+  country?: string | null;    // verified egress country at the time (ISO2), for geo-jump detection
+};
+
 export type RestrictionEvent = {
   at: string;
   event: "restricted" | "recovered";
   note?: string;
   creditedDays?: number;
+  proxy?: RestrictionProxy;
 };
+
+// Read the account's current proxy (host:port) and enrich it from the proxies table
+// (provider/type/verified country). Best-effort: returns null only if no proxy is set,
+// and still returns host:port when the proxies table has no matching row.
+async function snapshotProxy(accountId: string): Promise<RestrictionProxy | null> {
+  const a = await prisma.linkedInAccount.findUnique({
+    where: { id: accountId },
+    select: { proxyHost: true, proxyPort: true },
+  });
+  if (!a || !a.proxyHost) return null;
+  const p =
+    a.proxyPort != null
+      ? await prisma.proxy.findUnique({
+          where: { host_port: { host: a.proxyHost, port: a.proxyPort } },
+          select: { provider: true, type: true, verifiedCountry: true },
+        })
+      : null;
+  return {
+    host: a.proxyHost,
+    port: a.proxyPort ?? null,
+    provider: p?.provider ?? null,
+    type: p?.type ?? null,
+    country: p?.verifiedCountry ?? null,
+  };
+}
 
 type RestrictionAccount = {
   id: string;
@@ -36,9 +73,13 @@ export async function restrictionUpdate(
     // Already restricted → keep the original open timestamp and log nothing (no dupes).
     if (account.restrictedAt) return { restrictedAt: account.restrictedAt };
     const at = new Date();
+    const proxy = await snapshotProxy(account.id);
     return {
       restrictedAt: at,
-      restrictionLog: [...log, { at: at.toISOString(), event: "restricted", ...(trimmed ? { note: trimmed } : {}) }],
+      restrictionLog: [
+        ...log,
+        { at: at.toISOString(), event: "restricted", ...(trimmed ? { note: trimmed } : {}), ...(proxy ? { proxy } : {}) },
+      ],
     };
   }
 
