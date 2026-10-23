@@ -876,6 +876,15 @@ model Proxy {
   country   String?                                  // manual override; else derived from linked accounts
   status    String?                                  // "active" | "error" | "retired" (manual flag)
   notes     String?
+  // ── Proxies v2 additions ──
+  providerProxyId  String?   @map("provider_proxy_id")   // Proxy-Cheap proxy id, for the ↗ deep-link + auto-extend API
+  verifiedCountry  String?   @map("verified_country")    // majority-vote egress country (ISO2), written by the health cron
+  geoCheckedAt     DateTime? @map("geo_checked_at")
+  autoExtend       Boolean?  @map("auto_extend")         // Proxy-Cheap auto-renew; null = N/A (non-provider proxy)
+  expiresAt        DateTime? @map("expires_at")          // Proxy-Cheap expiry
+  health           String?                               // "healthy" | "failing" (computed from the LinkedIn probe)
+  lastCheckedAt    DateTime? @map("last_checked_at")
+  consecutiveFails Int       @default(0) @map("consecutive_fails")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

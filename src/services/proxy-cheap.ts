@@ -100,3 +100,86 @@ export async function readPurchasedProxy(orderId: string, country: string) {
   if (p.status !== "ACTIVE" || p.countryCode.toUpperCase() !== country || p.autoExtendEnabled) throw new Error("The purchased proxy needs a team check before use.");
   return { host: p.connection.connectIp, port: p.connection.httpPort, username: p.authentication.username, password: p.authentication.password };
 }
+
+// ── Proxies v2: read provider billing state + toggle auto-renew ──
+// These use the live proxy endpoints (not the ordering flow). Auth is required.
+
+// Raw call that forces a method and tolerates an empty (204) body.
+async function apiRaw(path: string, method: "GET" | "POST"): Promise<unknown> {
+  if (!process.env.PROXY_CHEAP_API_KEY || !process.env.PROXY_CHEAP_API_SECRET) {
+    throw new Error("Proxy-Cheap credentials are missing.");
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-Api-Key": process.env.PROXY_CHEAP_API_KEY,
+      "X-Api-Secret": process.env.PROXY_CHEAP_API_SECRET,
+    },
+    signal: AbortSignal.timeout(20000),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Proxy-Cheap request failed (${res.status}).`);
+  const text = await res.text();
+  if (!text) return null; // 204
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+export type ProviderProxyState = {
+  id: string;
+  publicIp: string | null;
+  connectIp: string | null;
+  httpPort: number | null;
+  autoExtendEnabled: boolean | null;
+  expiresAt: string | null; // ISO, best-effort (provider field name varies)
+  status: string | null;
+  countryCode: string | null;
+};
+
+// Pull the first date-looking value from the keys the provider has used for expiry.
+function pickExpiry(o: Record<string, unknown>): string | null {
+  const direct = o.expiresAt ?? o.expireAt ?? o.expiryDate ?? o.expiresOn ?? o.validUntil;
+  const sub = (o.subscription as Record<string, unknown> | undefined)?.expiresAt
+    ?? (o.subscription as Record<string, unknown> | undefined)?.endsAt;
+  const v = direct ?? sub;
+  if (typeof v === "string" && v) return v;
+  if (typeof v === "number" && v > 0) return new Date(v).toISOString();
+  return null;
+}
+
+function parseProviderProxy(raw: unknown): ProviderProxyState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const conn = (o.connection as Record<string, unknown>) || {};
+  const auth = o.authentication as Record<string, unknown> | undefined;
+  void auth;
+  return {
+    id: String(o.id ?? ""),
+    publicIp: (conn.publicIp as string) ?? null,
+    connectIp: (conn.connectIp as string) ?? null,
+    httpPort: typeof conn.httpPort === "number" ? conn.httpPort : null,
+    autoExtendEnabled: typeof o.autoExtendEnabled === "boolean" ? o.autoExtendEnabled : null,
+    expiresAt: pickExpiry(o),
+    status: (o.status as string) ?? null,
+    countryCode: (o.countryCode as string) ?? null,
+  };
+}
+
+// GET one proxy's live state by Proxy-Cheap id.
+export async function getProviderProxy(id: string): Promise<ProviderProxyState | null> {
+  return parseProviderProxy(await apiRaw(`/proxies/${encodeURIComponent(id)}`, "GET"));
+}
+
+// GET every proxy on the account (for reconciling provider ids against our rows).
+export async function listProviderProxies(): Promise<ProviderProxyState[]> {
+  const raw = await apiRaw(`/proxies`, "GET");
+  const list = Array.isArray(raw) ? raw : Array.isArray((raw as { proxies?: unknown[] })?.proxies) ? (raw as { proxies: unknown[] }).proxies : [];
+  return list.map(parseProviderProxy).filter((p): p is ProviderProxyState => !!p && !!p.id);
+}
+
+// Turn Proxy-Cheap auto-renew on/off. Returns the fresh state so the caller can store expiry too.
+export async function setProviderAutoExtend(id: string, enabled: boolean): Promise<ProviderProxyState | null> {
+  await apiRaw(`/proxies/${encodeURIComponent(id)}/auto-extend/${enabled ? "enable" : "disable"}`, "POST");
+  return getProviderProxy(id);
+}

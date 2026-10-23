@@ -24,7 +24,7 @@ export async function GET() {
 // PATCH — upsert the metadata (label / provider / type / country / status / notes)
 // for one proxy, keyed by host:port. Only the editable fields live here; the
 // account mapping is never touched.
-const EDITABLE = ["label", "provider", "type", "country", "status", "notes"] as const;
+const EDITABLE = ["label", "provider", "type", "country", "status", "notes", "providerProxyId"] as const;
 
 export async function PATCH(req: NextRequest) {
   try {
