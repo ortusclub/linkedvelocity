@@ -284,6 +284,12 @@ export function deriveCase(
   else if (qr && qr.o === "fail" && !id && !fm) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
   else if (idRejects > 0 && !id && !fm) { next = "Resubmit ID verification (passport)"; urgent = true; bucket = "action"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
+  // An ID-verification challenge is in flight with LinkedIn (captured "ID verification" email that
+  // isn't yet a clear pass/fail, or a hand-logged pending ID step) — we're waiting on THEM, not the
+  // owner. This outranks the email/owner branches below so a case with a live LinkedIn ID review
+  // doesn't get misread as "Send restriction email" / "Chase owner" and buried, even when no owner
+  // contact step was logged. A later appeal-form step (fm) supersedes it, so guard on !fm.
+  else if (id && id.o === "pending" && !fm) { next = `Awaiting LinkedIn · ${rel(id.at ? Date.parse(id.at) : now, now).replace(" ago", "")}`; bucket = "linkedin"; }
   else if (em && em.o === "fail") { next = "Email bounced — get new contact"; urgent = true; bucket = "action"; }
   else if (!em) { next = "Send restriction email"; urgent = true; bucket = "action"; }
   else if (a.recoveryQrAt && !a.recoverySentAt) { next = "Send QR link to owner"; urgent = true; bucket = "action"; }
