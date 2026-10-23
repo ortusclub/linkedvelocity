@@ -10,9 +10,9 @@ type Reservation = { accountId: string; proxyId: string | null; proxySlot: numbe
 export function availableProxySlots(proxies: PoolProxy[], accounts: PoolAccount[], reservations: Reservation[]) {
   return proxies.flatMap((p) => {
     const status = p.status?.toLowerCase() || null;
-    // Existing permitted-country datacenter proxies are valid reusable capacity;
-    // automatic purchases remain dedicated static residential proxies.
-    if (["retired", "error", "inactive", "expired"].includes(status || "") || p.port < 1 || p.port > 65535) return [];
+    // Residential only. Proxy 6 / datacenter is legacy Ortus infrastructure being retired —
+    // never offer it as onboarding capacity (new accounts must land on residential).
+    if (["retired", "error", "inactive", "expired"].includes(status || "") || (p.type || "").toLowerCase() === "datacenter" || p.port < 1 || p.port > 65535) return [];
     const linked = accounts.filter((a) => a.proxyHost === p.host && a.proxyPort === p.port);
     const reserved = reservations.filter((r) => r.proxyId === p.id);
     const used = new Set([...linked.map((a) => a.id), ...reserved.map((r) => r.accountId)]).size;
