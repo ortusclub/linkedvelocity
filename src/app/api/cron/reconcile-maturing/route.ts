@@ -73,11 +73,14 @@ export async function POST(req: NextRequest) {
     // Rented or restricted accounts must not keep maturing: a running campaign on a
     // rented profile would send connection requests while the renter uses it. So we
     // actually STOP the engine campaign(s), not just hide the badge.
+    // Hard blockers only — rented or an explicit restriction mark. We no longer stop a
+    // campaign just because a health check flagged the account (that gate was dropped
+    // from auto-start too); if the account really can't run, the engine fails it and the
+    // campaign goes terminal on its own.
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
-      a.status === "retired" || a.status === "maintenance" ||
-      a.linkedinAccountHealth === "restricted";
+      a.status === "retired" || a.status === "maintenance";
 
     if (blocked) {
       if (entry && entry.ids.length) {

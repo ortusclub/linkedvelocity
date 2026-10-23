@@ -96,11 +96,12 @@ export async function POST(req: NextRequest) {
     where: {
       gologinProfileId: { not: null },
       status: { notIn: ["removed", "rented", "retired", "maintenance"] },
+      // Only hard exclusions: rented (renter is using it) and an explicit restriction
+      // mark (restrictedAt / permanentlyRestricted — reconcile auto-STOPS those, so
+      // starting them would just fight it). No readiness gate otherwise: if a verified
+      // account can't actually run (challenge, stale login, etc.) let it fail on its own.
       restrictedAt: null,
       permanentlyRestricted: false,
-      // "Verified" isn't enough to run a campaign — a health check that found the
-      // account restricted means it can't (restrictedAt can lag behind health).
-      linkedinAccountHealth: { not: "restricted" },
     },
     select: {
       id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true,
@@ -117,16 +118,6 @@ export async function POST(req: NextRequest) {
     return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
   }
 
-  // An account with an unresolved security email (a new-device / login challenge
-  // like "verify your new device", or an open incident) is NOT ready — starting a
-  // campaign on it just fails or risks a restriction. Exclude those.
-  const flaggedMail = await prisma.accountMailEvent.findMany({
-    where: { status: { in: ["needs_review", "incident"] } },
-    select: { linkedinAccountId: true },
-    distinct: ["linkedinAccountId"],
-  });
-  const mailFlagged = new Set(flaggedMail.map((m) => m.linkedinAccountId));
-
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
   function atLevel4(a: (typeof accounts)[number]): boolean {
     if (verifiedBySession.has(a.id)) return verifiedBySession.get(a.id)!;
@@ -141,7 +132,6 @@ export async function POST(req: NextRequest) {
     (a) =>
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
-      !mailFlagged.has(a.id) &&
       !hasCampaign.has(a.gologinProfileId) &&
       atLevel4(a),
   );
