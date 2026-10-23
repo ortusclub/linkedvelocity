@@ -68,7 +68,7 @@ export function leadStageFrom(stage?: string | null): "warm" | "cold" | null {
   if (s === "cold" || s === "lost" || s === "previously_active") return "cold";
   return null;
 }
-function convTypeFrom(channel?: string): "Note" | "Call" | "WhatsApp" | "Telegram" | "Email" {
+export function convTypeFrom(channel?: string): "Note" | "Call" | "WhatsApp" | "Telegram" | "Email" {
   const s = (channel || "note").toLowerCase();
   if (s.includes("whatsapp") || s === "wa") return "WhatsApp";
   if (s.includes("telegram") || s === "tg") return "Telegram";
