@@ -16,12 +16,16 @@ export type IndustryBucket = (typeof INDUSTRY_BUCKETS)[number];
 const INDUSTRY_ALIASES: Record<string, IndustryBucket> = {
   "information technology & services": "Technology",
   "it & services": "Technology",
+  "it services and it consulting": "Technology",
+  "technology, information and internet": "Technology",
   "computer software": "Technology",
   "software development": "Technology",
   "marketing & advertising": "Marketing",
   "advertising services": "Marketing",
+  "marketing services": "Marketing",
   "financial services": "Finance",
   "business consulting & services": "Sales",
+  "management consulting": "Sales",
   "customer service": "Operations",
   "staffing & recruiting": "Operations",
 };
