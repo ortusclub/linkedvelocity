@@ -13,6 +13,7 @@ const incomingEmail = z.object({
   text: z.string().nullable(),
   html: z.string().nullable(),
 });
+type IncomingEmail = z.infer<typeof incomingEmail>;
 
 export type MailType =
   | "new_login" | "location_change" | "password_changed" | "email_changed"
@@ -162,17 +163,16 @@ async function resolveAccountId(toAddr: string): Promise<string | null> {
   return appeal?.linkedinAccountId ?? null;
 }
 
-// Capture one inbound LinkedIn email as an AccountMailEvent. Additive + idempotent: deduped by
-// emailId, no-ops when the recipient isn't one of our account addresses or isn't from LinkedIn.
-// Never throws to the caller's critical path — the webhook wraps it in try/catch anyway.
-export async function captureAccountMail(emailId: string): Promise<{ stored: boolean; reason?: string }> {
+// Capture one inbound LinkedIn email (already fetched) as an AccountMailEvent. Additive + idempotent:
+// deduped by the provider email id, no-ops when the recipient isn't one of our account addresses or
+// isn't from LinkedIn. Shared by the webhook path (captureAccountMail) and the appeal-inbox poll
+// (pollAppealMail), so appeal replies land the same way whichever Resend account received them.
+export async function storeCapturedEmail(msg: IncomingEmail): Promise<{ stored: boolean; reason?: string }> {
   const cfg = emailSetupConfig();
-  if (!cfg.ready) return { stored: false, reason: "not_ready" };
 
-  const existing = await prisma.accountMailEvent.findUnique({ where: { emailId }, select: { id: true } });
+  const existing = await prisma.accountMailEvent.findUnique({ where: { emailId: msg.id }, select: { id: true } });
   if (existing) return { stored: false, reason: "duplicate" };
 
-  const msg = incomingEmail.parse(await onboardingMailRequest(`/emails/receiving/${encodeURIComponent(emailId)}`));
   if (msg.to.length !== 1) return { stored: false, reason: "fanout" };
   const toAddr = msg.to[0].trim().toLowerCase();
   const domain = toAddr.split("@")[1] || "";
@@ -205,7 +205,7 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
 
   await prisma.accountMailEvent.create({
     data: {
-      emailId,
+      emailId: msg.id,
       linkedinAccountId: accountId,
       receivedAt: new Date(msg.created_at),
       fromAddr: msg.from.slice(0, 320),
@@ -229,9 +229,51 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
         to: [process.env.ADMIN_NOTIFICATION_EMAIL || "info@linkedvelocity.com"],
         subject: `LinkedIn replied on appeal · ${appealBox.account.linkedinName}`,
         text: `LinkedIn replied to the appeal address ${toAddr} (${appealBox.account.linkedinName}).\n\nSubject: ${(msg.subject || "").slice(0, 200)}\n\n${bodyText.slice(0, 1500)}\n\nOpen the case: https://linkedvelocity.com/admin/restrictions-v2`,
-      }, `appeal-reply-notify-${emailId}`);
+      }, `appeal-reply-notify-${msg.id}`);
     }
   } catch { /* notification is best-effort — never block capture */ }
 
   return { stored: true };
+}
+
+// Capture one inbound email by id via the onboarding Resend account's webhook feed. Thin wrapper
+// over storeCapturedEmail; never throws to the webhook's critical path (it wraps this in try/catch).
+export async function captureAccountMail(emailId: string): Promise<{ stored: boolean; reason?: string }> {
+  const cfg = emailSetupConfig();
+  if (!cfg.ready) return { stored: false, reason: "not_ready" };
+  const existing = await prisma.accountMailEvent.findUnique({ where: { emailId }, select: { id: true } });
+  if (existing) return { stored: false, reason: "duplicate" };
+  const msg = incomingEmail.parse(await onboardingMailRequest(`/emails/receiving/${encodeURIComponent(emailId)}`));
+  return storeCapturedEmail(msg);
+}
+
+// Per-appeal mailboxes (e.g. @myvahub.fyi) live in a SEPARATE Resend account that has no inbound
+// webhook wired to us, so LinkedIn's replies to them never reach captureAccountMail. This poll reads
+// that account's receiving inbox directly (APPEAL_RESEND_API_KEY) and files each reply through the
+// same storeCapturedEmail path. No-op when the key isn't configured. Idempotent (dedupe by email id).
+async function appealMailRequest(path: string): Promise<unknown> {
+  const key = process.env.APPEAL_RESEND_API_KEY;
+  if (!key) return null;
+  const res = await fetch(`https://api.resend.com${path}`, {
+    cache: "no-store", signal: AbortSignal.timeout(15000),
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Appeal mail request failed (${res.status})`);
+  return res.json();
+}
+
+const appealList = z.object({ data: z.array(z.object({ id: z.string() })).default([]) });
+
+export async function pollAppealMail(): Promise<{ configured: boolean; scanned: number; stored: number; skipped: number }> {
+  if (!process.env.APPEAL_RESEND_API_KEY) return { configured: false, scanned: 0, stored: 0, skipped: 0 };
+  const list = appealList.parse(await appealMailRequest("/emails/receiving"));
+  let stored = 0, skipped = 0;
+  for (const { id } of list.data) {
+    try {
+      const msg = incomingEmail.parse(await appealMailRequest(`/emails/receiving/${encodeURIComponent(id)}`));
+      const r = await storeCapturedEmail(msg);
+      if (r.stored) stored++; else skipped++;
+    } catch { skipped++; }
+  }
+  return { configured: true, scanned: list.data.length, stored, skipped };
 }
