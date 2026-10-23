@@ -257,6 +257,7 @@ export function deriveCase(
   else if (permaSignal) { lostOutcome = "perma"; closedAt = notesPerma?.at ? Date.parse(notesPerma.at) : null; }
 
   const em = lastOf(steps, "email"), qr = lastOf(steps, "qr"), id = lastOf(steps, "id"), fm = lastOf(steps, "form"), li = lastOf(steps, "li");
+  const idRejects = steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length;
   const sentAt = iso(a.recoverySentAt);
 
   const cooldownDays = opts.cooldownDays ?? 30;
@@ -281,6 +282,7 @@ export function deriveCase(
     }
   }
   else if (qr && qr.o === "fail" && !id && !fm) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
+  else if (idRejects > 0 && !id && !fm) { next = "Resubmit ID verification (passport)"; urgent = true; bucket = "action"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
   else if (em && em.o === "fail") { next = "Email bounced — get new contact"; urgent = true; bucket = "action"; }
   else if (!em) { next = "Send restriction email"; urgent = true; bucket = "action"; }
@@ -366,6 +368,9 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const DAY = 86400e3;
   const L = (k: StepKind) => lastOf(built.steps, k);
   const qr = L("qr"), id = L("id"), fm = L("form"), gl = L("gl"), pw = L("pw"), rl = L("relist"), hb = L("handback");
+  // How many times LinkedIn has rejected a submitted ID (each "ID unaccepted" resubmit logs one note).
+  // The ID path is "in play" after any of these — even without a failed QR — so Step 2 stays actionable.
+  const idRejects = built.steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length;
   const stored = parseStoredCase(a.recoveryCase);
   // Recovered = the case's own marker OR (no open restriction + a logged recovery) — so an account
   // recovered the old way (via inventory/pipeline, which only logs the event) still shows the
@@ -385,7 +390,7 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   // 1 — Owner verifies (QR relay is the fallback, not the default)
   {
     let st: WfState = !qr ? "todo" : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
-    if (!qr && (rec || id || fm)) st = "skip";
+    if (!qr && (rec || id || fm || idRejects)) st = "skip";
     const actions: WfAction[] = [];
     if (!rec && !lost && st !== "skip") {
       // Default exit: the owner verifies on their own after the email. QR relay is only for when
@@ -400,12 +405,15 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   // is logged as a note (see id_resubmit in the recovery-case API) and Step 2 reopens for another
   // go, so an unaccepted ID is NOT the same as giving up and moving to the appeal.
   {
-    const open = !!(qr && qr.o === "fail");
-    const rejects = built.steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length;
+    // Step 2 is "live" once the ID path is in play: QR failed (the normal trigger), an ID was
+    // submitted, OR LinkedIn rejected an ID (the resubmit loop). NOT only the QR-fail case — plenty
+    // of cases reach the ID step without a failed QR, and after a resubmit removes the pending ID the
+    // card must stay actionable ("Mark resubmitted") instead of locking.
+    const open = !!(qr && qr.o === "fail") || !!id || idRejects > 0;
     const st: WfState = id ? (id.o === "ok" ? "done" : id.o === "fail" ? "fail" : "wait") : (rec || fm) ? "skip" : open ? "todo" : "lock";
     const actions: WfAction[] = [];
-    if (!rec && !lost && (open || id)) {
-      if (!id) actions.push({ id: "id_sent", label: rejects ? "Mark resubmitted" : "Mark form sent", variant: "primary" });
+    if (!rec && !lost && open) {
+      if (!id) actions.push({ id: "id_sent", label: idRejects ? "Mark resubmitted" : "Mark form sent", variant: "primary" });
       if (id && id.o === "pending") actions.push(
         { id: "id_ok", label: "Worked → recovered", variant: "primary" },
         { id: "id_reject", label: "ID unaccepted → resubmit", variant: "secondary" },
@@ -413,7 +421,7 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
         { id: "id_fail", label: "Didn't work", variant: "danger" },
       );
     }
-    const sub = id?.err || (rejects && !id ? `LinkedIn rejected the ID ${rejects}× — have them resubmit a clear, well-lit photo of a government ID or passport.` : "If the QR doesn't work — owner submits ID through LinkedIn's form");
+    const sub = id?.err || (idRejects && !id ? `LinkedIn rejected the ID ${idRejects}× — have them resubmit a clear, well-lit photo of a government ID or passport.` : "If the QR doesn't work — owner submits ID through LinkedIn's form");
     mk(2, "Send ID verification form", sub, st, { actions });
   }
   // 3 — Appeal (opens when ID fails)
