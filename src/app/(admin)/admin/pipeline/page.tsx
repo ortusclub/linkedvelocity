@@ -66,6 +66,10 @@ export default function PipelineNewPage() {
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Maturing daily check: walk the 1-week-hold accounts, log today's connections + a ✓/✕ health tick.
+  const [checkMode, setCheckMode] = useState(false);
+  const [hideDone, setHideDone] = useState(false);
+  const [connDraft, setConnDraft] = useState<Record<string, string>>({});
 
   const flashSave = (ok: boolean, text: string) => { setSaveMsg({ ok, text }); window.setTimeout(() => setSaveMsg((m) => (m && m.text === text ? null : m)), ok ? 1800 : 6000); };
   const toggle = (id: string) => setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -235,6 +239,34 @@ export default function PipelineNewPage() {
       setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, profileBuild: d.profileBuild } : x)) : prev));
     } finally { setBusy(null); }
   };
+  // ---- Maturing daily check (optimistic, same fields the Inventory daily check writes) ----
+  // Health ✓: mark active + stamp today's check (clears any restriction). ✕: route through the
+  // /restricted endpoint so it's logged + owner/referrer are notified, then stamp the check.
+  const checkHealthy = (r: Row) => {
+    if (!r.accountId) return;
+    const now = new Date().toISOString();
+    setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, linkedinAccountHealth: "active", healthCheckedAt: now, accountRestrictedAt: null } : x)) : prev));
+    fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ linkedinAccountHealth: "active", healthCheckedAt: now, restrictedAt: null }) }).catch(() => load());
+  };
+  const checkRestricted = (r: Row) => {
+    if (!r.accountId) return;
+    const now = new Date().toISOString();
+    setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, linkedinAccountHealth: "restricted", healthCheckedAt: now, accountRestrictedAt: now } : x)) : prev));
+    (async () => {
+      try {
+        await fetch(`/api/admin/accounts/${r.accountId}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted: true }) });
+        await fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ healthCheckedAt: now }) });
+      } catch { load(); }
+    })();
+  };
+  // Save today's connection count (the PATCH route appends to the account's connectionHistory on change).
+  const saveConn = (r: Row, raw: string) => {
+    if (!r.accountId) return;
+    const n = parseInt((raw || "").replace(/[^0-9]/g, ""), 10);
+    if (!Number.isFinite(n) || n === r.connectionCount) return;
+    setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, connectionCount: n } : x)) : prev));
+    fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ connectionCount: n }) }).catch(() => load());
+  };
   const emailIssue = async (r: Row, issue: string) => {
     setBusy(r.id);
     try {
@@ -301,6 +333,12 @@ export default function PipelineNewPage() {
 
   const withTurn = useMemo(() => (rows || []).map((r) => ({ r, t: turnOf(r) })), [rows]);
 
+  // Maturing daily check scope: the 1-week-hold rows that have a linked account to check.
+  const maturingCheck = useMemo(() => withTurn.filter(({ r, t }) => t.turn === "timer" && !!r.accountId).map((x) => x.r), [withTurn]);
+  const isCheckedToday = (r: Row) => !!r.healthCheckedAt && new Date(r.healthCheckedAt).toDateString() === new Date().toDateString();
+  const dcTotal = maturingCheck.length;
+  const dcDone = maturingCheck.filter(isCheckedToday).length;
+
   // Tile counts — over everything (ignores the who/level/search filters, like a scoreboard).
   const tileCounts = useMemo(() => {
     const c: Record<Turn, number> = { us: 0, them: 0, timer: 0, live: 0, dead: 0 };
@@ -355,6 +393,73 @@ export default function PipelineNewPage() {
 
   if (error) return <div style={{ padding: 40, font: `500 14px ${F_SANS}`, color: "var(--muted,#777)" }}>Couldn’t load the pipeline. Refresh to retry.</div>;
 
+  // ── Maturing daily check — focused walk of the 1-week-hold accounts ──
+  if (checkMode) {
+    const list = hideDone ? maturingCheck.filter((r) => !isCheckedToday(r)) : maturingCheck;
+    return (
+      <div style={{ maxWidth: 940, margin: "0 auto", padding: "8px 4px 60px" }}>
+        {saveMsg && <div role="status" onClick={() => setSaveMsg(null)} style={{ position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 100, cursor: "pointer", font: `700 13px ${F_SANS}`, padding: "10px 16px", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.14)", background: saveMsg.ok ? "var(--st-active-bg,#e6f4ea)" : "var(--st-cancel-bg,#fdecea)", color: saveMsg.ok ? "var(--st-active-fg,#188038)" : "var(--st-cancel-fg,#c0392b)", border: `1px solid ${saveMsg.ok ? "var(--st-active-fg,#188038)" : "var(--st-cancel-fg,#c0392b)"}` }}>{saveMsg.ok ? saveMsg.text : `⚠ ${saveMsg.text}`}</div>}
+
+        <div style={{ marginBottom: 14 }}>
+          <h1 style={{ font: `800 24px ${F_GRO}`, margin: "0 0 4px", color: "var(--fg,#111)" }}>Maturing · daily check</h1>
+          <p style={{ font: `500 13px ${F_SANS}`, color: "var(--muted,#777)", margin: 0 }}>Log today’s connections and tick each account healthy or restricted, so you can see the warm-up is working.</p>
+        </div>
+
+        {/* sticky progress bar */}
+        <div style={{ position: "sticky", top: 10, zIndex: 5, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", background: "var(--btn-dark-bg,#0b1220)", color: "#fff", borderRadius: 12, padding: "10px 14px", boxShadow: "0 10px 30px rgba(11,18,32,.2)", marginBottom: 14 }}>
+          <span style={{ font: `700 13.5px ${F_SANS}`, whiteSpace: "nowrap" }}>Daily check</span>
+          <div style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <span style={{ flex: 1, height: 6, borderRadius: 6, background: "#273246", overflow: "hidden", display: "block" }}><span style={{ display: "block", height: "100%", width: `${dcTotal ? (dcDone / dcTotal) * 100 : 0}%`, background: "#34d399", transition: "width .3s" }} /></span>
+            <span style={{ font: `700 13px ${F_GRO}`, whiteSpace: "nowrap" }}>{dcDone} / {dcTotal}</span>
+          </div>
+          <span style={{ font: `500 12px ${F_SANS}`, color: "#a7b0bf", whiteSpace: "nowrap" }}>Type connections + Enter · tick ✓ or ✕</span>
+          <button onClick={() => setHideDone((h) => !h)} style={{ border: "1px solid #2a3344", background: hideDone ? "#1f2a3c" : "transparent", color: "#fff", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer" }}>{hideDone ? "Show done" : "Hide done"}</button>
+          <button onClick={() => { setCheckMode(false); load(); }} style={{ border: "none", background: "#fff", color: "var(--fg,#0b1220)", borderRadius: 8, padding: "6px 12px", font: `700 12px ${F_SANS}`, cursor: "pointer" }}>Done</button>
+        </div>
+
+        <div style={{ background: "var(--card,#fff)", border: "1px solid var(--card-border,#e3e3e6)", borderRadius: 14, overflow: "hidden" }}>
+          {list.length === 0 && <div style={{ padding: 40, textAlign: "center", font: `600 13.5px ${F_SANS}`, color: "var(--muted,#777)" }}>{dcTotal === 0 ? "No maturing accounts to check right now." : "All caught up — every maturing account is checked for today. ✓"}</div>}
+          {list.map((r) => {
+            const done = isCheckedToday(r);
+            const restricted = isRestricted(r);
+            const warmDays = r.warmupStartedAt ? ageDays(r.warmupStartedAt) : null;
+            const hist = Array.isArray(r.connectionHistory) ? r.connectionHistory : [];
+            const first = hist.length ? hist[0] : null;
+            const grew = first && typeof r.connectionCount === "number" ? r.connectionCount - first.count : null;
+            const hcText = restricted ? "restricted" : r.healthCheckedAt ? `✓ checked ${fmtDate(r.healthCheckedAt)}` : "not yet checked";
+            const draft = connDraft[r.id];
+            const dirty = draft != null && draft !== String(r.connectionCount ?? "");
+            return (
+              <div key={r.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) 150px minmax(0,1fr) 80px", gap: 14, alignItems: "center", padding: "11px 16px", borderBottom: "1px solid var(--divider,#f0f2f5)", background: done && !restricted ? "var(--st-active-bg,#f1faf4)" : "var(--card,#fff)" }}>
+                {/* who */}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ font: `700 14px ${F_SANS}`, color: "var(--fg,#111)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{formatName(r.fullName) || r.accountName || "—"}</span>
+                    {warmDays != null && <span title={`Warming up since ${fmtDate(r.warmupStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 {warmDays}d</span>}
+                    {r.linkedinUrl && <a href={r.linkedinUrl.startsWith("http") ? r.linkedinUrl : `https://${r.linkedinUrl}`} target="_blank" rel="noopener noreferrer" title="Open LinkedIn ↗" style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--blue-chip-bg,#e8f0fe)", color: "var(--blue-chip-text,#1a56db)", textDecoration: "none" }}>in ↗</a>}
+                  </div>
+                  <div style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted2,#9aa0a6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.loginEmail || r.email}</div>
+                </div>
+                {/* connections */}
+                <div>
+                  <input autoComplete="off" defaultValue={r.connectionCount ?? ""} key={`c-${r.id}-${r.connectionCount}`} onChange={(e) => setConnDraft((d) => ({ ...d, [r.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} onBlur={() => { if (connDraft[r.id] != null) saveConn(r, connDraft[r.id]); }} inputMode="numeric" placeholder="connections" title="Connection count — saves on Enter / blur" style={{ width: 120, border: `1.5px solid ${dirty ? "var(--blue-chip-text,#1a56db)" : "var(--input-border,#dde1e8)"}`, background: "var(--card,#fff)", borderRadius: 8, padding: "6px 9px", font: `700 14px ${F_GRO}`, color: "var(--fg,#111)", outline: "none" }} />
+                  <div style={{ font: `600 10.5px ${F_SANS}`, color: grew != null && grew > 0 ? "var(--st-active-fg,#188038)" : "var(--muted2,#9aa0a6)", marginTop: 3 }}>{grew != null ? (grew > 0 ? `+${grew} since first logged` : grew < 0 ? `${grew} since first logged` : "no change yet") : "first check"}</div>
+                </div>
+                {/* last check */}
+                <span style={{ font: `600 11.5px ${F_SANS}`, color: restricted ? "var(--st-cancel-fg,#c0392b)" : r.healthCheckedAt ? "var(--st-active-fg,#188038)" : "var(--muted2,#9aa0a6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hcText}</span>
+                {/* ✓/✕ */}
+                <div style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
+                  <button onClick={() => checkHealthy(r)} title="Healthy — mark checked" style={{ width: 34, height: 30, borderRadius: 8, border: "1.5px solid var(--st-active-fg,#188038)", background: done && !restricted ? "var(--st-active-fg,#188038)" : "var(--card,#fff)", color: done && !restricted ? "#fff" : "var(--st-active-fg,#188038)", font: `800 14px ${F_SANS}`, cursor: "pointer" }}>✓</button>
+                  <button onClick={() => checkRestricted(r)} title="Restricted" style={{ width: 34, height: 30, borderRadius: 8, border: "1.5px solid var(--st-cancel-fg,#c0392b)", background: restricted ? "var(--st-cancel-fg,#c0392b)" : "var(--card,#fff)", color: restricted ? "#fff" : "var(--st-cancel-fg,#c0392b)", font: `800 13px ${F_SANS}`, cursor: "pointer" }}>✕</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 1320, margin: "0 auto", padding: "8px 4px 60px" }}>
       {saveMsg && <div role="status" onClick={() => setSaveMsg(null)} style={{ position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 100, cursor: "pointer", font: `700 13px ${F_SANS}`, padding: "10px 16px", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.14)", background: saveMsg.ok ? "var(--st-active-bg,#e6f4ea)" : "var(--st-cancel-bg,#fdecea)", color: saveMsg.ok ? "var(--st-active-fg,#188038)" : "var(--st-cancel-fg,#c0392b)", border: `1px solid ${saveMsg.ok ? "var(--st-active-fg,#188038)" : "var(--st-cancel-fg,#c0392b)"}` }}>{saveMsg.ok ? saveMsg.text : `⚠ ${saveMsg.text}`}</div>}
@@ -387,6 +492,19 @@ export default function PipelineNewPage() {
           );
         })}
       </div>
+
+      {/* maturing daily-check launcher */}
+      {dcTotal > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "var(--st-conv-bg,#efe8fd)", border: "1px solid var(--card-border,#e3e3e6)", borderRadius: 12, padding: "9px 14px", marginBottom: 14 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--st-conv-fg,#6d28d9)" }} />
+          <span style={{ font: `700 13px ${F_SANS}`, color: "var(--fg,#111)" }}>Maturing · {dcTotal} account{dcTotal === 1 ? "" : "s"} in the 1-week hold</span>
+          <span style={{ font: `600 12px ${F_SANS}`, color: dcDone >= dcTotal ? "var(--st-active-fg,#188038)" : "var(--st-conv-fg,#6d28d9)" }}>{dcDone >= dcTotal ? "all checked today ✓" : `${dcDone}/${dcTotal} checked today`}</span>
+          <button onClick={() => { setConnDraft({}); setCheckMode(true); }} style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, border: "1.5px solid var(--st-conv-fg,#6d28d9)", background: "var(--card,#fff)", color: "var(--st-conv-fg,#6d28d9)", borderRadius: 999, padding: "6px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>
+            ✓ Start daily check
+            <span style={{ font: `700 11px ${F_GRO}`, color: "#fff", background: "var(--st-conv-fg,#6d28d9)", borderRadius: 999, padding: "1px 8px" }}>{dcTotal - dcDone} left</span>
+          </button>
+        </div>
+      )}
 
       {/* handler chips */}
       <div style={{ background: "var(--card,#fff)", border: "1px solid var(--card-border,#e3e3e6)", borderRadius: 14, padding: "11px 14px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
