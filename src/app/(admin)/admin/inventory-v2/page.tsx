@@ -291,6 +291,9 @@ const Card = ({ children, span, pad = "12px 14px" }: { children: React.ReactNode
 
 export default function InventoryV2Page() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  // Top-line gross collected, from the ledger (counts wallet-funded rentals that the
+  // per-account earnedTotal can't attribute). null until loaded → fall back to the sum.
+  const [grossCollected, setGrossCollected] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [q, setQ] = useState(""), [cty, setCty] = useState("all"), [renter, setRenter] = useState("all");
@@ -320,7 +323,7 @@ export default function InventoryV2Page() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ success: number; failed: number } | null>(null);
 
-  const load = () => fetch("/api/admin/inventory-v2").then((r) => r.json()).then((d) => setAccounts(d.accounts || [])).finally(() => setLoading(false));
+  const load = () => fetch("/api/admin/inventory-v2").then((r) => r.json()).then((d) => { setAccounts(d.accounts || []); setGrossCollected(typeof d.grossCollectedAllTime === "number" ? d.grossCollectedAllTime : null); }).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
   useEffect(() => { fetch("/api/admin/accounts/export-url").then((r) => r.json()).then((d) => { if (d.url) setSheetFormula(`=IMPORTDATA("${d.url}")`); }).catch(() => {}); }, []);
   const copyFormula = () => { if (!sheetFormula) return; navigator.clipboard?.writeText(sheetFormula); setCopiedFormula(true); setTimeout(() => setCopiedFormula(false), 1400); };
@@ -612,7 +615,10 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   const tiles = useMemo(() => {
     const count = (k: string) => withGroup.filter(({ g }) => g === k).length;
     const avail = count("Available"), rented = count("Rented");
-    const totalEarn = accounts.reduce((s, a) => s + (a.earnedTotal || 0), 0);
+    // Prefer the ledger-direct top-line (includes wallet-funded rentals); fall back to the
+    // per-account sum only until the figure loads (it badly under-counts — see API header).
+    const earnSum = accounts.reduce((s, a) => s + (a.earnedTotal || 0), 0);
+    const totalEarn = grossCollected ?? earnSum;
     const avgUtil = accounts.length ? Math.round((accounts.reduce((s, a) => s + (a.utilisation || 0), 0) / accounts.length) * 100) : 0;
     return [
       { key: "Available", label: "Available", n: avail, sub: "ready to offer", dot: GREEN, subFg: GREEND },
@@ -622,7 +628,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       { key: "__earn", label: "Earned, all-time", n: Math.round(totalEarn), sub: "gross collected", dot: "#7c3aed", subFg: SUB, money: true },
       { key: "__util", label: "Avg utilisation", n: avgUtil, sub: "rented share, lifetime", dot: GREEN, subFg: SUB, pct: true },
     ];
-  }, [withGroup, accounts]);
+  }, [withGroup, accounts, grossCollected]);
 
   const totalShown = sorted.length;
   const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || poc !== "all" || groupFilter !== "all";
@@ -1699,7 +1705,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
               </div>
             </Card>
             <Card><Lbl>Restrictions</Lbl><span style={{ font: `700 24px ${G}`, color: rCnt ? REDD : INK }}>{rCnt}</span><span style={{ font: `600 12px ${F}`, color: SUB }}>{r.restrictedAt ? "currently restricted" : rCnt ? "recovered" : "clean record"}</span></Card>
-            <Card><Lbl>Earned, all-time</Lbl><span style={{ font: `700 24px ${G}`, color: INK }}>{money(Math.round(r.earnedTotal || 0))}</span><span style={{ font: `600 12px ${F}`, color: SUB }}>gross collected</span></Card>
+            <Card><Lbl>Earned, all-time</Lbl><span style={{ font: `700 24px ${G}`, color: INK }}>{money(Math.round(r.earnedTotal || 0))}</span><span style={{ font: `600 12px ${F}`, color: SUB }} title="Direct & crypto payments attributed to this account. Wallet-funded rentals can't be attributed per-account, so this under-counts.">approx · excl. wallet-funded</span></Card>
             <Card><Lbl>Utilisation</Lbl><span style={{ font: `700 24px ${G}`, color: INK }}>{Math.round((r.utilisation || 0) * 100)}%</span><span style={{ height: 4, borderRadius: 4, background: LINE2, overflow: "hidden", display: "block", margin: "2px 0" }}><span style={{ display: "block", height: "100%", width: `${Math.round((r.utilisation || 0) * 100)}%`, background: GREEN }} /></span><span style={{ font: `600 12px ${F}`, color: SUB }}>rented, lifetime</span></Card>
           </div>
           <div style={{ marginTop: 10 }}>
