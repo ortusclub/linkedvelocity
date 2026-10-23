@@ -97,7 +97,7 @@ export async function GET(req: Request) {
     const mailRows = ids.length
       ? await prisma.accountMailEvent.findMany({
           where: { linkedinAccountId: { in: ids }, type: { in: ["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction"] } },
-          select: { linkedinAccountId: true, type: true, receivedAt: true, subject: true, bodyText: true, severity: true },
+          select: { id: true, linkedinAccountId: true, type: true, receivedAt: true, subject: true, bodyText: true, severity: true, status: true },
           orderBy: { receivedAt: "asc" },
         })
       : [];
@@ -169,15 +169,30 @@ export async function GET(req: Request) {
       if (d.closedAt) addTouch(new Date(d.closedAt), d.lostOutcome === "perma" ? "perma-restricted" : "closed");
       const lastTouch = touches.sort((x, y) => y[0] - x[0])[0] || null;
 
+      // Daily "Needs action" clearing: once WE act on a case today it drops out of Needs action into
+      // All open; it returns next day if still open (or immediately when a new LinkedIn reply lands).
+      // "Our action" = any touch except the restriction itself. "Today" is a Manila (UTC+8) day.
+      const MANILA = 8 * 3600e3;
+      const todayStartMs = Math.floor((now + MANILA) / dayMs) * dayMs - MANILA;
+      const lastActionMs = touches.filter((t) => t[1] !== "restricted").reduce((m, t) => Math.max(m, t[0]), 0);
+      const touchedToday = lastActionMs >= todayStartMs;
+      // A captured LinkedIn reply we haven't acted on since it arrived = needs a response now.
+      const newReply = (mailByAccount.get(a.id) || []).some((m) => m.status === "needs_review" && m.receivedAt.getTime() > lastActionMs);
+      const clearedToday = d.bucket === "action" && touchedToday && !newReply;
+      const flags = newReply ? [{ kind: "reply" as const, label: "📧 LinkedIn replied", tip: "LinkedIn replied — respond, then it clears" }, ...d.flags]
+        : clearedToday ? [{ kind: "today" as const, label: "✓ Done today", tip: "You acted on this today — back tomorrow if still open" }, ...d.flags]
+        : d.flags;
+
       return {
         lastTouchAt: lastTouch ? lastTouch[0] : null, lastTouchLabel: lastTouch ? lastTouch[1] : "",
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
         linkedinUrl: a.linkedinUrl, poc: pocResolved, referrerName: referrerNameFor(app?.referredBy), phase: d.phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
-        resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags: d.flags, chain: d.chain,
+        resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags, chain: d.chain,
+        newReply, clearedToday,
         wf: wf.cards, wfNext: wf.next, wfLevel: wf.level,
-        emails: (mailByAccount.get(a.id) || []).map((m) => ({ type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
+        emails: (mailByAccount.get(a.id) || []).map((m) => ({ id: m.id, status: m.status, type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
         renterName: renterByAccount.get(a.id) || null,
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,

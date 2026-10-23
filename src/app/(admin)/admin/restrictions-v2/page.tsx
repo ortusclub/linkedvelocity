@@ -11,17 +11,18 @@ type StepKind = "email" | "qr" | "id" | "form" | "li" | "note" | "gl" | "pw" | "
 type Outcome = "ok" | "fail" | "pending" | "none" | "na";
 type Step = { k: StepKind; o: "ok" | "fail" | "pending"; at: string; err?: string; note?: string };
 type Chain = { k: StepKind | "na"; label: string; outcome: Outcome; tip: string };
-type Flag = { label: string; kind: "repeat" | "stale" | "renter" };
+type Flag = { label: string; kind: "repeat" | "stale" | "renter" | "noqr" | "reply" | "today"; tip?: string };
 type Hist = { reason: string; days: number; at: string; how: string; open: boolean };
 type WfAction = { id: string; label: string; variant: "primary" | "danger" | "secondary" };
 type WfCard = { n: number; title: string; sub: string; state: string; stLbl: string; stFg: string; isCurrent: boolean; note?: string; checks?: Array<{ key: "gl" | "pw"; label: string; on: boolean }>; hasPw?: boolean; hasBar?: boolean; pct?: number; barLabel?: string; actions: WfAction[] };
-type MailEvt = { type: string; typeLabel: string; at: string; subject: string; severity: string; body: string };
+type MailEvt = { id: string; status: string; type: string; typeLabel: string; at: string; subject: string; severity: string; body: string };
 type Row = {
   id: string; name: string; email: string | null; status: string; verified: boolean;
   linkedinUrl: string | null; poc: string; referrerName: string | null; phase: { label: string; pr: number };
   restrictedAt: string | null; reason: string; steps: Step[];
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
+  newReply: boolean; clearedToday: boolean;
   lastTouchAt: number | null; lastTouchLabel: string;
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
@@ -42,7 +43,7 @@ const ST: Record<string, [string, string, string]> = {
   rented: ["Rented", "#eff6ff", "#1d4ed8"], under_construction: ["Under construction", "#f1f5f9", "#475569"],
   available: ["Onboarded", "#f4fbf7", "#0f7a3d"], maintenance: ["Maintenance", "#fff7ed", "#c2410c"],
 };
-const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"], noqr: ["#eef2ff", "#4338ca"] };
+const FLAG: Record<string, [string, string]> = { repeat: ["#fff7ed", "#c2410c"], stale: ["#fef2f2", "#b91c1c"], renter: ["#f1f5f9", "#475569"], noqr: ["#eef2ff", "#4338ca"], reply: ["#eff6ff", "#1d4ed8"], today: ["#f0fdf4", "#15803d"] };
 const TITLES: Record<StepKind, string> = { email: "Owner contacted", qr: "QR recovery link", id: "ID verification", form: "Appeal form", li: "LinkedIn decision", note: "Note", gl: "GoLogin login", pw: "Password reset", relist: "Relisted", handback: "Handed back" };
 
 const dur = (ms: number) => { const h = Math.floor(ms / 3600e3); return h < 24 ? h + "h" : Math.floor(h / 24) + "d " + (h % 24) + "h"; };
@@ -265,8 +266,16 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
 
 const MAIL_SEV: Record<string, [string, string]> = { benign: ["#f1f5f9", "#475569"], review: ["#eff6ff", "#1d4ed8"], danger: ["#fef2f2", "#b91c1c"] };
 // Captured LinkedIn appeal / ID / recovery emails for this account (auto-recorded with their real dates).
-function EmailLog({ emails }: { emails: MailEvt[] }) {
+function EmailLog({ emails, accountId, onChange }: { emails: MailEvt[]; accountId: string; onChange: () => void }) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [busy, setBusy] = useState(false);
+  // Clear a reply's "needs review" (and the 📧 Needs-action badge) once it's been dealt with, e.g.
+  // after replying off-platform. Replying via a logged workflow step clears it automatically.
+  const markHandled = async (eventId: string) => {
+    setBusy(true);
+    try { await fetch(`/api/admin/accounts/${accountId}/mail`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventId, action: "we_know" }) }); onChange(); }
+    catch { /* best-effort */ } finally { setBusy(false); }
+  };
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
       <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>LinkedIn emails · {emails.length}</span>
@@ -278,6 +287,7 @@ function EmailLog({ emails }: { emails: MailEvt[] }) {
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, color: "#5b6779", whiteSpace: "nowrap" }}>↓ LinkedIn</span>
               <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
+              {m.status === "needs_review" && <button onClick={(e) => { e.stopPropagation(); markHandled(m.id); }} disabled={busy} title="Mark this reply handled — clears it from Needs action" style={{ flex: "none", border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 7, padding: "2px 8px", font: `700 10.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>Mark handled</button>}
               <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
             </div>
             <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{fmt(m.at)}</span>
@@ -452,7 +462,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         </div>
 
         {/* LinkedIn email log (captured appeal / ID / recovery emails) */}
-        <EmailLog emails={r.emails} />
+        <EmailLog emails={r.emails} accountId={r.id} onChange={reload} />
 
         {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -494,8 +504,11 @@ export default function RestrictionsV2Page() {
   const all = rows || [];
   const hasIdFail = (r: Row) => r.steps.some((s) => s.k === "id" && s.o === "fail");
   const isOpenCase = (r: Row) => r.bucket !== "done" && r.bucket !== "lost";
+  // Needs action = a new LinkedIn reply to handle, OR an action-bucket case we haven't cleared today.
+  // Cases we acted on today drop to All open (clearedToday) and come back next day if still open.
+  const needsAction = (r: Row) => r.newReply || (r.bucket === "action" && !r.clearedToday);
   const pick: Record<string, (r: Row) => boolean> = {
-    action: (r) => r.bucket === "action", open: isOpenCase, owner: (r) => r.bucket === "owner",
+    action: needsAction, open: isOpenCase, owner: (r) => r.bucket === "owner",
     linkedin: (r) => r.bucket === "linkedin", idfail: (r) => isOpenCase(r) && hasIdFail(r),
     done: (r) => r.bucket === "done", lost: (r) => r.bucket === "lost", all: () => true,
   };
@@ -523,7 +536,7 @@ export default function RestrictionsV2Page() {
   const openCases = all.filter(isOpenCase);
   const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
   const tiles: Array<[string, string, number, string, string]> = [
-    ["action", "Needs action", all.filter((r) => r.bucket === "action").length, "Email, appeal or chase due", "#dc2626"],
+    ["action", "Needs action", all.filter(needsAction).length, "New replies + today's to-dos", "#dc2626"],
     ["open", "Open cases", openCases.length, `Avg restricted ${avgD}d`, "#0b1220"],
     ["owner", "Awaiting owner", all.filter((r) => r.bucket === "owner").length, "Email / QR sent", "#3b82f6"],
     ["linkedin", "Awaiting LinkedIn", all.filter((r) => r.bucket === "linkedin").length, "Appeal under review", "#8b5cf6"],
@@ -657,7 +670,7 @@ export default function RestrictionsV2Page() {
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                       <span style={{ font: `700 12.5px ${F_SANS}`, color: r.lostOutcome ? LOST[r.lostOutcome][2] : r.urgent ? "#b91c1c" : r.resolvedAt ? "#0f7a3d" : "#334155" }}>{r.next}</span>
                       <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {r.flags.map((f, i) => <span key={i} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: FLAG[f.kind][0], color: FLAG[f.kind][1], whiteSpace: "nowrap" }}>{f.label}</span>)}
+                        {r.flags.map((f, i) => <span key={i} title={f.tip} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: (FLAG[f.kind] || FLAG.renter)[0], color: (FLAG[f.kind] || FLAG.renter)[1], whiteSpace: "nowrap" }}>{f.label}</span>)}
                       </div>
                     </div>
                     <span style={{ font: `700 12px ${F_SANS}`, color: "#9aa3b2" }}>{isOpen ? "▾" : "▸"}</span>
