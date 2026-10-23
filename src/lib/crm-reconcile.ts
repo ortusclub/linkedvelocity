@@ -13,6 +13,22 @@ import {
 // are preserved. Cheap when nothing is new. Safe to call on every GET.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function reconcileCrmPeople(prisma: PrismaClient): Promise<number> {
+  // Forward-sync last_activity_at on existing rows so the renters board's "PoC · last touch"
+  // stays current. The additive insert below deliberately never updates existing rows (to
+  // preserve manual edits); this is the one safe exception — it only ADVANCES last_activity_at
+  // to the most recent of the linked user's updatedAt / lead's lastContactAt, never backwards,
+  // and touches no manual-edit field. GREATEST ignores NULLs, so a user-only or lead-only person
+  // is handled; the WHERE guard means rows already current are skipped (no write churn).
+  await prisma.$executeRawUnsafe(`
+    UPDATE crm_people AS p
+    SET last_activity_at = GREATEST(p.last_activity_at, u.updated_at, l.last_contact_at)
+    FROM crm_people AS px
+      LEFT JOIN users AS u ON u.id = px.user_id
+      LEFT JOIN inbound_leads AS l ON l.id = px.inbound_lead_id
+    WHERE px.id = p.id
+      AND GREATEST(p.last_activity_at, u.updated_at, l.last_contact_at) > p.last_activity_at
+  `);
+
   const [missingUsers, allLeads, existing, linkedLeadRows] = await Promise.all([
     prisma.user.findMany({
       where: { role: "customer", isTest: false, person: null },
