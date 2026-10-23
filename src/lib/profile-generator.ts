@@ -78,27 +78,146 @@ const LANES: Record<ProfileLane, readonly string[]> = {
 };
 export const PROFILE_LANES = Object.keys(LANES) as ProfileLane[];
 
-const INDUSTRIES: Record<ProfileLane, string> = {
-  "Business Development": "Information Technology & Services", "Sales": "Computer Software",
-  "Marketing": "Marketing & Advertising", "GTM": "Business Consulting & Services",
+// Several credible LinkedIn industries per lane so the field varies across accounts.
+// Every option here must fold to the SAME catalogue bucket as the others in its lane
+// via toIndustryBucket (src/lib/industry.ts) so the public catalogue stays uniform —
+// keep that alias map in sync when adding an industry here.
+const INDUSTRY_OPTIONS: Record<ProfileLane, readonly string[]> = {
+  "Business Development": ["Information Technology & Services", "Software Development", "IT Services and IT Consulting"], // → Technology
+  "Sales": ["Computer Software", "Software Development", "Technology, Information and Internet"], // → Technology
+  "Marketing": ["Marketing & Advertising", "Advertising Services", "Marketing Services"], // → Marketing
+  "GTM": ["Business Consulting & Services", "Management Consulting"], // → Sales
 };
+// ~8 headlines per lane. The lead segment (before the first "|") is also what the
+// catalogue shows as the short headline, so keep that opening phrase self-contained.
 const HEADLINES: Record<ProfileLane, readonly string[]> = {
-  "Business Development": ["Business Development & Partnerships | B2B SaaS | Pipeline & revenue growth", "Business Development | Helping B2B teams open doors and close deals", "Partnerships & Growth | SaaS & Tech | Building revenue-driving relationships"],
-  "Sales": ["B2B Sales | SaaS & Tech | Helping teams hit revenue targets", "Account Management & New Business | B2B | Quota-carrying closer", "Sales | Pipeline generation to closed-won in B2B SaaS"],
-  "Marketing": ["B2B Marketing | Demand Gen & Content | Driving qualified pipeline", "Growth & Demand Generation | SaaS | Turning campaigns into revenue", "Marketing | B2B demand generation and brand that converts"],
-  "GTM": ["Go-to-Market & RevOps | SaaS | Aligning sales, marketing & data", "Revenue Operations | B2B SaaS | Process, data & pipeline efficiency", "GTM Engineering | Building the systems behind revenue teams"],
+  "Business Development": [
+    "Business Development & Partnerships | B2B SaaS | Pipeline & revenue growth",
+    "Business Development | Helping B2B teams open doors and close deals",
+    "Partnerships & Growth | SaaS & Tech | Building revenue-driving relationships",
+    "BD & Partnerships | B2B | Turning first conversations into pipeline",
+    "New Business & Partnerships | SaaS & Tech",
+    "Business Development | Outbound, partnerships & revenue growth",
+    "Partnerships & New Business | Helping B2B teams grow",
+    "B2B Business Development | Pipeline, partnerships, results",
+  ],
+  "Sales": [
+    "B2B Sales | SaaS & Tech | Helping teams hit revenue targets",
+    "Account Management & New Business | B2B | Quota-carrying closer",
+    "Sales | Pipeline generation to closed-won in B2B SaaS",
+    "B2B Sales & Account Management | SaaS",
+    "Full-Cycle Sales | B2B SaaS & Tech",
+    "Sales | Discovery to closed-won, done right",
+    "Account Executive | B2B software & services",
+    "B2B Sales | Pipeline, demos & deals that stick",
+  ],
+  "Marketing": [
+    "B2B Marketing | Demand Gen & Content | Driving qualified pipeline",
+    "Growth & Demand Generation | SaaS | Turning campaigns into revenue",
+    "Marketing | B2B demand generation and brand that converts",
+    "B2B Marketing | Demand gen, content & pipeline",
+    "Demand Generation | SaaS | Campaigns that convert",
+    "Growth Marketing | B2B | Pipeline over impressions",
+    "Marketing | Connecting campaigns to revenue",
+    "B2B Marketing | Content, email & demand gen",
+  ],
+  "GTM": [
+    "Go-to-Market & RevOps | SaaS | Aligning sales, marketing & data",
+    "Revenue Operations | B2B SaaS | Process, data & pipeline efficiency",
+    "GTM Engineering | Building the systems behind revenue teams",
+    "RevOps & GTM | B2B SaaS | Clean data, clear forecasts",
+    "Revenue Operations | Process, tooling & pipeline",
+    "GTM Operations | Aligning sales & marketing",
+    "RevOps | B2B | The systems behind the number",
+    "Go-to-Market Ops | SaaS | Making revenue teams run",
+  ],
 };
-const ABOUTS: Record<ProfileLane, string> = {
-  "Business Development": "Business development professional with {yrs} years in B2B tech and services. I focus on opening new markets, building partnerships, and turning first conversations into long-term revenue. Comfortable owning the top of the funnel end to end — from prospecting to qualified pipeline.",
-  "Sales": "B2B sales professional with {yrs} years selling software and services to growing companies. I'm at my best managing a full cycle — building pipeline, running discovery, and closing deals that stick. A consistent quota performer who cares about the customer outcome, not just the signature.",
-  "Marketing": "Marketing professional with {yrs} years in B2B demand generation and content. I build campaigns that create real pipeline, not just impressions, and I like working close to sales so marketing is measured on revenue. Equal parts creative and data-driven.",
-  "GTM": "Go-to-market and revenue operations professional with {yrs} years keeping sales and marketing teams aligned, efficient, and data-driven. I build the processes, reporting, and tooling that let revenue teams scale without the chaos.",
+// The "About" is assembled from an opening (carries {yrs}), a focus line, and a closing
+// line — each picked independently — so no two reads the same even within a lane. Any
+// opening + focus + close combination must read naturally on its own.
+const ABOUT_OPEN: Record<ProfileLane, readonly string[]> = {
+  "Business Development": [
+    "Business development professional with {yrs} years in B2B tech and services.",
+    "Partnerships and new-business specialist with {yrs} years across SaaS and tech.",
+    "{yrs} years in B2B business development, mostly with software and services companies.",
+    "Revenue-focused business development pro with {yrs} years opening new markets.",
+  ],
+  "Sales": [
+    "B2B sales professional with {yrs} years selling software and services to growing companies.",
+    "Full-cycle B2B seller with {yrs} years carrying a quota in SaaS and tech.",
+    "{yrs} years in B2B sales, from first touch to closed-won.",
+    "Quota-carrying account executive with {yrs} years across mid-market software.",
+  ],
+  "Marketing": [
+    "Marketing professional with {yrs} years in B2B demand generation and content.",
+    "Demand-gen and content marketer with {yrs} years in SaaS and tech.",
+    "{yrs} years in B2B marketing, focused on pipeline over vanity metrics.",
+    "Growth-minded marketer with {yrs} years connecting campaigns to revenue.",
+  ],
+  "GTM": [
+    "Go-to-market and revenue operations professional with {yrs} years keeping sales and marketing aligned.",
+    "RevOps specialist with {yrs} years building the systems behind revenue teams.",
+    "{yrs} years in GTM operations, from CRM hygiene to forecasting.",
+    "Operations-minded GTM pro with {yrs} years making revenue teams run smoothly.",
+  ],
+};
+const ABOUT_FOCUS: Record<ProfileLane, readonly string[]> = {
+  "Business Development": [
+    "I focus on opening new markets, building partnerships, and turning first conversations into qualified pipeline.",
+    "My sweet spot is top-of-funnel: researching the right accounts, starting the right conversations, and handing sales clean opportunities.",
+    "I build outbound from scratch and nurture partner channels that create new revenue lines.",
+    "I like the early, messy part of a deal — finding the opening and earning the first meeting.",
+  ],
+  "Sales": [
+    "I'm at my best running a full cycle — building pipeline, leading discovery, and closing deals that stick.",
+    "I sell by understanding the problem first and letting the fit do the convincing.",
+    "I own the number end to end: prospecting, demos, negotiation, and the signature.",
+    "I balance chasing new business with growing the accounts I already have.",
+  ],
+  "Marketing": [
+    "I build campaigns that create real pipeline, not just impressions.",
+    "I work close to sales so marketing is measured on revenue, not reach.",
+    "I run demand gen, content, and email as one system feeding the funnel.",
+    "I test fast, keep what converts, and cut what doesn't.",
+  ],
+  "GTM": [
+    "I build the processes, reporting, and tooling that let revenue teams scale without the chaos.",
+    "I turn messy pipelines and scattered data into clean forecasts and clear routing.",
+    "I sit between sales and marketing and make the handoffs actually work.",
+    "I own the GTM stack and keep the numbers trustworthy.",
+  ],
+};
+const ABOUT_CLOSE: Record<ProfileLane, readonly string[]> = {
+  "Business Development": [
+    "Comfortable owning the top of the funnel end to end.",
+    "Happiest when a cold account turns into a real relationship.",
+    "I care about pipeline that actually closes, not just meetings booked.",
+    "Always chasing the next door worth knocking on.",
+  ],
+  "Sales": [
+    "A consistent performer who cares about the customer outcome, not just the signature.",
+    "I'd rather lose fast than oversell a bad fit.",
+    "Repeat business is the metric I'm proudest of.",
+    "Relationships outlast any single quarter.",
+  ],
+  "Marketing": [
+    "Equal parts creative and data-driven.",
+    "I like marketing you can tie back to a closed deal.",
+    "Curious by default, measured by habit.",
+    "The best campaign is the one sales actually thanks you for.",
+  ],
+  "GTM": [
+    "I like fixing the plumbing so the team can just sell.",
+    "Clean data is how I keep everyone honest.",
+    "If a dashboard is lying, I can't rest until it's fixed.",
+    "Process should serve the deal, never the other way around.",
+  ],
 };
 const BLURBS: Record<ProfileLane, readonly string[]> = {
-  "Business Development": ["Built and qualified outbound pipeline across new verticals and regions.", "Developed partner relationships that opened new revenue channels.", "Owned early-stage prospecting and handed sales-ready opportunities to the team.", "Researched target markets and ran outreach to decision-makers."],
-  "Sales": ["Managed a portfolio of B2B accounts and consistently hit quarterly quota.", "Ran full-cycle sales from discovery to close for mid-market clients.", "Generated and converted inbound and outbound pipeline into closed revenue.", "Handled renewals and upsells across an existing book of business."],
-  "Marketing": ["Planned and ran demand-gen campaigns that drove qualified pipeline.", "Owned content and email programs supporting the sales funnel.", "Partnered with sales to improve lead quality and conversion.", "Managed paid and organic channels and reported on pipeline contribution."],
-  "GTM": ["Built reporting and dashboards for the revenue team.", "Streamlined lead routing and CRM processes across sales and marketing.", "Supported forecasting, territory planning, and pipeline hygiene.", "Owned the GTM tech stack and kept data clean across tools."],
+  "Business Development": ["Built and qualified outbound pipeline across new verticals and regions.", "Developed partner relationships that opened new revenue channels.", "Owned early-stage prospecting and handed sales-ready opportunities to the team.", "Researched target markets and ran outreach to decision-makers.", "Booked qualified meetings with decision-makers across target accounts.", "Launched outreach into a new region and built the first pipeline there.", "Qualified inbound interest and routed sales-ready deals to closers.", "Mapped target markets and built account lists for outbound."],
+  "Sales": ["Managed a portfolio of B2B accounts and consistently hit quarterly quota.", "Ran full-cycle sales from discovery to close for mid-market clients.", "Generated and converted inbound and outbound pipeline into closed revenue.", "Handled renewals and upsells across an existing book of business.", "Closed new-business deals across a mid-market territory.", "Ran discovery and demos and carried deals through to signature.", "Grew an existing book through renewals and upsells.", "Consistently landed in the top tier of the sales team."],
+  "Marketing": ["Planned and ran demand-gen campaigns that drove qualified pipeline.", "Owned content and email programs supporting the sales funnel.", "Partnered with sales to improve lead quality and conversion.", "Managed paid and organic channels and reported on pipeline contribution.", "Ran email and nurture programs that moved leads down the funnel.", "Built landing pages and campaigns measured on pipeline, not clicks.", "Launched content that sales actually used in deals.", "Reported campaign contribution to pipeline and revenue."],
+  "GTM": ["Built reporting and dashboards for the revenue team.", "Streamlined lead routing and CRM processes across sales and marketing.", "Supported forecasting, territory planning, and pipeline hygiene.", "Owned the GTM tech stack and kept data clean across tools.", "Cleaned up CRM data and standardized pipeline stages.", "Built forecasting and territory models for the sales team.", "Automated lead routing between marketing and sales.", "Maintained the GTM tool stack and kept integrations healthy."],
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -134,8 +253,8 @@ export function generateProfile(name: string, laneChoice?: ProfileLane | "auto")
     headline: pick(HEADLINES[lane]),
     location: `${city}, USA`,
     zip,
-    industry: INDUSTRIES[lane],
-    about: ABOUTS[lane].replace("{yrs}", String(totalYrs)),
+    industry: pick(INDUSTRY_OPTIONS[lane]),
+    about: [pick(ABOUT_OPEN[lane]).replace("{yrs}", String(totalYrs)), pick(ABOUT_FOCUS[lane]), pick(ABOUT_CLOSE[lane])].join(" "),
     experiences: [
       { title: titles[i2], company: co2, start: fmtMY(r2Start), end: fmtMY(r2End), duration: durLabel(r2Start, r2End), blurb: b2 },
       { title: titles[i1], company: co1, start: fmtMY(r1Start), end: fmtMY(r1End), duration: durLabel(r1Start, r1End), blurb: b1 },
