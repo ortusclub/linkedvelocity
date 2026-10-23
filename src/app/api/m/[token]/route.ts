@@ -29,7 +29,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     prisma.referrer.findMany({ select: { slug: true, name: true } }),
     prisma.ambassadorApplication.findMany({
       orderBy: { createdAt: "desc" },
-      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, selfServiceOnboarding: { select: { state: true, id: true } } },
+      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, withdrawnAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, selfServiceOnboarding: { select: { state: true, id: true } } },
     }),
     // For surfacing an active LinkedIn restriction to the referrer we need the linked
     // account's live restriction flag. Match the same way the admin does (below).
@@ -124,6 +124,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // before onboarding finishes (onboarded, or handed off to us) and before any payment.
       // Server DELETE re-checks the same rule; this flag just drives the UI affordance.
       const deletable = !paid && !onboarded && state !== "handed_off";
+      // Withdraw is the keep-the-record alternative to delete, for signups the referrer can no
+      // longer delete (already onboarded / handed off) but wants off their portal. Never for a
+      // paid signup (a real payment record) or one still deletable (use delete there).
+      const withdrawn = !!a.withdrawnAt;
+      const withdrawable = !deletable && !paid && !withdrawn;
       const amount = referralCommissionAmount(a, t);
       const whoLabel = method === "phone" ? "LV ran it" : (method === "computer" || (isDiy && (onboarded || state === "handed_off"))) ? "You ran it" : isDiy ? "You ran it" : "Form only";
       const path = method === "computer" ? `Guided · computer${a.onboardingVerified ? " · verified" : ""}`
@@ -142,8 +147,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // Retired/removed = terminal. The lifecycle pills below would wrongly read "Verifying" /
       // "No call booked" for a permanently-restricted account, so it looks fine on the portal.
       const accountEnded = !!acct && !recoverable;
+      // A rejected application is closed — kept in the records, but it must not read as
+      // "Verifying" on the portal just because it once logged in (has an onboardedAt).
+      const appRejected = a.status === "rejected";
       const accountRestricted = recoverable && (!!acct?.restrictedAt || (inProgressDiy && !!a.accountIssue));
-      let pill: { text: string; tone: "green" | "blue" | "amber" | "red" }, line: string, sub: string, progress: number, action: "resume" | "onboard" | "clear" | null = null, fee: string, kind: "action" | "blocked" | "waiting" | "paid";
+      let pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }, line: string, sub: string, progress: number, action: "resume" | "onboard" | "clear" | null = null, fee: string, kind: "action" | "blocked" | "waiting" | "paid";
       if (paid) {
         kind = "paid"; pill = { text: "Paid", tone: "green" }; progress = 6;
         line = "Done — account is live"; sub = "Setup fee paid and your commission is in."; fee = `${money(amount)} paid`;
@@ -169,6 +177,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         line = "LinkedIn restricted the account";
         sub = "The owner clears it on their own phone — usually scanning a QR code. Tell us once it's done or already unrestricted.";
       }
+      // A rejected application is a closed outcome — show it plainly instead of "Verifying".
+      // (A retired/removed account below still wins, as that's the more specific reason.)
+      if (appRejected) {
+        kind = "blocked"; action = null; progress = 0; fee = "Not proceeding";
+        pill = { text: "Rejected", tone: "red" };
+        line = "This signup wasn't accepted";
+        sub = "It didn't pass review. It stays in your history, but won't be onboarded or paid.";
+      }
       // Terminal state takes priority over every lifecycle pill: a retired/removed account is
       // permanently gone, so it must never read as "Verifying"/"okay". No clear-it buttons
       // (restricted stays false) and no payout is implied.
@@ -183,6 +199,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
           line = "This account is no longer active";
           sub = "It has been retired from the program. Nothing more to do here.";
         }
+      }
+      // The referrer withdrew this signup — highest priority, it owns the display. Muted/grey,
+      // no action buttons; a Restore affordance is driven by the `withdrawn` flag on the client.
+      if (withdrawn) {
+        kind = "blocked"; action = null; progress = 0; fee = "Withdrawn";
+        pill = { text: "Withdrawn", tone: "grey" };
+        line = "You withdrew this signup";
+        sub = "It's hidden from your active list but kept in our records. Restore it anytime.";
       }
       // Post-sign-in fixes the team raised for this signup (email not primary / 2FA not set).
       const rawFix = a.onboardingFix as { issues?: ("application_incomplete" | "email_added" | "email_primary" | "twofa" | "password")[]; state?: "open" | "referrer_done" } | null;
@@ -271,7 +295,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // without walking the wizard. Codes flow only while forwarding is live — from reserve
       // through hand-off — and stop once the session is confirmed or the account onboarded/paid.
       const codeSessionId = a.selfServiceOnboarding?.id && !onboarded && !paid && state !== "confirmed" ? a.selfServiceOnboarding.id : null;
-      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, resumeSessionId, codeSessionId };
+      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId };
     });
 
   // Show EVERY signup the referrer owns — no cap. Any cap (the old one was the 25 most recent
@@ -281,7 +305,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
   // sort so nothing urgent is buried; newest-first within each group.
   // A flagged post-sign-in fix (2FA/email/password) is the referrer's to-do too, so it ranks
   // with the action cards even though the lifecycle pill still reads "Verifying".
-  const signupRank = (s: { kind: string; restricted: boolean; action: string | null; fix: unknown }) => (s.kind === "blocked" || s.restricted ? 0 : s.action || (s.kind === "waiting" && s.fix) ? 1 : 2);
+  const signupRank = (s: { kind: string; restricted: boolean; action: string | null; fix: unknown; withdrawn: boolean }) => (s.withdrawn ? 3 : s.kind === "blocked" || s.restricted ? 0 : s.action || (s.kind === "waiting" && s.fix) ? 1 : 2);
   const signups = [...mappedSignups].sort((a, b) => signupRank(a) - signupRank(b));
 
   return NextResponse.json({
@@ -346,6 +370,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
     if (fix?.issues?.length) {
       await prisma.ambassadorApplication.update({ where: { id: body.applicationId }, data: { onboardingFix: { ...fix, state: "referrer_done", doneAt: new Date().toISOString() } } });
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  // The referrer withdraws (or restores) one of their OWN signups — a soft-hide that keeps
+  // the record. Only their own signups, never a paid one (that's a real payment record).
+  if ((body.action === "withdraw" || body.action === "restore") && typeof body.applicationId === "string") {
+    const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, paidAt: true } });
+    if (!app || (app.referredBy || "").trim() !== me.slug) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (body.action === "withdraw" && app.paidAt) return NextResponse.json({ error: "A paid signup can't be withdrawn — contact the team." }, { status: 409 });
+    await prisma.ambassadorApplication.update({ where: { id: body.applicationId }, data: { withdrawnAt: body.action === "withdraw" ? new Date() : null } });
     return NextResponse.json({ ok: true });
   }
 

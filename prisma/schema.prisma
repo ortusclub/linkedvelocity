@@ -490,6 +490,9 @@ model AmbassadorApplication {
   referrerId        String?          @map("referrer_id") @db.Uuid
   asReferrer        Referrer?        @relation("AmbassadorIsReferrer", fields: [referrerId], references: [id], onDelete: SetNull)
   status            AmbassadorStatus @default(pending)
+  // Referrer withdrew this signup from their own portal view (soft-hide; record kept, no
+  // payout). Set/cleared from /api/m/[token] PATCH; the admin pipeline is unaffected.
+  withdrawnAt       DateTime?        @map("withdrawn_at")
   offeredAmount     Decimal?         @map("offered_amount") @db.Decimal(10, 2)
   adminNotes        String?          @map("admin_notes")
   paymentMethod     String?          @map("payment_method")
