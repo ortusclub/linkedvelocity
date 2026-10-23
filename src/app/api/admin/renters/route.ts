@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { businessDomain } from "@/lib/crm-compose";
+import { businessDomain, convTypeFrom } from "@/lib/crm-compose";
 import { reconcileCrmPeople } from "@/lib/crm-reconcile";
+
+// One entry in a lead's comms_log (newest-first; written by CRM / Inbound / Telegram / bookings
+// and mirrored by the renters /conversation endpoint). Shape mirrors crm-compose's CommEntry.
+type CommEntry = { id?: string; ts?: string; channel?: string; body?: string; direction?: string; authorName?: string; authorEmail?: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Renters v3 — Phase 1 (persisted). Reads the unified crm_people overlay and derives
@@ -49,7 +53,7 @@ export async function GET() {
     const [deposits, txns, leads, companiesRaw, dupeRows] = await Promise.all([
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds }, type: "deposit" }, select: { userId: true, description: true } }) : Promise.resolve([]),
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds } }, select: { userId: true, type: true, amount: true } }) : Promise.resolve([]),
-      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true } }) : Promise.resolve([]),
+      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true, commsLog: true } }) : Promise.resolve([]),
       prisma.company.findMany(),
       prisma.duplicateSuggestion.findMany({ where: { dismissedAt: null } }),
     ]);
@@ -75,7 +79,25 @@ export async function GET() {
       const live = rentals.filter((r) => r.status === "active" || r.status === "pending_access");
       const mrr = live.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount?.monthlyPrice ?? 0), 0);
       const lead = p.inboundLeadId ? leadById.get(p.inboundLeadId) : null;
-      const stale = !!lead && p.conversations.length > 0 && (!lead.commsSummary || !lead.commsSummaryAt || lead.commsSummaryAt < lead.lastContactAt);
+      // Timeline: for a lead-linked person, read the comms_log LIVE so the history always matches
+      // /admin/crm + /admin/inbound (comms_log is the superset — renter notes are mirrored into it,
+      // and CRM/Telegram/booking messages only ever land there). Pure read, nothing is written, so
+      // manual drawer edits are untouched. User-only persons (no lead) keep their conversations rows.
+      const conversations = lead
+        ? (Array.isArray(lead.commsLog) ? (lead.commsLog as CommEntry[]) : []).map((c, i) => {
+            const ts = c.ts ? new Date(c.ts) : lead.lastContactAt;
+            return {
+              id: c.id || `${lead.id}:${i}`, type: convTypeFrom(c.channel), text: c.body || "",
+              meta: [c.direction, ts.toISOString()].filter(Boolean).join(" · "),
+              author: c.authorName || c.authorEmail || null, ts: ts.toISOString(),
+            };
+          })
+        : p.conversations.map((c) => ({
+            id: c.id, type: c.type, text: c.text,
+            meta: [c.direction, c.createdAt.toISOString()].filter(Boolean).join(" · "),
+            author: c.authorName || c.authorEmail || null, ts: c.createdAt.toISOString(),
+          }));
+      const stale = !!lead && conversations.length > 0 && (!lead.commsSummary || !lead.commsSummaryAt || lead.commsSummaryAt < lead.lastContactAt);
       return {
         id: p.id,
         kind: p.userId ? "user" : "lead",
@@ -112,11 +134,7 @@ export async function GET() {
         vettingReviewRaw: u?.vettingReview ?? null,
         commsSummary: lead?.commsSummary ?? null,
         commsSummaryStale: stale,
-        conversations: p.conversations.map((c) => ({
-          id: c.id, type: c.type, text: c.text,
-          meta: [c.direction, c.createdAt.toISOString()].filter(Boolean).join(" · "),
-          author: c.authorName || c.authorEmail || null, ts: c.createdAt.toISOString(),
-        })),
+        conversations,
       };
     });
 
