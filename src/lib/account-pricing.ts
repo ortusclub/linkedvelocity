@@ -7,8 +7,8 @@ export function tierPricing(conns: number, ageMonths: number | null | undefined,
     : conns >= 100 && age >= 6 ? { weekly: 15, monthly: 50, daily: 3 }
     // Floor — 50+/3mo and everything below it (including <30 connections).
     : { weekly: 13, monthly: 45, daily: 2.75 };
-  // Verified (blue-check) premium: +$10/mo, +$3/wk, +$0.50/day on top of any tier.
-  if (verified) base = { weekly: base.weekly + 3, monthly: base.monthly + 10, daily: base.daily + 0.5 };
+  // Verified (blue-check) premium: +$20/mo, +$6/wk, +$1/day on top of any tier.
+  if (verified) base = { weekly: base.weekly + 6, monthly: base.monthly + 20, daily: base.daily + 1 };
   // Sales Navigator add-on: +$70/mo, +$20/wk, +$4/day on top of the tier.
   if (hasSalesNav) return { weekly: base.weekly + 20, monthly: base.monthly + 70, daily: base.daily + 4 };
   return base;
