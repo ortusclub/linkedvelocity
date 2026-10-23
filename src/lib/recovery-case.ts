@@ -395,16 +395,26 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
     }
     mk(1, "Owner verifies", qr && qr.o === "pending" ? `QR relayed ${rel(Date.parse(qr.at), now)} · waiting for them to scan` : "Usually the owner just verifies after the email. Only relay a QR if they can't reach the checkpoint themselves.", st, { actions, note: st === "todo" && !qr ? "If they got back in on their own, hit \"Owner got back in\". Only paste a QR (box below) if they're stuck at the checkpoint." : "" });
   }
-  // 2 — ID verification form (opens when QR fails)
+  // 2 — ID verification form (opens when QR fails). "ID unaccepted → resubmit" loops back here
+  // (LinkedIn's own instruction when a doc is rejected: resend / try a passport) — each rejection
+  // is logged as a note (see id_resubmit in the recovery-case API) and Step 2 reopens for another
+  // go, so an unaccepted ID is NOT the same as giving up and moving to the appeal.
   {
     const open = !!(qr && qr.o === "fail");
+    const rejects = built.steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length;
     const st: WfState = id ? (id.o === "ok" ? "done" : id.o === "fail" ? "fail" : "wait") : (rec || fm) ? "skip" : open ? "todo" : "lock";
     const actions: WfAction[] = [];
     if (!rec && !lost && (open || id)) {
-      if (!id) actions.push({ id: "id_sent", label: "Mark form sent", variant: "primary" });
-      if (id && id.o === "pending") actions.push({ id: "id_ok", label: "Worked → recovered", variant: "primary" }, { id: "id_fail", label: "Didn't work", variant: "danger" });
+      if (!id) actions.push({ id: "id_sent", label: rejects ? "Mark resubmitted" : "Mark form sent", variant: "primary" });
+      if (id && id.o === "pending") actions.push(
+        { id: "id_ok", label: "Worked → recovered", variant: "primary" },
+        { id: "id_reject", label: "ID unaccepted → resubmit", variant: "secondary" },
+        { id: "id_owner_fail", label: "Owner can't verify", variant: "danger" },
+        { id: "id_fail", label: "Didn't work", variant: "danger" },
+      );
     }
-    mk(2, "Send ID verification form", id?.err || "If the QR doesn't work — owner submits ID through LinkedIn's form", st, { actions });
+    const sub = id?.err || (rejects && !id ? `LinkedIn rejected the ID ${rejects}× — have them resubmit a clear, well-lit photo of a government ID or passport.` : "If the QR doesn't work — owner submits ID through LinkedIn's form");
+    mk(2, "Send ID verification form", sub, st, { actions });
   }
   // 3 — Appeal (opens when ID fails)
   {

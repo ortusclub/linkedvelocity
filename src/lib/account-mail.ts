@@ -182,13 +182,25 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
   const accountId = await resolveAccountId(toAddr);
   if (!accountId) return { stored: false, reason: "no_account" };
 
+  // Did this land on a per-appeal mailbox (e.g. maria@myvahub.fyi)? Every reply to one of those is a
+  // LinkedIn response to a contact/appeal-form WE submitted, so it's always worth capturing — even
+  // when the subject matches no known pattern (e.g. "Submit Your Question [Case: …]") and the sender
+  // is linkedin_support@, not a security-noreply address. Looked up once here, reused for the notify.
+  const appealBox = await prisma.appealMailbox.findFirst({
+    where: { address: { equals: toAddr, mode: "insensitive" } },
+    select: { account: { select: { linkedinName: true } } },
+  });
+  const isAppeal = !!appealBox;
+
   const bodyText = forwardedText(msg.text, msg.html);
-  // Log only genuine account-security mail: a recognised security subject, or anything from the
-  // dedicated security sender. Everything else from linkedin.com (invitations, messages, job
-  // alerts, digests) is skipped so the log stays signal, not an inbox mirror.
+  // Log only genuine account-security mail: a recognised security subject, anything from the dedicated
+  // security sender, or any reply to an appeal mailbox. Everything else from linkedin.com (invitations,
+  // messages, job alerts, digests) is skipped so the log stays signal, not an inbox mirror.
   const cls = classifyAccountMail(msg.subject, bodyText);
-  if (!cls && !isSecuritySender(msg.from)) return { stored: false, reason: "not_security" };
-  const { type, severity, location } = cls ?? { type: "other" as MailType, severity: "review" as MailSeverity, location: extractLocation(bodyText) };
+  if (!cls && !isSecuritySender(msg.from) && !isAppeal) return { stored: false, reason: "not_security" };
+  const { type, severity, location } = cls ?? (isAppeal
+    ? { type: "appeal_update" as MailType, severity: "review" as MailSeverity, location: undefined }
+    : { type: "other" as MailType, severity: "review" as MailSeverity, location: extractLocation(bodyText) });
   const status = severity === "benign" ? "logged" : "needs_review";
 
   await prisma.accountMailEvent.create({
@@ -211,13 +223,12 @@ export async function captureAccountMail(emailId: string): Promise<{ stored: boo
   // submissions on an appeal domain, e.g. myvahub.fyi), ping the team — these are time-sensitive and
   // easy to miss. Best-effort + idempotent; never blocks or fails the capture.
   try {
-    const appeal = await prisma.appealMailbox.findFirst({ where: { address: { equals: toAddr, mode: "insensitive" } }, select: { account: { select: { linkedinName: true } } } });
-    if (appeal) {
+    if (appealBox) {
       await onboardingMailRequest("/emails", {
         from: process.env.RESEND_FROM_EMAIL || "LinkedVelocity <info@linkedvelocity.com>",
         to: [process.env.ADMIN_NOTIFICATION_EMAIL || "info@linkedvelocity.com"],
-        subject: `LinkedIn replied on appeal · ${appeal.account.linkedinName}`,
-        text: `LinkedIn replied to the appeal address ${toAddr} (${appeal.account.linkedinName}).\n\nSubject: ${(msg.subject || "").slice(0, 200)}\n\n${bodyText.slice(0, 1500)}\n\nOpen the case: https://linkedvelocity.com/admin/restrictions-v2`,
+        subject: `LinkedIn replied on appeal · ${appealBox.account.linkedinName}`,
+        text: `LinkedIn replied to the appeal address ${toAddr} (${appealBox.account.linkedinName}).\n\nSubject: ${(msg.subject || "").slice(0, 200)}\n\n${bodyText.slice(0, 1500)}\n\nOpen the case: https://linkedvelocity.com/admin/restrictions-v2`,
       }, `appeal-reply-notify-${emailId}`);
     }
   } catch { /* notification is best-effort — never block capture */ }
