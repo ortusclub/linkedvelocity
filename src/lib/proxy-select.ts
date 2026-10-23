@@ -62,6 +62,11 @@ export async function pickAvailableProxy(opts: {
   const candidates = rows.filter((r) => {
     if (r.proxyString.split(":").length < 4) return false;
     if (r.status && ["retired", "error"].includes(r.status.toLowerCase())) return false;
+    // Never assign Proxy 6 / datacenter — it is legacy Ortus infrastructure being retired.
+    // New accounts go only to residential (a full pool makes the caller buy proxy-cheap).
+    const typ = (r.type || "").toLowerCase();
+    const prov = (r.provider || "").toLowerCase();
+    if (typ === "datacenter" || prov.includes("proxy 6") || prov.includes("proxy6")) return false;
     const key = `${r.host}:${r.port}`;
     if (exclude.has(key)) return false;
     const used = r.accountCount + (claimed.has(key) ? 1 : 0);

@@ -74,10 +74,16 @@ export async function getProxiesV2(): Promise<V2Ip[]> {
 
   const liveIds = accounts.map((a) => a.id);
 
-  // "GoLogin still shared" — any rental for the account whose share list is non-empty.
+  // "GoLogin still shared" — a leak: an ENDED rental (not active/pending) that was never
+  // revoked yet still lists a share, so the ex-renter keeps access. An active/pending
+  // rental's share is legitimate and must NOT flag (that falsely tripped live renters).
   const rentals = liveIds.length
     ? await prisma.rental.findMany({
-        where: { linkedinAccountId: { in: liveIds } },
+        where: {
+          linkedinAccountId: { in: liveIds },
+          status: { notIn: ["active", "pending_access"] },
+          accessRevokedAt: null,
+        },
         select: { linkedinAccountId: true, gologinShareIds: true },
       })
     : [];
