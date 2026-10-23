@@ -139,6 +139,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // A retired / removed account is permanently gone, not a temporary lock the owner
       // can clear — don't offer the referrer a "clear it" / "unrestricted" flow for those.
       const recoverable = acct ? acct.status !== "retired" && acct.status !== "removed" : true;
+      // Retired/removed = terminal. The lifecycle pills below would wrongly read "Verifying" /
+      // "No call booked" for a permanently-restricted account, so it looks fine on the portal.
+      const accountEnded = !!acct && !recoverable;
       const accountRestricted = recoverable && (!!acct?.restrictedAt || (inProgressDiy && !!a.accountIssue));
       let pill: { text: string; tone: "green" | "blue" | "amber" | "red" }, line: string, sub: string, progress: number, action: "resume" | "onboard" | "clear" | null = null, fee: string, kind: "action" | "blocked" | "waiting" | "paid";
       if (paid) {
@@ -166,6 +169,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         line = "LinkedIn restricted the account";
         sub = "The owner clears it on their own phone — usually scanning a QR code. Tell us once it's done or already unrestricted.";
       }
+      // Terminal state takes priority over every lifecycle pill: a retired/removed account is
+      // permanently gone, so it must never read as "Verifying"/"okay". No clear-it buttons
+      // (restricted stays false) and no payout is implied.
+      if (accountEnded) {
+        kind = "blocked"; action = null; progress = 0; fee = "No payout";
+        if (acct!.restrictedAt) {
+          pill = { text: "Restricted", tone: "red" };
+          line = "LinkedIn permanently restricted this account";
+          sub = "It can't be recovered — the account has been retired. Nothing more to do here.";
+        } else {
+          pill = { text: "Ended", tone: "red" };
+          line = "This account is no longer active";
+          sub = "It has been retired from the program. Nothing more to do here.";
+        }
+      }
       // Post-sign-in fixes the team raised for this signup (email not primary / 2FA not set).
       const rawFix = a.onboardingFix as { issues?: ("application_incomplete" | "email_added" | "email_primary" | "twofa" | "password")[]; state?: "open" | "referrer_done" } | null;
       const fix = rawFix?.issues?.length ? { issues: rawFix.issues, state: rawFix.state === "referrer_done" ? "referrer_done" : "open" } : null;
@@ -184,7 +202,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // pipeline shows via referralMaturesAt), then monthly on the 1st. Using the same clock
       // keeps this date identical to the admin view.
       let pay: { text: string; sub?: string } | null = null;
-      if (accountRestricted) {
+      if (accountEnded) {
+        pay = { text: "No payout — this account was retired", sub: "a permanently restricted / retired account doesn't pay out" };
+      } else if (accountRestricted) {
         pay = { text: "Payment paused while restricted", sub: "the timer resumes once the account is cleared" };
       } else if (paid) {
         const paidCount = Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as { kind?: string }[]).filter((p) => p?.kind !== "setup").length : 0;
@@ -211,7 +231,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // cards carry their own UI.
       type JourneyStep = { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" };
       let journey: JourneyStep[] | null = null;
-      if (!accountRestricted) {
+      if (!accountRestricted && !accountEnded) {
         const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
         const qcAt = iso(a.verifiedAt);
         if (paid || onboarded) {
