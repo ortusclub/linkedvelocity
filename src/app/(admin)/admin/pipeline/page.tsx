@@ -240,24 +240,45 @@ export default function PipelineNewPage() {
     } finally { setBusy(null); }
   };
   // ---- Maturing daily check (optimistic, same fields the Inventory daily check writes) ----
+  // A daily check is a touch on the record, so log one summarised note (by a person, so it
+  // counts) — this bumps the row's "Last touch". Folds in today's connection count.
+  const logCheckTouch = (r: Row, health: "healthy" | "restricted") => {
+    const d = connDraft[r.id];
+    const parsed = d != null ? parseInt(d.replace(/[^0-9]/g, ""), 10) : NaN;
+    const conn = Number.isFinite(parsed) ? parsed : r.connectionCount;
+    const note = `Maturing daily check${conn != null ? ` — ${conn} connections` : ""} · ${health}`;
+    void logTouch(r.id, "note", note, me);
+  };
   // Health ✓: mark active + stamp today's check (clears any restriction). ✕: route through the
-  // /restricted endpoint so it's logged + owner/referrer are notified, then stamp the check.
+  // /restricted endpoint (logged) then stamp the check. Both log a touch so Last touch updates.
   const checkHealthy = (r: Row) => {
     if (!r.accountId) return;
     const now = new Date().toISOString();
     setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, linkedinAccountHealth: "active", healthCheckedAt: now, accountRestrictedAt: null } : x)) : prev));
     fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ linkedinAccountHealth: "active", healthCheckedAt: now, restrictedAt: null }) }).catch(() => load());
+    logCheckTouch(r, "healthy");
   };
-  const checkRestricted = (r: Row) => {
+  const checkRestricted = async (r: Row) => {
     if (!r.accountId) return;
     const now = new Date().toISOString();
     setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, linkedinAccountHealth: "restricted", healthCheckedAt: now, accountRestrictedAt: now } : x)) : prev));
-    (async () => {
-      try {
-        await fetch(`/api/admin/accounts/${r.accountId}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted: true }) });
-        await fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ healthCheckedAt: now }) });
-      } catch { load(); }
-    })();
+    try {
+      await fetch(`/api/admin/accounts/${r.accountId}/restricted`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restricted: true }) });
+      await fetch(`/api/admin/accounts/${r.accountId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ healthCheckedAt: now }) });
+    } catch { load(); return; }
+    logCheckTouch(r, "restricted");
+    // One-tap opt-in: email the owner + referrer the restricted notice (same flow as Inventory).
+    // Deduped server-side on the restriction timestamp, so confirming twice can't double-send.
+    if (!confirm(`Email ${formatName(r.fullName) || "the owner"} and their referrer the restricted notice now?\n\nSends the recovery message (with their login details) and logs it on the account.`)) return;
+    try {
+      const nr = await fetch(`/api/admin/accounts/${r.accountId}/restrict-notify`, { method: "POST" });
+      const nd = await nr.json().catch(() => ({}));
+      if (nr.ok) {
+        const sentTo = (nd.sent || []).map((s: { recipient: string; to: string }) => `${s.recipient} (${s.to})`).join(", ");
+        const skip = (nd.skipped || []).map((s: { recipient: string; reason: string }) => `${s.recipient}: ${s.reason}`).join("; ");
+        alert(sentTo ? `Emailed ${sentTo}.${skip ? ` Skipped — ${skip}.` : ""}` : (skip ? `No emails sent — ${skip}.` : "No recipients to email."));
+      } else alert(nd.error || "Could not send notifications.");
+    } catch { alert("Could not send notifications."); }
   };
   // Save today's connection count (the PATCH route appends to the account's connectionHistory on change).
   const saveConn = (r: Row, raw: string) => {
