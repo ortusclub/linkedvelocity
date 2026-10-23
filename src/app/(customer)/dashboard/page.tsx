@@ -1137,7 +1137,7 @@ function DashboardContent() {
               {viewAsInfo?.email ? `${viewAsInfo.email} · ` : ""}See-only — actions are disabled here.
             </span>
           </div>
-          <a href="/admin/customers" style={{ marginLeft: "auto", flex: "none", textDecoration: "none", background: "#fff", color: "#1f2937", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5 }}>Exit view</a>
+          <a href="/admin/renters" style={{ marginLeft: "auto", flex: "none", textDecoration: "none", background: "#fff", color: "#1f2937", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5 }}>Exit view</a>
         </div>
       )}
       <div className="flex items-center justify-between gap-4 mb-8">

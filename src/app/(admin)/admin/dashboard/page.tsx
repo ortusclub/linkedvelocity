@@ -183,13 +183,13 @@ export default function AdminDashboardPage() {
           <div>
             <div style={sectionLabel}>Demand · renters</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
-              <StatCard label="Customers" value={stats.totalCustomers} sub={`renting ${stats.rentedAccounts} accounts`} href="/admin/customers" trend={<Trend v={stats.customersTrend} />}
+              <StatCard label="Customers" value={stats.totalCustomers} sub={`renting ${stats.rentedAccounts} accounts`} href="/admin/renters" trend={<Trend v={stats.customersTrend} />}
                 extra={<svg viewBox="0 0 100 22" preserveAspectRatio="none" style={{ width: "100%", height: 18, display: "block", marginTop: "auto" }}><polyline points="0,18 20,16 40,17 60,12 80,9 100,6" fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>} />
-              <StatCard label="New (30d)" value={stats.newCustomers30d} sub="new this month" href="/admin/customers" />
+              <StatCard label="New (30d)" value={stats.newCustomers30d} sub="new this month" href="/admin/renters" />
               <StatCard label="Renewals ≤30d" value={stats.renewalsDue30d} sub="coming up" href="/admin/rentals"
                 extra={<div style={{ height: 5, borderRadius: 999, background: "var(--track)", marginTop: "auto", overflow: "hidden" }}><div style={{ width: `${renewPct}%`, height: "100%", background: "var(--accent)", borderRadius: 999 }} /></div>} />
               <StatCard label="At-risk" value={stats.atRisk} sub="may churn" warn href="/admin/rentals" valueColor={stats.atRisk > 0 ? "var(--warn-num)" : "var(--faint-num)"} />
-              <StatCard label="Vetting drop-off" value={`${stats.vettingDropped}/${stats.vettingStarted}`} sub={stats.vettingStarted > 0 ? `${vetPct}% opened, didn't finish` : "opened form, didn't finish"} href="/admin/customers" valueColor={stats.vettingDropped > 0 ? "var(--warn-num)" : "var(--faint-num)"} />
+              <StatCard label="Vetting drop-off" value={`${stats.vettingDropped}/${stats.vettingStarted}`} sub={stats.vettingStarted > 0 ? `${vetPct}% opened, didn't finish` : "opened form, didn't finish"} href="/admin/renters" valueColor={stats.vettingDropped > 0 ? "var(--warn-num)" : "var(--faint-num)"} />
             </div>
           </div>
 
