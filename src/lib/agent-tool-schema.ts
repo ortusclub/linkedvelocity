@@ -20,5 +20,5 @@ const bodies: Record<string, { properties: Record<string, unknown>; required?: s
   post_discounts_validate: { properties: { code: string }, required: ["code"] },
 };
 export function agentBodySchema(name: string) {
-  return { type: "object", additionalProperties: false, properties: {}, ...bodies[name] };
+  return { type: "object", additionalProperties: false, ...(bodies[name] ?? { properties: {} }) };
 }
