@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DeveloperKeys } from "../developer/keys";
 import { CardTopUp } from "../dashboard/card-topup";
 
 interface UserProfile {
@@ -30,7 +31,7 @@ interface PaymentDetails {
   wiseEmail: string | null;
 }
 
-type Section = "personal" | "wallet";
+type Section = "personal" | "wallet" | "developer";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -212,6 +213,7 @@ export default function ProfilePage() {
 
   const sidebarItems: { key: Section; label: string; icon: string }[] = [
     { key: "personal", label: "Personal Info", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
+    { key: "developer", label: "Developer mode", icon: "M10 6L4 12l6 6m4-12l6 6-6 6" },
     { key: "wallet", label: "Wallet", icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
   ];
 
@@ -258,6 +260,13 @@ export default function ProfilePage() {
             </button>
           ))}
         </div>
+
+        {activeSection === "developer" && <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-6">
+          <header><h2 className="text-lg font-semibold text-[#1D1B16]">Developer mode</h2><p className="text-sm text-gray-500 mt-2">Give your agent API access to your accounts, share links, orders and wallet.</p></header>
+          <DeveloperKeys />
+          <p className="text-sm text-gray-600">Connect your agent to this website’s <code>/api/mcp</code> endpoint with <code>Authorization: Bearer YOUR_KEY</code>. Your agent acts with your account permissions and can spend wallet funds.</p>
+          <Link href="/developer" className="inline-flex rounded-lg bg-[#1D1B16] px-4 py-2.5 text-sm font-medium text-white">Connection instructions and API reference</Link>
+        </div>}
 
         {/* Personal Info Section */}
         {activeSection === "personal" && (<>

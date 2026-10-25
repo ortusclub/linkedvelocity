@@ -1,3 +1,4 @@
+import { agentTokenHash, isAgentToken } from "@/lib/agent-token";
 import { prisma } from "@/lib/prisma";
 import { compare, hash } from "bcryptjs";
 import { cookies, headers } from "next/headers";
@@ -40,48 +41,40 @@ export async function createSession(userId: string, isAdmin: boolean = false) {
   return token;
 }
 
-export async function getSession(): Promise<(User & { sessionId: string }) | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+// Developer-key management uses this cookie-only entrypoint, never an agent key.
+export async function getBrowserSession(): Promise<(User & { sessionId: string }) | null> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token || token.startsWith("agent:")) return null;
+  return resolveSession(token);
+}
 
-  const session = await prisma.session.findUnique({
-    where: { token },
-    include: { user: true },
-  });
-
-  if (!session || session.expiresAt < new Date()) {
-    if (session) {
-      await prisma.session.delete({ where: { id: session.id } });
-    }
-    return null;
-  }
-
+async function resolveSession(token: string): Promise<(User & { sessionId: string }) | null> {
+  const session = await prisma.session.findUnique({ where: { token }, include: { user: true } });
+  if (!session || session.expiresAt <= new Date() || session.user.status !== "active") return null;
   return { ...session.user, sessionId: session.id };
 }
 
-export async function requireAuth(): Promise<User> {
-  // Try cookie-based session first
-  const user = await getSession();
-  if (user) return user;
-
-  // Fall back to Bearer token (from Electron app)
-  try {
-    const headerList = await headers();
-    const authHeader = headerList.get("authorization");
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.slice(7);
-      const session = await prisma.session.findUnique({
-        where: { token },
-        include: { user: true },
-      });
-      if (session && session.expiresAt > new Date()) {
-        return session.user;
-      }
+export async function getSession(): Promise<(User & { sessionId: string }) | null> {
+  // An explicit credential takes precedence; invalid keys cannot fall back to cookies.
+  const authorization = (await headers()).get("authorization");
+  if (authorization) {
+    const match = /^Bearer (\S+)$/i.exec(authorization);
+    if (!match) return null;
+    const token = match[1];
+    if (token.startsWith("agent:")) return null; // stored hashes are never credentials
+    if (token.startsWith("lvk_")) {
+      if (!isAgentToken(token)) return null;
+      return resolveSession(agentTokenHash(token));
     }
-  } catch {}
+    return resolveSession(token); // existing desktop sessions
+  }
+  return getBrowserSession();
+}
 
-  throw new Error("Unauthorized");
+export async function requireAuth(): Promise<User> {
+  const user = await getSession();
+  if (!user) throw new Error("Unauthorized");
+  return user;
 }
 
 export async function requireAdmin(): Promise<User> {
