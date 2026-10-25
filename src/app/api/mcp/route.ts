@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { agentBodySchema, isReadOnlyOperation } from "@/lib/agent-tool-schema";
 import { getSession } from "@/lib/auth";
 import { agentOperations } from "@/lib/agent-operations";
 import * as route0 from "../accounts/route";
@@ -66,7 +68,8 @@ export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) return json({ error: "Invalid origin" }, 403);
   // Bearer authentication is mandatory on this headless endpoint (never ambient cookies).
-  if (!request.headers.get("authorization") || !(await getSession())) return json({ error: "Unauthorized" }, 401);
+  const user = request.headers.get("authorization") ? await getSession() : null;
+  if (!user) return json({ error: "Unauthorized" }, 401);
   let rpc;
   try { rpc = await request.json(); } catch { return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }); }
   if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string") return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid request" } });
@@ -76,9 +79,9 @@ export async function POST(request: NextRequest) {
   if (rpc.method === "initialize") return ok({ protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "linkedvelocity", version: "1.0.0" }, instructions: "Acts as the key owner. Mutating tools can spend wallet funds or change rentals. Check balance and availability first. Never blindly retry purchases after a timeout; reconcile rentals and transactions. Card setup/checkout can require human completion at the returned provider URL." });
   if (rpc.method === "ping") return ok({});
   if (rpc.method === "tools/list") return ok({ tools: agentOperations.map(op => ({
-    name: op.name, description: `${op.method} ${op.path}. Uses the same ownership checks and rules as the app. ${op.method === "GET" ? "Read account data." : "Changes account state; may spend funds. Ensure user authorization."}`,
-    inputSchema: { type: "object", properties: { id: { type: "string", description: "Rental or account ID for paths containing {id}" }, query: { type: "object", additionalProperties: { type: "string" } }, body: { type: "object", additionalProperties: true, description: "JSON request body; see /developer for API examples." } }, additionalProperties: false, ...(op.path.includes("{id}") ? { required: ["id"] } : {}) },
-    annotations: { readOnlyHint: op.method === "GET", destructiveHint: op.method !== "GET", openWorldHint: true },
+    name: op.name, description: `${op.method} ${op.path}. Uses the same ownership checks and rules as the app. ${isReadOnlyOperation(op) ? "Read account data." : "Changes account state; may spend funds. Ensure user authorization."}`,
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "Rental or account ID for paths containing {id}" }, query: { type: "object", additionalProperties: { type: "string" } }, body: agentBodySchema(op.name) }, additionalProperties: false, ...(op.path.includes("{id}") ? { required: ["id"] } : {}) },
+    annotations: { readOnlyHint: isReadOnlyOperation(op), destructiveHint: !isReadOnlyOperation(op), openWorldHint: true },
   })) });
   if (rpc.method !== "tools/call") return error(-32601, "Method not found");
   const op = agentOperations.find(op => op.name === rpc.params?.name);
@@ -86,13 +89,22 @@ export async function POST(request: NextRequest) {
   const args = rpc.params?.arguments ?? {};
   if (op.path.includes("{id}") && (typeof args.id !== "string" || !/^[a-zA-Z0-9-]+$/.test(args.id))) return error(-32602, "Valid id required");
   if (args.query && (typeof args.query !== "object" || Object.values(args.query).some(v => typeof v !== "string"))) return error(-32602, "Query values must be strings");
+  // This public email payment-link route has no ownership check of its own.
+  // Agent tools must only create checkout links for the authenticated owner's rentals.
+  if (op.name === "get_rentals_id_renew") {
+    const rental = await prisma.rental.findFirst({ where: { id: args.id, userId: user.id }, select: { id: true } });
+    if (!rental) return ok({ content: [{ type: "text", text: "Rental not found" }], isError: true });
+  }
   const url = new URL(op.path.replace("{id}", encodeURIComponent(args.id ?? "")), request.url);
   for (const [key, value] of Object.entries(args.query ?? {})) url.searchParams.set(key, String(value));
   const handler = (handlers[op.path] as unknown as Record<string, Handler>)[op.method];
   try {
     const response = await handler(new NextRequest(url, { method: op.method, headers: request.headers, ...(op.method !== "GET" ? { body: JSON.stringify(args.body ?? {}) } : {}) }), { params: Promise.resolve({ id: args.id ?? "" }) });
-    const content = await response.text();
-    return ok({ content: [{ type: "text", text: JSON.stringify({ status: response.status, response: content }) }], isError: !response.ok });
+    const text = await response.text();
+    let content: unknown = text;
+    try { content = JSON.parse(text); } catch { /* redirects can have empty bodies */ }
+    const location = response.headers.get("location");
+    return ok({ content: [{ type: "text", text: JSON.stringify({ status: response.status, response: content, ...(location ? { url: location } : {}) }) }], isError: response.status >= 400 });
   } catch {
     return ok({ content: [{ type: "text", text: "Request failed. Check rentals and transactions before retrying any payment or order." }], isError: true });
   }

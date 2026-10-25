@@ -62,7 +62,7 @@ const NextResponse = { json: (body, init) => new Response(JSON.stringify(body), 
 test('MCP authenticates before dispatch, discovers actions and preserves handler status', async () => {
   const operations = load('src/lib/agent-operations.ts', {}).agentOperations;
   let signedIn = false, invoked = 0;
-  const deps = { 'next/server': { NextResponse, NextRequest: Request }, '@/lib/auth': { getSession: async () => signedIn ? { id: 'owner' } : null }, '@/lib/agent-operations': { agentOperations: operations } };
+  const deps = { '@/lib/prisma': { prisma: {} }, '@/lib/agent-tool-schema': load('src/lib/agent-tool-schema.ts', {}), 'next/server': { NextResponse, NextRequest: Request }, '@/lib/auth': { getSession: async () => signedIn ? { id: 'owner' } : null }, '@/lib/agent-operations': { agentOperations: operations } };
   for (const match of fs.readFileSync('src/app/api/mcp/route.ts', 'utf8').matchAll(/import \* as route\d+ from "([^"]+)"/g)) {
     deps[match[1]] = { GET: async () => new Response('{}'), POST: async (req, ctx) => { invoked++; assert.equal((await ctx.params).id, 'rental-123'); assert.equal(req.headers.get('authorization'), 'Bearer key'); return NextResponse.json({ error: 'Rental not found' }, { status: 404 }); } };
   }
@@ -80,4 +80,40 @@ test('MCP authenticates before dispatch, discovers actions and preserves handler
   await mcp.POST(req('tools/call', { name: 'post_rentals_id_access', arguments: { id: '../admin' } }));
   assert.equal(invoked, 1);
   assert.equal((await (await mcp.POST(req('tools/call', { name: 'admin' }))).json()).error.code, -32602);
+});
+test('key management scopes revocation to the browser owner and never returns stored secrets', async () => {
+  let browser = { id: 'owner' }, deletion;
+  const route = load('src/app/api/developer/keys/route.ts', {
+    'next/server': { NextResponse }, '@/lib/auth': { getBrowserSession: async () => browser },
+    '@/lib/agent-token': tokens, '@/lib/prisma': { prisma: { session: {
+      findMany: async query => { assert.equal(query.where.userId, 'owner'); assert.equal(query.select.token, undefined); return []; },
+      deleteMany: async query => { deletion = query.where; return { count: 0 }; },
+      count: async () => 0,
+      create: async query => { assert(query.data.token.startsWith('agent:')); assert(!query.data.token.startsWith('lvk_')); assert.equal(query.select.token, undefined); return { id: 'key-id', expiresAt: query.data.expiresAt }; },
+    } } },
+  });
+  const req = (method, origin = 'https://linkedvelocity.com') => new Request('https://linkedvelocity.com/api/developer/keys', { method, headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'someone-elses-key' }) });
+  const created = await route.POST(req('POST'));
+  assert.equal(created.status, 201);
+  assert(tokens.isAgentToken((await created.json()).token));
+  assert.equal(created.headers.get('cache-control'), 'no-store');
+  await route.GET();
+  await route.DELETE(req('DELETE'));
+  assert.equal(deletion.id, 'someone-elses-key');
+  assert.equal(deletion.userId, 'owner');
+  assert.equal(deletion.token.startsWith, 'agent:');
+  assert.equal((await route.POST(req('POST', 'https://other.example'))).status, 403);
+  browser = null;
+  assert.equal((await route.POST(req('POST'))).status, 401);
+  assert.equal((await route.DELETE(req('DELETE'))).status, 401);
+});
+test('rental access handler rejects another customer before sharing a profile', async () => {
+  const route = load('src/app/api/rentals/[id]/access/route.ts', {
+    'next/server': { NextResponse }, '@/lib/auth': { requireAuth: async () => ({ id: 'owner' }) },
+    '@/lib/prisma': { prisma: { rental: { findUnique: async () => ({ userId: 'another-owner', linkedinAccount: {} }) } } },
+    '@/lib/rental-dashboard-access': { canShowRentalShareLink: () => { throw Error('must not check access for another owner'); }, isRentalBeingPrepared: () => { throw Error('must not check state for another owner'); } },
+    '@/lib/rental-access': { grantRentalAccess: async () => { throw Error('must not share'); } },
+  });
+  const response = await route.POST(new Request('https://linkedvelocity.com/api/rentals/other/access'), { params: Promise.resolve({ id: 'other' }) });
+  assert.equal(response.status, 404);
 });
