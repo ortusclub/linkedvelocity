@@ -16,7 +16,7 @@ export function proxyPurchaseLimits() {
     Number.isFinite(perProxy) && perProxy > 0 && (monthly === null || (Number.isFinite(monthly) && monthly > 0)) };
 }
 
-async function api(path: string, body?: unknown, authenticated = false): Promise<unknown> {
+async function api(path: string, body?: unknown, authenticated = false, timeoutMs = 20000): Promise<unknown> {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
   if (authenticated) {
     if (!process.env.PROXY_CHEAP_API_KEY || !process.env.PROXY_CHEAP_API_SECRET) throw new Error("Proxy-Cheap credentials are missing.");
@@ -24,7 +24,7 @@ async function api(path: string, body?: unknown, authenticated = false): Promise
     headers["X-Api-Secret"] = process.env.PROXY_CHEAP_API_SECRET;
   }
   const res = await fetch(`${BASE}${path}`, { method: body ? "POST" : "GET", headers,
-    ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20000), cache: "no-store" });
+    ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
   if (!res.ok) throw new Error(`Proxy-Cheap request failed (${res.status}).`);
   return res.json();
 }
@@ -42,17 +42,33 @@ async function quoteStaticProxies(countries: readonly string[]) {
   const available = [...new Set(countries)].filter((country) => setup.countries.includes(country));
   if (!available.length) throw new Error("No one-month dedicated static residential proxy is available for the requested country or permitted countries. Ask the team for help.");
   const quotes = [];
-  // The provider rate-limits simultaneous quote requests. Check the four
-  // permitted countries sequentially and retain every successful quote.
+  // Check the permitted countries sequentially and retain every successful quote.
+  // Each quote is read-only (it never buys), so a failure is safe to retry — the
+  // provider occasionally rate-limits bursts, and requests from server IPs can be
+  // dropped or challenged. Retry a few times with backoff before giving up, and log
+  // the real cause (status / timeout) so a persistent failure is diagnosable instead
+  // of being swallowed into a generic "please try again".
+  let lastError = "";
+  const priceSchema = z.object({ finalPrice: z.number().finite().positive(), currency: z.literal("USD") });
   for (const country of available) {
-    try {
-      const ispId = setup.isps?.[country]?.[0]?.id;
-      const order = { planId: PLAN, quantity: 1, country, ...(ispId ? { ispId } : {}), period: { unit: "months" as const, value: 1 }, autoExtend: { isEnabled: false } };
-      const quote = z.object({ finalPrice: z.number().finite().positive(), currency: z.literal("USD") }).parse(await api(`/v2/order/${SERVICE}/price`, order, true));
-      quotes.push({ order, price: quote.finalPrice });
-    } catch {}
+    const ispId = setup.isps?.[country]?.[0]?.id;
+    const order = { planId: PLAN, quantity: 1, country, ...(ispId ? { ispId } : {}), period: { unit: "months" as const, value: 1 }, autoExtend: { isEnabled: false } };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const quote = priceSchema.parse(await api(`/v2/order/${SERVICE}/price`, order, true, 12000));
+        quotes.push({ order, price: quote.finalPrice });
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        console.error(`[proxy-cheap] price quote failed for ${country} (attempt ${attempt}/3): ${lastError}`);
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
   }
-  if (!quotes.length) throw new Error("Could not check proxy prices in the permitted countries. Please try again.");
+  if (!quotes.length) {
+    console.error(`[proxy-cheap] all price quotes failed for [${available.join(", ")}]. Last error: ${lastError || "unknown"}`);
+    throw new Error("Could not check proxy prices in the permitted countries. Please try again.");
+  }
   return { quotes, perProxy: limits.perProxy };
 }
 
