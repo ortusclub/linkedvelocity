@@ -8,39 +8,47 @@ import { newMaturePlan } from "@/lib/maturing/shared/mature-profile-plan.mjs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-// Auto-start the warm maturing campaign when an account reaches Level 4 (passed QC
-// / verified) in onboarding, so the team doesn't have to add each one by hand. Starts
-// profiles that never had a campaign, and RE-starts profiles whose campaigns all
-// failed (a fresh replacement plan, after a cooldown); it never disturbs a campaign
-// that is still running or one that already completed. Warm-only (connections to other
-// LinkedVelocity profiles): cold is a deliberate post-onboarding step. Gated behind
-// MATURING_AUTOSTART=on and capped per run so one run can't fire dozens at once.
-const DISQUALIFYING_APP_STATUS = new Set(["onboarded", "rejected", "unreachable"]);
+// Keep every non-rented account maturing — warm up first, then CONTINUE with cold
+// outreach, not just during onboarding. Auto-start picks up any Level-4 (QC'd /
+// verified) account that isn't rented, including ones that already onboarded, and it
+// keeps them going: when a campaign ends (completed OR failed) it starts a fresh one
+// after a cooldown. The only hard stops are rented / explicitly restricted / removed /
+// retired / maintenance (reconcile STOPS those). Gated behind MATURING_AUTOSTART=on and
+// capped per run so one run can't fire dozens at once.
+// NOTE: "onboarded" is intentionally NOT disqualifying anymore — maturing continues
+// past onboarding (owner directive: mature everything that isn't rented).
+const DISQUALIFYING_APP_STATUS = new Set(["rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
-// Warm-only ramps. Warm connections get accepted (other LV profiles), so a higher
-// pace is low-restriction-risk vs cold. Two profiles:
-//  - AGGRESSIVE (default): 10→18→25/day over 7 days (~124) for clean, never-recently-
-//    restricted accounts.
-//  - GENTLE: 2→5→8/day over 14 days (~73) for accounts restricted/recovered in the last
-//    30 days — they're fragile, so we warm them slowly per the restriction-avoidance SOP.
-// Tune here.
+// Warm-then-cold ramps. Warm connections (other LV profiles) get accepted and carry low
+// restriction risk, so they lead; cold outreach (from the default cold sheet) follows to
+// keep the account active once the warm pool thins out. Two profiles:
+//  - AGGRESSIVE (default): warm 10→18→25/day (days 1-7), then cold 8→15/day (days 8-28)
+//    for clean, never-recently-restricted accounts.
+//  - GENTLE: warm 2→5→8/day (days 1-14), then cold 4→8/day (days 15-35) for accounts
+//    restricted/recovered in the last 30 days — fragile, warmed slowly per the SOP.
+// Stages must stay consecutive (each fromDay = previous toDay + 1). Tune here.
 const AGGRESSIVE_STAGES = [
   { id: "warm", name: "Warm connections", fromDay: 1, toDay: 2, warmDaily: 10, coldDaily: 0, likesDaily: 0 },
   { id: "ramp", name: "Ramp warm connections", fromDay: 3, toDay: 5, warmDaily: 18, coldDaily: 0, likesDaily: 0 },
   { id: "push", name: "Push warm connections", fromDay: 6, toDay: 7, warmDaily: 25, coldDaily: 0, likesDaily: 0 },
+  { id: "cold", name: "Introduce cold outreach", fromDay: 8, toDay: 14, warmDaily: 10, coldDaily: 8, likesDaily: 0 },
+  { id: "coldramp", name: "Ramp cold outreach", fromDay: 15, toDay: 28, warmDaily: 5, coldDaily: 15, likesDaily: 0 },
 ];
 const GENTLE_STAGES = [
   { id: "warm", name: "Warm connections", fromDay: 1, toDay: 4, warmDaily: 2, coldDaily: 0, likesDaily: 0 },
   { id: "ramp", name: "Ramp warm connections", fromDay: 5, toDay: 9, warmDaily: 5, coldDaily: 0, likesDaily: 0 },
   { id: "push", name: "Ease up warm connections", fromDay: 10, toDay: 14, warmDaily: 8, coldDaily: 0, likesDaily: 0 },
+  { id: "cold", name: "Introduce cold (slow)", fromDay: 15, toDay: 21, warmDaily: 5, coldDaily: 4, likesDaily: 0 },
+  { id: "coldramp", name: "Ramp cold (slow)", fromDay: 22, toDay: 35, warmDaily: 3, coldDaily: 8, likesDaily: 0 },
 ];
-function autoWarmPlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean) {
+function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean) {
   const p = newMaturePlan() as Record<string, unknown>;
   p.warmEnabled = true;
-  p.coldEnabled = false;
+  p.coldEnabled = true; // warm first, then cold — keep maturing past onboarding
   p.warmPool = "linkedvelocity_owned";
-  p.warmUntilExhausted = true;
+  p.coldPoolSource = "default"; // the shared default cold sheet (DEFAULT_MATURE_COLD_SHEET_URL)
+  p.warmUntilExhausted = false; // warm runs its fixed stages, then cold carries on
   p.stages = gentle ? GENTLE_STAGES : AGGRESSIVE_STAGES;
   p.targetProfileIds = [gid];
   p.accounts = { [gid]: { name, linkedinUrl } };
@@ -70,33 +78,33 @@ export async function POST(req: NextRequest) {
   }
   if (data.engineError) return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
 
-  // Auto-start is no longer one-shot. We skip a profile that has a campaign we must
-  // NOT disturb — one still running (non-terminal) or one that already completed
-  // ("done", i.e. it matured). But a profile whose campaigns ALL FAILED
-  // ("cancelled"/"error") is retried: start() rebuilds a fresh replacement plan and
-  // excludes anyone already contacted. A cooldown keeps a permanently-broken account
-  // from re-firing every tick — it retries at most once per window and simply fails
-  // again on its own (that's the policy), without starving brand-new accounts.
-  const FAILED = new Set(["cancelled", "error"]);
+  // Continuous maturing. A profile is skipped only while it has a campaign STILL
+  // RUNNING (non-terminal). Once its campaign ENDS — whether it completed ("done") or
+  // failed ("cancelled"/"error") — we restart it after a cooldown, so maturing keeps
+  // going past onboarding instead of being one-and-done. start() rebuilds a fresh plan
+  // excluding anyone already contacted (so a restart naturally shifts toward cold as the
+  // warm pool thins). The cooldown stops a just-ended or broken account from re-firing
+  // every tick and starving others; a permanently-broken one just fails again on its own.
+  const TERMINAL = new Set(["done", "cancelled", "error"]);
   const RETRY_COOLDOWN_MS = Math.max(1, Number(process.env.MATURING_RETRY_COOLDOWN_H) || 24) * 3600000;
-  const protectedProfiles = new Set<string>(); // running OR already matured ("done") — never auto-touch
-  const lastFailedAt = new Map<string, number>(); // profile → newest failed-campaign time
+  const running = new Set<string>(); // non-terminal campaign — never disturb
+  const lastEndedAt = new Map<string, number>(); // profile → newest ended-campaign time
   for (const c of data.campaigns) {
-    const failed = FAILED.has(c.status || "");
+    const ended = TERMINAL.has(c.status || "");
     const t = Date.parse(c.updatedAt || c.createdAt || "") || 0;
     for (const pid of c.profileIds || []) {
       if (!pid) continue;
-      if (failed) lastFailedAt.set(pid, Math.max(lastFailedAt.get(pid) || 0, t));
-      else protectedProfiles.add(pid); // live / paused / pending / done
+      if (ended) lastEndedAt.set(pid, Math.max(lastEndedAt.get(pid) || 0, t));
+      else running.add(pid); // live / paused / pending
     }
   }
-  // May auto-start this profile now? Never had a campaign, or its only campaigns
-  // failed and the cooldown has elapsed. A live or completed campaign blocks it.
+  // May auto-start this profile now? Never had a campaign, or its last campaign ended
+  // and the cooldown has elapsed. A campaign still running blocks it.
   function campaignOk(gid: string): boolean {
-    if (protectedProfiles.has(gid)) return false;
-    const failedAt = lastFailedAt.get(gid);
-    if (failedAt === undefined) return true;
-    return Date.now() - failedAt >= RETRY_COOLDOWN_MS;
+    if (running.has(gid)) return false;
+    const endedAt = lastEndedAt.get(gid);
+    if (endedAt === undefined) return true;
+    return Date.now() - endedAt >= RETRY_COOLDOWN_MS;
   }
 
   // Level-4 signal lives on the application (verifiedAt set, not onboarded). Resolve
@@ -170,26 +178,26 @@ export async function POST(req: NextRequest) {
 
   let started = 0;
   let gentleStarted = 0;
-  let retried = 0;
+  let restarted = 0;
   const errors: { account: string; error: string }[] = [];
   for (const a of candidates.slice(0, cap)) {
     const gentle = recentlyRestricted(a);
-    const isRetry = lastFailedAt.has(a.gologinProfileId!);
+    const isRestart = lastEndedAt.has(a.gologinProfileId!);
     try {
       await start(
-        { accountId: a.id, launchId: randomUUID(), plan: autoWarmPlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
+        { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRetry ? "restarted (prior campaign failed)" : "started (Level 4 / passed QC)"} — ${gentle ? "gentle warm ramp (recently restricted)" : "aggressive warm ramp"}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? "gentle warm→cold ramp (recently restricted)" : "warm→cold ramp"}`, "system").catch(() => {});
       if (gentle) gentleStarted++;
-      if (isRetry) retried++;
+      if (isRestart) restarted++;
       started++;
     } catch (e) {
       errors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, started, retried, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, started, restarted, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
