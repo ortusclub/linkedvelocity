@@ -167,7 +167,7 @@ const ATTN_OPTS: { key: AttnKey | "attention"; label: string }[] = [
   { key: "incident", label: "🔴 Open incident" },
   { key: "overdue", label: "Overdue payment" },
   { key: "rotate", label: "Rotate 2FA" },
-  { key: "2fa", label: "2FA reset needed" },
+  { key: "2fa", label: "No 2FA on file" },
   { key: "restricted", label: "Restricted" },
   { key: "incomplete", label: "Incomplete catalogue" },
 ];
@@ -840,7 +840,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                       || (rt0?.status === "active" && !!rt0.currentPeriodEnd && new Date(rt0.currentPeriodEnd).getTime() < nowMs)
                       || (r.status === "rented" && !!r.manualPaidUntil && new Date(r.manualPaidUntil).getTime() < nowMs);
                     const needsRotate = r.twoFactorResetNeeded;   // 2FA key + GoLogin link rotation after a rental ends
-                    // "2FA reset needed": a rentable account with no 2FA secret stored (the ~9 flagged in the audit).
+                    // "No 2FA on file": a rentable account with no 2FA secret stored (the ~9 flagged in the audit). Not renter-related.
                     const needs2fa = !r.twoFactor && (r.status === "rented" || r.status === "available" || r.status === "trial");
                     const proxyDown = false;      // no stored proxy/GoLogin-check-failed flag yet (Phase 2)
                     const proxyExpiring = false;  // no stored proxy-expiry field on the account yet (Phase 2)
@@ -877,7 +877,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (overdue) flags.push({ l: `Overdue ${money(price)}`, ...RP, tip: "Renewal payment failed — chase the renter" });
                     if (needsRotate) flags.push({ l: "Rotate", ...RP, tip: "Rotate 2FA key + GoLogin link before re-renting" });
                     // Open access issues: no stored per-account access-issue list yet (IssueActions only emails) — inert for now.
-                    if (needs2fa) flags.push({ l: "2FA reset needed", ...RP, tip: "No 2FA is set on this account — configure/reset it" });
+                    if (needs2fa) flags.push({ l: "No 2FA on file", ...RP, tip: "No 2FA secret is stored for this account — add it in the account editor. (Not about the renter; separate from the 'Rotate' handover flag.)" });
                     if (r.mailIncidentOpen > 0) flags.push({ l: `🔴 ${r.mailIncidentOpen} incident`, bg: "#fee2e2", fg: "#991b1b", tip: `${r.mailIncidentOpen} open account-mail incident${r.mailIncidentOpen === 1 ? "" : "s"} — open the Account mail tab` });
                     if (r.mailNeedsReview > 0) flags.push({ l: `✉ ${r.mailNeedsReview} mail`, bg: "#eef2ff", fg: "#4338ca", tip: `${r.mailNeedsReview} security email${r.mailNeedsReview === 1 ? "" : "s"} need review — open the Account mail tab` });
                     if (r.restrictedAt && !retired) flags.push({ l: `Restricted ${fmtD(r.restrictedAt)}`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently restricted by LinkedIn" });
