@@ -483,7 +483,6 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       await load();
     } finally { setBusy(null); }
   };
-  const trial = async (a: Account) => { setBusy(a.id); try { await fetch(`/api/admin/accounts/${a.id}/trial`, { method: "POST" }); await load(); } finally { setBusy(null); } };
   const toggleRent = async (a: Account) => {
     if (a.status === "rented" || a.status === "trial") return;
     const next = a.status === "available" ? "unavailable" : "available";
@@ -974,10 +973,6 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                           {/* rent toggle */}
                           <div onClick={(e) => e.stopPropagation()}>
                             <button onClick={() => toggleRent(r)} disabled={r.status === "rented" || r.status === "trial"} title={rentOn ? "Listed for rent" : "Not listed"} style={{ position: "relative", width: 36, height: 20, borderRadius: 999, border: "none", cursor: r.status === "rented" || r.status === "trial" ? "not-allowed" : "pointer", padding: 0, background: rentOn ? GREEN : "#cbd2dc", opacity: r.status === "rented" || r.status === "trial" ? 0.5 : 1 }}><span style={{ position: "absolute", top: 2, left: rentOn ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .15s" }} /></button>
-                          </div>
-                          {/* trial */}
-                          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", justifyContent: "flex-end" }}>
-                            {canonicalStatus(r) === "Available" && !r.shadowRenter && <button onClick={() => trial(r)} disabled={busy === r.id} style={{ border: `1px solid #dde1e8`, background: "#fff", color: INK, borderRadius: 8, padding: "5px 10px", font: `700 12px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Trial</button>}
                           </div>
                           <span style={{ font: `700 14px ${F}`, color: MUT, display: "inline-block", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
                         </div>
