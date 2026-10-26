@@ -14,8 +14,15 @@ export function PipelineReferralInvite({ id, ambassadorName, referrerName, ambas
 }) {
   const portalUrl = referrerToken ? `${APP_URL}/m/${referrerToken}` : null;
   // Set only when this ambassador is already a referrer too — then we link their own portal
-  // instead of the opt-in copy.
+  // instead of the self-signup link.
   const ambassadorPortalUrl = ambassadorPortalToken ? `${APP_URL}/m/${ambassadorPortalToken}` : null;
+  // Self-signup link for an ambassador who isn't a referrer yet — name/email prefilled so
+  // the /become-a-referrer form is one tap for someone who just onboarded.
+  const signupQuery = new URLSearchParams({
+    ...(ambassadorName?.trim() ? { name: ambassadorName.trim() } : {}),
+    ...(ambassador?.email?.trim() ? { email: ambassador.email.trim() } : {}),
+  }).toString();
+  const signupUrl = `${APP_URL}/become-a-referrer${signupQuery ? `?${signupQuery}` : ""}`;
   const [preview, setPreview] = useState<{ recipient: InviteRecipient; channel: keyof IssueContact; subject: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false), [result, setResult] = useState("");
   const request = useRef({ signature: "", id: "" });
@@ -23,7 +30,7 @@ export function PipelineReferralInvite({ id, ambassadorName, referrerName, ambas
 
   const build = (recipient: InviteRecipient, channel: keyof IssueContact) => {
     const name = recipient === "ambassador" ? ambassadorName : (referrerName || "");
-    return referralInviteMessage(recipient, channel === "email" ? "email" : "chat", name, recipient === "referrer" ? portalUrl : ambassadorPortalUrl);
+    return referralInviteMessage(recipient, channel === "email" ? "email" : "chat", name, recipient === "referrer" ? portalUrl : ambassadorPortalUrl, recipient === "ambassador" ? signupUrl : null);
   };
 
   return <div style={{ display: "grid", gap: 10 }}>
