@@ -1,17 +1,21 @@
 export function tierPricing(conns: number, ageMonths: number | null | undefined, hasSalesNav?: boolean, verified?: boolean): { weekly: number; monthly: number; daily: number } {
   const age = ageMonths || 0;
-  let base =
-    conns >= 2000 ? { weekly: 40, monthly: 150, daily: 8 }
-    : conns >= 1000 && age >= 12 ? { weekly: 30, monthly: 110, daily: 6 }
-    : conns >= 500 && age >= 12 ? { weekly: 20, monthly: 75, daily: 4 }
-    : conns >= 100 && age >= 6 ? { weekly: 15, monthly: 50, daily: 3 }
-    // Floor — 50+/3mo and everything below it (including <30 connections).
-    : { weekly: 13, monthly: 45, daily: 2.75 };
-  // Verified (blue-check) premium: +$20/mo, +$6/wk, +$1/day on top of any tier.
-  if (verified) base = { weekly: base.weekly + 6, monthly: base.monthly + 20, daily: base.daily + 1 };
-  // Sales Navigator add-on: +$70/mo, +$20/wk, +$4/day on top of the tier.
-  if (hasSalesNav) return { weekly: base.weekly + 20, monthly: base.monthly + 70, daily: base.daily + 4 };
-  return base;
+  // Pricing grid (monthly): base $45 for under-300 connections / under-3-months old,
+  // +$5 per connection band and +$5 per age band. Tops out at $85 (2000+ conns / 2yr+).
+  //   connection bands: <300 | 300-499 | 500-999 | 1000-1999 | 2000+
+  //   age bands (months): <3 | 3-6 | 6-12 | 12-24 | 24+
+  const connStep = conns >= 2000 ? 4 : conns >= 1000 ? 3 : conns >= 500 ? 2 : conns >= 300 ? 1 : 0;
+  const ageStep = age >= 24 ? 4 : age >= 12 ? 3 : age >= 6 ? 2 : age >= 3 ? 1 : 0;
+  let monthly = 45 + 5 * connStep + 5 * ageStep;
+  // Verified (blue-check) premium: +$20/mo on top of the grid.
+  if (verified) monthly += 20;
+  // Sales Navigator add-on: +$70/mo. Legacy/grandfathered only — not sold to new renters.
+  if (hasSalesNav) monthly += 70;
+  // Weekly and daily derive from the monthly rate (weekly ~28% of monthly; daily ~monthly/18,
+  // rounded to the nearest $0.25).
+  const weekly = Math.round(monthly * 0.28);
+  const daily = Math.round((monthly / 18) * 4) / 4;
+  return { weekly, monthly, daily };
 }
 
 export function monthlyRentalPrice(account: { connectionCount: number; accountAgeMonths?: number | null; hasSalesNav?: boolean; linkedinVerified?: boolean }): number {
