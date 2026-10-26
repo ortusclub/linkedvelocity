@@ -125,6 +125,9 @@ const STATUS_OPTS: [string, string][] = [["available", "Available"], ["unavailab
 function canonicalStatus(a: Account): string {
   if (a.status === "retired") return "Permanently restricted/Inaccessible";
   if (a.status === "removed") return "Removed";
+  // Owner exits (status unavailable + an exit reason): the account is out of our hands —
+  // returned to the owner or our access was cut. Group it as inaccessible, never Construction.
+  if (a.status === "unavailable" && a.exitReason) return "Permanently restricted/Inaccessible";
   if (a.status !== "rented" && a.ownerApplicationId && !a.ownerSetupPaidAt) return "Initial";
   if (a.restrictedAt || a.status === "maintenance") return "Maintenance";
   if (a.status === "rented") return "Rented";
