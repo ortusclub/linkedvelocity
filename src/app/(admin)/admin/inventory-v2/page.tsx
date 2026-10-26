@@ -1456,7 +1456,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
     if (urlV !== (r.linkedinUrl || "")) body.linkedinUrl = urlV.trim() || null;
     if (Object.keys(body).length) patch(r.id, body);
   };
-  const hist = Array.isArray(r.connectionHistory) ? r.connectionHistory.filter((p) => typeof p.count === "number" && !p.note) : [];
+  const hist = Array.isArray(r.connectionHistory) ? r.connectionHistory.map((p, rawIdx) => ({ ...p, rawIdx })).filter((p) => typeof p.count === "number" && !p.note) : [];
   const restr = Array.isArray(r.restrictionLog) ? r.restrictionLog : [];
   const rCnt = restr.filter((e) => e.event === "restricted").length;
   // sparkline from the last up-to-12 points
@@ -1654,7 +1654,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
       {tab === "mail" && <AccountMail accountId={r.id} />}
 
       {tab === "activity" && (() => {
-        const connLog = hist.map((p, i) => ({ at: p.at, count: p.count, delta: i > 0 ? p.count - hist[i - 1].count : null })).reverse().slice(0, 8);
+        const connLog = hist.map((p, i) => ({ at: p.at, count: p.count, rawIdx: p.rawIdx, delta: i > 0 ? p.count - hist[i - 1].count : null })).reverse().slice(0, 8);
         const touches =(r.ownerOutreachLog || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 10);
         const appId = r.ownerApplicationId;
         const saveOwnerConn = () => { const body: Record<string, unknown> = { linkedinJoinedAt: joined ? new Date(joined + "-01T00:00:00Z").toISOString() : null }; const n = parseInt(connVal.replace(/[^0-9]/g, ""), 10); if (!Number.isNaN(n)) body.connectionCount = n; patch(r.id, body); };
@@ -1695,7 +1695,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
                 </div>
                 <button onClick={saveOwnerConn} disabled={busy || !connDirty} style={{ border: "1px solid #dde1e8", background: "#fff", color: INK, borderRadius: 9, padding: 8, font: `700 12.5px ${F}`, cursor: connDirty ? "pointer" : "default", opacity: connDirty ? 1 : 0.5 }}>{connDirty ? "Save to inventory" : "✓ Saved"}</button>
                 {connLog.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: `1px solid ${LINE2}`, paddingTop: 10 }}>{connLog.map((c, i) => (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "96px 56px minmax(0,1fr)", gap: 8, font: `500 12.5px ${F}`, color: SUB }}><span style={{ color: MUT }}>{fmtDY(c.at)}</span><b style={{ color: INK, fontFamily: G }}>{c.count}</b>{c.delta != null && c.delta !== 0 && <span style={{ color: c.delta > 0 ? GREEND : REDD, fontWeight: 600 }}>{c.delta > 0 ? "+" : ""}{c.delta}</span>}</div>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "96px 56px minmax(0,1fr) auto", gap: 8, alignItems: "center", font: `500 12.5px ${F}`, color: SUB }}><span style={{ color: MUT }}>{fmtDY(c.at)}</span><b style={{ color: INK, fontFamily: G }}>{c.count}</b><span>{c.delta != null && c.delta !== 0 && <span style={{ color: c.delta > 0 ? GREEND : REDD, fontWeight: 600 }}>{c.delta > 0 ? "+" : ""}{c.delta}</span>}</span><button onClick={() => patch(r.id, { deleteConnectionHistoryIndex: c.rawIdx })} disabled={!!busy} title="Delete this reading" style={{ border: "none", background: "none", color: MUT, font: `700 13px ${F}`, cursor: busy ? "default" : "pointer", padding: 0, lineHeight: 1, opacity: busy ? 0.4 : 0.7 }}>×</button></div>
                 ))}</div>}
               </Card>
               <RestrictionHistory accountId={r.id} log={restr} onSaved={reload} />
