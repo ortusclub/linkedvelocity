@@ -222,6 +222,11 @@ model LinkedInAccount {
   // until cleared. Reason is free text (e.g. "Inaccessible — can't log in").
   payoutHoldReason      String?       @map("payout_hold_reason")
   payoutHeldAt          DateTime?     @map("payout_held_at")
+  // admin-set (status strip): how an owner exited while the account was off-market
+  // (status=unavailable). "returned" = owner took the account back with clear comms;
+  // "access_lost" = owner cut off our access. Null for any other off-market reason
+  // (the old generic "Withdrawn"). Only meaningful while status=unavailable.
+  exitReason            String?       @map("exit_reason")
   // LV handler (PoC) for an inventory-only account that has no ambassador application
   // (e.g. Ortus-owned accounts handled by Ton). For accounts WITH an application the PoC
   // lives on the application; this covers the account-only pipeline rows.
