@@ -15,15 +15,13 @@ export default function ReferrerSignupForm() {
   const [copied, setCopied] = useState(false);
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
 
-  // Prefill name/email when we linked someone here from an invite (?name=&email=).
-  // Read after mount (not useSearchParams) so the static page needs no Suspense boundary,
-  // and never clobber anything the person has already typed.
+  // Prefill the name when we linked someone here from an invite (?name=). Read after mount
+  // (not useSearchParams) so the static page needs no Suspense boundary, and never clobber
+  // anything the person has already typed. We deliberately don't take email from the URL.
   useEffect(() => {
     try {
-      const q = new URLSearchParams(window.location.search);
-      const name = q.get("name")?.trim() || "";
-      const email = q.get("email")?.trim() || "";
-      if (name || email) setForm(f => ({ ...f, name: f.name || name, email: f.email || email }));
+      const name = new URLSearchParams(window.location.search).get("name")?.trim() || "";
+      if (name) setForm(f => ({ ...f, name: f.name || name }));
     } catch { /* no query / unavailable — leave fields empty */ }
   }, []);
 
