@@ -16,13 +16,13 @@ export function PipelineReferralInvite({ id, ambassadorName, referrerName, ambas
   // Set only when this ambassador is already a referrer too — then we link their own portal
   // instead of the self-signup link.
   const ambassadorPortalUrl = ambassadorPortalToken ? `${APP_URL}/m/${ambassadorPortalToken}` : null;
-  // Self-signup link for an ambassador who isn't a referrer yet — name/email prefilled so
-  // the /become-a-referrer form is one tap for someone who just onboarded.
-  const signupQuery = new URLSearchParams({
-    ...(ambassadorName?.trim() ? { name: ambassadorName.trim() } : {}),
-    ...(ambassador?.email?.trim() ? { email: ambassador.email.trim() } : {}),
-  }).toString();
-  const signupUrl = `${APP_URL}/become-a-referrer${signupQuery ? `?${signupQuery}` : ""}`;
+  // Self-signup link for an ambassador who isn't a referrer yet — name prefilled so the
+  // /become-a-referrer form is one step less. Deliberately no email in the URL (it would
+  // land in logs / history / referrer headers); they type that on the form.
+  const signupQuery = ambassadorName?.trim()
+    ? `?${new URLSearchParams({ name: ambassadorName.trim() }).toString()}`
+    : "";
+  const signupUrl = `${APP_URL}/become-a-referrer${signupQuery}`;
   const [preview, setPreview] = useState<{ recipient: InviteRecipient; channel: keyof IssueContact; subject: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false), [result, setResult] = useState("");
   const request = useRef({ signature: "", id: "" });
