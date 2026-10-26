@@ -4,6 +4,7 @@ import { isReferralEarned, referralCommissionAmount, referralMaturesAt } from "@
 import { currencyConfig } from "@/lib/referral-currency";
 import { monthlyDueDate, setupPaidDate } from "@/lib/payment-schedule";
 import { deleteApplicationCascade } from "@/lib/application-delete";
+import { appIssueIsRestricted } from "@/lib/restriction";
 
 export const dynamic = "force-dynamic";
 
@@ -150,7 +151,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // A rejected application is closed — kept in the records, but it must not read as
       // "Verifying" on the portal just because it once logged in (has an onboardedAt).
       const appRejected = a.status === "rejected";
-      const accountRestricted = recoverable && (!!acct?.restrictedAt || (inProgressDiy && !!a.accountIssue));
+      // Only a genuine restriction surfaces the "Restricted" card to the referrer. A linked
+      // account's restrictedAt is authoritative; for an account-less in-progress DIY, fall back to
+      // the free-text accountIssue but ONLY when it actually reads as a restriction. Previously any
+      // non-empty accountIssue tripped this — so the benign "Self-service login reported by referrer"
+      // note written at sign-in made every fresh DIY onboard show "Restricted", and referrers had to
+      // click "It's unrestricted now" each time. Mirror the pipeline's appIssueIsRestricted() check.
+      const accountRestricted = recoverable && (!!acct?.restrictedAt || (inProgressDiy && appIssueIsRestricted(a.accountIssue)));
       let pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }, line: string, sub: string, progress: number, action: "resume" | "onboard" | "clear" | null = null, fee: string, kind: "action" | "blocked" | "waiting" | "paid";
       if (paid) {
         kind = "paid"; pill = { text: "Paid", tone: "green" }; progress = 6;
