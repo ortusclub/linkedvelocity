@@ -23,6 +23,7 @@ import { sortAccountsByLastUpdated } from "@/lib/account-notes";
 import { toIndustryBucket, INDUSTRY_BUCKETS } from "@/lib/industry";
 import { IssueActions } from "@/components/admin/issue-actions";
 import { ambassadorIssueContact } from "@/lib/issue-contacts";
+import AccountEditForm from "@/components/admin/account-edit-form";
 
 type Touch = { ch: string; text: string; by: string; at: string; [k: string]: unknown };
 type ConnPoint = { at: string; count: number; note?: "rented" | "returned" | string };
@@ -1397,6 +1398,9 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
   const [holdFor, setHoldFor] = useState("");
   const [obOpen, setObOpen] = useState(!!r.offboarding?.open || !!r.twoFactorResetNeeded);
   const [copied, setCopied] = useState(false);
+  // Full-editor-inline: when on, the Account tab swaps its read-only grid for the
+  // same editor the /admin/accounts/[id] page uses (no navigating away).
+  const [editing, setEditing] = useState(false);
   const copyRentLink = () => {
     const link = `${typeof window !== "undefined" ? window.location.origin : ""}/checkout?accounts=${r.id}&direct=1`;
     const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1800); };
@@ -1520,6 +1524,13 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
         const heldActive = !!r.heldUntil && new Date(r.heldUntil) > new Date();
         const complete = !!(r.linkedinHeadline && r.location && r.industry && (r.profilePhotoUrl || r.profileScreenshotUrl));
         const fieldStyle = { border: "1px solid #dde1e8", background: "#fff", borderRadius: 9, padding: "8px 10px", font: `500 13px ${F}`, color: INK, outline: "none", width: "100%" } as const;
+        if (editing) {
+          return (
+            <div style={{ padding: "2px 2px 8px" }}>
+              <AccountEditForm accountId={r.id} embedded onSaved={reload} onClose={() => setEditing(false)} onDeleted={() => { setEditing(false); reload(); }} />
+            </div>
+          );
+        }
         return (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 10, alignItems: "start" }}>
             {/* Column 1 — Owner & rental */}
@@ -1583,7 +1594,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
             {/* Column 2 — Log in */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
               <Card pad="14px">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><a href={`/admin/accounts/${r.id}`} target="_blank" rel="noreferrer" title="Open the full editor — login/personal/work email, password, GoLogin, pricing… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>Edit account ↗</a>{r.gologinProfileId && <button onClick={regenShareLink} disabled={regenBusy || busy} title="Regenerate the GoLogin share link so it carries the profile's current name (use after a rename / out-of-band email change)" style={{ font: `700 12px ${F}`, color: BLUE, background: "transparent", border: `1px solid ${BLUE}`, borderRadius: 7, padding: "3px 9px", cursor: regenBusy ? "wait" : "pointer", opacity: regenBusy ? 0.6 : 1 }}>{regenBusy ? "Regenerating…" : "↻ Regen link"}</button>}{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><button onClick={() => setEditing(true)} title="Edit the full account record inline — login/personal/work email, password, GoLogin, pricing, proxy… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>Edit account</button>{r.gologinProfileId && <button onClick={regenShareLink} disabled={regenBusy || busy} title="Regenerate the GoLogin share link so it carries the profile's current name (use after a rename / out-of-band email change)" style={{ font: `700 12px ${F}`, color: BLUE, background: "transparent", border: `1px solid ${BLUE}`, borderRadius: 7, padding: "3px 9px", cursor: regenBusy ? "wait" : "pointer", opacity: regenBusy ? 0.6 : 1 }}>{regenBusy ? "Regenerating…" : "↻ Regen link"}</button>}{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
                 <Totp accountId={r.id} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Login email (work)</Lbl><Copyable value={r.loginEmail} /></div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Personal email</Lbl><Copyable value={r.personalEmail} /></div>
