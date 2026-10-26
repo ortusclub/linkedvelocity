@@ -144,18 +144,23 @@ export async function POST(req: NextRequest) {
       permanentlyRestricted: false,
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true,
       rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
     },
   });
 
-  // Recently restricted/recovered accounts (any restriction-log event in the last 30
-  // days, matching the warm-up SOP window) are fragile — give them the GENTLE ramp,
-  // not the aggressive one, so maturing doesn't tip them back into a restriction.
+  // Fragile accounts get the GENTLE ramp, not the aggressive one, so maturing doesn't
+  // tip them over. Two kinds are fragile: (1) recently restricted/recovered — any
+  // restriction-log event in the last 30 days (the warm-up SOP window); (2) still
+  // under construction — a freshly built profile that isn't established yet and can't
+  // take an aggressive 10→18→25/day ramp.
   const RESTR_WINDOW_MS = 30 * 86400000;
   function recentlyRestricted(a: { restrictionLog: unknown }): boolean {
     const log = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string }[]) : [];
     return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
+  }
+  function isFragile(a: { restrictionLog: unknown; status: string }): boolean {
+    return recentlyRestricted(a) || a.status === "under_construction";
   }
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
@@ -181,14 +186,14 @@ export async function POST(req: NextRequest) {
   let restarted = 0;
   const errors: { account: string; error: string }[] = [];
   for (const a of candidates.slice(0, cap)) {
-    const gentle = recentlyRestricted(a);
+    const gentle = isFragile(a);
     const isRestart = lastEndedAt.has(a.gologinProfileId!);
     try {
       await start(
         { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? "gentle warm→cold ramp (recently restricted)" : "warm→cold ramp"}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? `gentle warm→cold ramp (fragile — ${a.status === "under_construction" ? "still in construction" : "recently restricted"})` : "warm→cold ramp"}`, "system").catch(() => {});
       if (gentle) gentleStarted++;
       if (isRestart) restarted++;
       started++;
