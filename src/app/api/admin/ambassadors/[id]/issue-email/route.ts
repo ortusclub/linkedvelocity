@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { onboardingMailRequest } from "@/services/onboarding-mail";
-const schema = z.object({ recipient: z.enum(["ambassador", "referrer"]), issue: z.enum(["application_incomplete", "email_added", "email_primary", "twofa", "twofa_incorrect", "password", "restricted", "unresponsive", "other"]), details: z.string().max(3000), subject: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(15000), requestId: z.string().uuid() }).refine(v => v.issue !== "other" || !!v.details.trim());
+const schema = z.object({ recipient: z.enum(["ambassador", "referrer"]), issue: z.enum(["application_incomplete", "email_added", "email_primary", "twofa", "twofa_incorrect", "password", "restricted", "verification_code", "unresponsive", "other"]), details: z.string().max(3000), subject: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(15000), requestId: z.string().uuid() }).refine(v => v.issue !== "other" || !!v.details.trim());
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireAdmin();
