@@ -57,6 +57,7 @@ interface Account {
   ownerUpdatedAt: string | null;
   restrictedAt: string | null;
   permanentlyRestricted: boolean;
+  exitReason: string | null;
   proxyHost: string | null;
   proxyLocation: string | null;
   warmupStartedAt: string | null;
@@ -454,9 +455,9 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   };
   const recheck = async (a: Account) => { setBusy(a.id); try { await fetch(`/api/admin/accounts/${a.id}/check-health`, { method: "POST" }); await load(); } finally { setBusy(null); } };
   // Status-strip state machine. Active/Restricted go through /restricted (keeps downtime-credit +
-  // billing-paused logic in one place); Perm./Withdrawn through /state; and listing an unrented
-  // account Active runs the rental-ready gate (blocked → the server's reason is shown).
-  const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "withdrawn") => {
+  // billing-paused logic in one place); Perm./Returned-to-owner/Access-removed through /state; and
+  // listing an unrented account Active runs the rental-ready gate (blocked → the server's reason is shown).
+  const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "returned" | "accesslost") => {
     if (pill === "restricted" && !confirmRestrict(a)) return;
     const notify = pill === "restricted" && confirmNotify(a);
     const H = { "Content-Type": "application/json" };
@@ -465,8 +466,9 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (pill === "restricted") {
         const res = await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: true, notifyOwnerReferrer: notify }) });
         if (notify && res.ok) { const d = await res.json().catch(() => ({})); reportNotify(d.notify ?? null); }
-      } else if (pill === "perm" || pill === "withdrawn") {
-        await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state: pill }) });
+      } else if (pill === "perm" || pill === "returned" || pill === "accesslost") {
+        const state = pill === "perm" ? "perm" : pill === "returned" ? "returned" : "access_lost";
+        await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state }) });
       } else {
         // Active: clear whatever non-active state it's in, then (if unrented) list it through the gate.
         if (a.restrictedAt) await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: false }) });
@@ -1388,7 +1390,7 @@ function RestrictionHistory({ accountId, log, onSaved }: { accountId: string; lo
 
 function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, release, onRentalReady, patch, patchApp, reload }: {
   r: Account; tab: "account" | "mail" | "activity" | "overview"; setTab: (t: "account" | "mail" | "activity" | "overview") => void; busy: boolean; price: number;
-  setState: (pill: "active" | "restricted" | "perm" | "withdrawn") => void; recheck: () => void;
+  setState: (pill: "active" | "restricted" | "perm" | "returned" | "accesslost") => void; recheck: () => void;
   hold: (days: number, heldFor: string) => void; release: () => void; onRentalReady: (ready: boolean) => void;
   patch: (id: string, body: Record<string, unknown>, reload?: boolean) => Promise<Response | undefined>;
   patchApp: (appId: string, body: Record<string, unknown>) => Promise<Response | undefined>; reload: () => void;
@@ -1485,12 +1487,16 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
     <div onClick={(e) => e.stopPropagation()} style={{ position: "sticky", left: 0, width: "calc(100vw - 96px)", maxWidth: 1328, padding: "4px 16px 14px", background: "#fafbfc", cursor: "default" }}>
       {/* Status strip — the one place to change account state (replaces Mark active / Mark restricted). */}
       {(() => {
-        const sel = (r.permanentlyRestricted || r.status === "retired") ? "perm" : r.restrictedAt ? "restricted" : (r.status === "unavailable" || r.status === "removed") ? "withdrawn" : "active";
-        const PILLS: { k: "active" | "restricted" | "perm" | "withdrawn"; l: string; bg: string; fg: string }[] = [
+        // Off-market (unavailable/removed) splits by exitReason: "returned" = clean handback,
+        // "access_lost" = owner cut our access. A plain delisted account (no exitReason, e.g. the
+        // rent toggle, or a legacy generic "Withdrawn") highlights neither exit pill.
+        const sel = (r.permanentlyRestricted || r.status === "retired") ? "perm" : r.restrictedAt ? "restricted" : (r.status === "unavailable" || r.status === "removed") ? (r.exitReason === "access_lost" ? "accesslost" : r.exitReason === "returned" ? "returned" : "") : "active";
+        const PILLS: { k: "active" | "restricted" | "perm" | "returned" | "accesslost"; l: string; bg: string; fg: string }[] = [
           { k: "active", l: "Active", bg: "#e7f7ee", fg: "#0f7a3d" },
           { k: "restricted", l: "Restricted", bg: "#fff7ed", fg: "#c2410c" },
           { k: "perm", l: "Perm. restricted", bg: "#fef2f2", fg: "#b91c1c" },
-          { k: "withdrawn", l: "Withdrawn", bg: "#f1f3f6", fg: "#5b6779" },
+          { k: "returned", l: "Returned to owner", bg: "#f1f3f6", fg: "#5b6779" },
+          { k: "accesslost", l: "Access removed", bg: "#fef2f2", fg: "#b91c1c" },
         ];
         const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
         const matDays = r.maturingStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.maturingStartedAt).getTime()) / 86400000)) : null;
