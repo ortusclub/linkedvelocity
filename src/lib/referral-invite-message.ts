@@ -2,7 +2,8 @@
 // into a referrer, re-engage the referrer who brought them in, and nudge an ambassador
 // who is ALREADY a referrer. Offer: refer = ₱500, onboard it yourself (DIY) = up to ₱1,000.
 // A portalUrl is passed for anyone who already has a portal (referrers, and ambassadors
-// who are also referrers); a bare ambassador with no portal gets the opt-in copy.
+// who are also referrers); a bare ambassador with no portal gets the self-signup link
+// (/become-a-referrer) so they can create their own link right away — no back-and-forth.
 export type InviteRecipient = "ambassador" | "referrer";
 export type InviteChannel = "email" | "chat";
 
@@ -11,6 +12,7 @@ export function referralInviteMessage(
   channel: InviteChannel,
   name: string,
   portalUrl?: string | null,
+  signupUrl?: string | null,
 ): { subject: string; text: string } {
   const hi = name?.trim() ? `Hi ${name.trim()}` : "Hi";
 
@@ -32,10 +34,12 @@ export function referralInviteMessage(
     return { subject, text: `${hi},\n\nQuick heads up, since you're already one of our referrers: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself, the same way you did with yours. We're still taking on new accounts whenever you have someone in mind.\n\nEverything's in your dashboard:\n${portalUrl}\n\nOrtus, LinkedVelocity` };
   }
 
-  // Ambassador, just onboarded, not a referrer yet — opt in and we set the portal up.
+  // Ambassador, just onboarded, not a referrer yet — send them straight to self-signup
+  // so they create their own referral link immediately (/become-a-referrer, 30 seconds).
   const subject = "Earn on the side with LinkedVelocity";
+  const signupLine = signupUrl || "https://linkedvelocity.com/become-a-referrer";
   if (channel === "chat") {
-    return { subject, text: `${hi}, it's Ortus from LinkedVelocity. You've been through the whole setup now, so you already know how it works, which puts you in a good spot to earn on the side. It's ₱500 when you refer someone, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. Want me to spin up your referral link so you can start?` };
+    return { subject, text: `${hi}, it's Ortus from LinkedVelocity. You've been through the whole setup now, so you already know how it works, which puts you in a good spot to earn on the side. It's ₱500 when you refer someone, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. Sign up here and your link is ready instantly (takes about 30 seconds): ${signupLine}` };
   }
-  return { subject, text: `${hi},\n\nYou've been through the whole setup now, so you already know how it works. That puts you in a good spot to earn on the side.\n\nIt's ₱500 when you refer someone to us, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. We're always glad to take on more.\n\nJust reply and I'll set up your referral link so you can start.\nOrtus, LinkedVelocity` };
+  return { subject, text: `${hi},\n\nYou've been through the whole setup now, so you already know how it works. That puts you in a good spot to earn on the side.\n\nIt's ₱500 when you refer someone to us, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. We're always glad to take on more.\n\nSign up here and your link is ready instantly (takes about 30 seconds):\n${signupLine}\n\nOrtus, LinkedVelocity` };
 }
