@@ -937,7 +937,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                           <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
                             {rn ? (<>
                               <span style={{ font: `600 13px ${F}`, color: INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rn.fullName || rn.email}</span>
-                              <span style={{ font: `600 11px ${F}`, color: rt0?.status === "pending_access" ? "#c2410c" : SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rt0?.status === "pending_access" ? "awaiting access" : `next ${fmtD(r.rentals[0]?.currentPeriodEnd || null)}`}</span>
+                              <span style={{ font: `600 11px ${F}`, color: rt0?.status === "pending_access" ? "#c2410c" : SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rt0?.status === "pending_access" ? (r.rentals[0]?.currentPeriodEnd ? `awaiting access · next ${fmtD(r.rentals[0]?.currentPeriodEnd)}` : "awaiting access") : `next ${fmtD(r.rentals[0]?.currentPeriodEnd || null)}`}</span>
                             </>) : r.shadowRenter ? (<>
                               <span style={{ font: `600 13px ${F}`, color: BLUE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{shadowName(r.shadowRenter)}</span>
                               <span style={{ font: `600 11px ${F}`, color: MUT, whiteSpace: "nowrap" }}>shadow · yields on rent</span>
