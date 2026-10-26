@@ -9,11 +9,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 // Auto-start the warm maturing campaign when an account reaches Level 4 (passed QC
-// / verified) in onboarding, so the team doesn't have to add each one by hand. Only
-// touches accounts that have NEVER had a campaign — it never resurrects a stopped or
-// finished one. Warm-only (connections to other LinkedVelocity profiles): cold is a
-// deliberate post-onboarding step. Gated behind MATURING_AUTOSTART=on and capped per
-// run so the first run can't fire dozens of campaigns at once.
+// / verified) in onboarding, so the team doesn't have to add each one by hand. Starts
+// profiles that never had a campaign, and RE-starts profiles whose campaigns all
+// failed (a fresh replacement plan, after a cooldown); it never disturbs a campaign
+// that is still running or one that already completed. Warm-only (connections to other
+// LinkedVelocity profiles): cold is a deliberate post-onboarding step. Gated behind
+// MATURING_AUTOSTART=on and capped per run so one run can't fire dozens at once.
 const DISQUALIFYING_APP_STATUS = new Set(["onboarded", "rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
@@ -56,16 +57,47 @@ export async function POST(req: NextRequest) {
   }
   const cap = Math.max(1, Number(process.env.MATURING_AUTOSTART_MAX) || 5);
 
-  // Need the engine to know which profiles already have a campaign. If it's down,
+  // Need the engine to know what campaigns each profile already has. If it's down,
   // do nothing (never start blind).
-  let data: { campaigns: { profileIds: string[] }[]; engineError?: string };
+  let data: {
+    campaigns: { profileIds: string[]; status?: string; createdAt?: string; updatedAt?: string }[];
+    engineError?: string;
+  };
   try {
     data = (await list()) as typeof data;
   } catch (e) {
     return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: e instanceof Error ? e.message : String(e) }, { status: 200 });
   }
   if (data.engineError) return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
-  const hasCampaign = new Set(data.campaigns.flatMap((c) => c.profileIds || []).filter(Boolean));
+
+  // Auto-start is no longer one-shot. We skip a profile that has a campaign we must
+  // NOT disturb — one still running (non-terminal) or one that already completed
+  // ("done", i.e. it matured). But a profile whose campaigns ALL FAILED
+  // ("cancelled"/"error") is retried: start() rebuilds a fresh replacement plan and
+  // excludes anyone already contacted. A cooldown keeps a permanently-broken account
+  // from re-firing every tick — it retries at most once per window and simply fails
+  // again on its own (that's the policy), without starving brand-new accounts.
+  const FAILED = new Set(["cancelled", "error"]);
+  const RETRY_COOLDOWN_MS = Math.max(1, Number(process.env.MATURING_RETRY_COOLDOWN_H) || 24) * 3600000;
+  const protectedProfiles = new Set<string>(); // running OR already matured ("done") — never auto-touch
+  const lastFailedAt = new Map<string, number>(); // profile → newest failed-campaign time
+  for (const c of data.campaigns) {
+    const failed = FAILED.has(c.status || "");
+    const t = Date.parse(c.updatedAt || c.createdAt || "") || 0;
+    for (const pid of c.profileIds || []) {
+      if (!pid) continue;
+      if (failed) lastFailedAt.set(pid, Math.max(lastFailedAt.get(pid) || 0, t));
+      else protectedProfiles.add(pid); // live / paused / pending / done
+    }
+  }
+  // May auto-start this profile now? Never had a campaign, or its only campaigns
+  // failed and the cooldown has elapsed. A live or completed campaign blocks it.
+  function campaignOk(gid: string): boolean {
+    if (protectedProfiles.has(gid)) return false;
+    const failedAt = lastFailedAt.get(gid);
+    if (failedAt === undefined) return true;
+    return Date.now() - failedAt >= RETRY_COOLDOWN_MS;
+  }
 
   // Level-4 signal lives on the application (verifiedAt set, not onboarded). Resolve
   // each eligible account to its application the same way the pipeline does.
@@ -132,29 +164,32 @@ export async function POST(req: NextRequest) {
     (a) =>
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
-      !hasCampaign.has(a.gologinProfileId) &&
+      campaignOk(a.gologinProfileId) &&
       atLevel4(a),
   );
 
   let started = 0;
   let gentleStarted = 0;
+  let retried = 0;
   const errors: { account: string; error: string }[] = [];
   for (const a of candidates.slice(0, cap)) {
     const gentle = recentlyRestricted(a);
+    const isRetry = lastFailedAt.has(a.gologinProfileId!);
     try {
       await start(
         { accountId: a.id, launchId: randomUUID(), plan: autoWarmPlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-started (Level 4 / passed QC) — ${gentle ? "gentle warm ramp (recently restricted)" : "aggressive warm ramp"}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRetry ? "restarted (prior campaign failed)" : "started (Level 4 / passed QC)"} — ${gentle ? "gentle warm ramp (recently restricted)" : "aggressive warm ramp"}`, "system").catch(() => {});
       if (gentle) gentleStarted++;
+      if (isRetry) retried++;
       started++;
     } catch (e) {
       errors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, started, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, started, retried, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
