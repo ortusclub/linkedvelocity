@@ -1371,3 +1371,49 @@ export async function sendPaymentsDueDigest(
     `,
   });
 }
+
+// Internal alert: off-platform TRON rentals whose payment is overdue, so the team
+// can manually follow up (chase the renter, pause access, or end the rental). Sent
+// once daily to the team inbox only when there's at least one overdue rental — see
+// src/app/api/cron/overdue-rentals-alert/route.ts.
+export async function sendOverdueRentalsAlert(
+  to: string | string[],
+  items: {
+    renter: string;
+    account: string;
+    cadence: "daily" | "weekly";
+    rate: string;      // e.g. "$6/day" or "$40/week"
+    daysOverdue: number;
+    nextDue: string;   // YYYY-MM-DD the (missed) payment was due
+    address: string | null;
+  }[]
+) {
+  const day = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
+  const rows = items
+    .map(
+      (i) => `<tr style="border-top:1px solid #EEF0F2;">
+          <td style="padding:8px;color:#0F1419;">${i.renter}<br><span style="color:#8899A6;font-size:11px;">${i.account}</span></td>
+          <td style="padding:8px;color:#536471;">${i.rate}</td>
+          <td style="padding:8px;color:#C0392B;font-weight:600;">${i.daysOverdue}d overdue<br><span style="color:#8899A6;font-weight:400;font-size:11px;">due ${day(i.nextDue)}</span></td>
+          <td style="padding:8px;color:#8899A6;font-size:11px;word-break:break-all;">${i.address || "—"}</td>
+        </tr>`
+    )
+    .join("");
+
+  return sendEmail({
+    to,
+    subject: `⚠️ ${items.length} rental payment${items.length !== 1 ? "s" : ""} overdue — follow up`,
+    html: `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:28px 20px;">
+        <h2 style="color:#0F1419;margin:0 0 4px;">Overdue rental payments</h2>
+        <p style="color:#536471;font-size:14px;margin:0 0 16px;"><strong style="color:#C0392B;">${items.length}</strong> off-platform rental${items.length !== 1 ? "s haven't" : " hasn't"} paid by the due date. Follow up manually — chase the renter, pause access, or end the rental.</p>
+        <table style="width:100%;border-collapse:collapse;font-family:sans-serif;font-size:13px;">
+          <tr style="color:#8899A6;text-align:left;"><th style="padding:6px 8px;font-weight:600;">Renter</th><th style="padding:6px 8px;font-weight:600;">Rate</th><th style="padding:6px 8px;font-weight:600;">Status</th><th style="padding:6px 8px;font-weight:600;">Pay-to address</th></tr>
+          ${rows}
+        </table>
+        <p style="margin:26px 0 0;"><a href="${appUrl}/admin/rentals" style="color:#0A66C2;text-decoration:none;font-size:13px;">Open the Rentals page →</a></p>
+      </div>
+    `,
+  });
+}

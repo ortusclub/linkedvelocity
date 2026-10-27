@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { paymentStatus, accessStatus, isManualGrant, weeklyBilling, weeklyDueState, advanceWeeklyNotes, weeklyPaidStamp } from "@/lib/rental-tracker";
+import { paymentStatus, accessStatus, isManualGrant, weeklyBilling, weeklyDueState, advanceWeeklyNotes, weeklyPaidStamp, dailyBilling, dailyDueState, dailyPaidStamp } from "@/lib/rental-tracker";
 
 interface Rental {
   id: string;
@@ -36,7 +36,8 @@ const daysUntil = (d: string | null) => (d ? Math.ceil((new Date(d).getTime() - 
 const profileEmail = (a: Rental["linkedinAccount"]) => (a.notes || "").match(/Profile email:\s*(\S+@\S+?\.\S+?)[\s.]/)?.[1] || a.linkedinName;
 const initialsOf = (s: string) => (s || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?";
 const weeklyOverdue = (r: Rental) => { const b = weeklyBilling(r.notes); return !!b && weeklyDueState(b.nextDue).tone === "overdue"; };
-const attnOf = (r: Rental) => !!r.linkedinAccount.restrictedAt || ["Overdue", "Expired"].includes(paymentStatus(r)) || accessStatus(r) === "Revoked" || weeklyOverdue(r);
+const dailyOverdue = (r: Rental) => { const b = dailyBilling(r.notes); if (!b) return false; const nd = dailyPaidStamp(r.notes)?.nextDue ?? b.from; return dailyDueState(nd).tone === "overdue"; };
+const attnOf = (r: Rental) => !!r.linkedinAccount.restrictedAt || ["Overdue", "Expired"].includes(paymentStatus(r)) || accessStatus(r) === "Revoked" || weeklyOverdue(r) || dailyOverdue(r);
 
 // Colour a weekly-due badge by urgency (reuses the existing status-chip tokens).
 const weeklyStyle = (tone: string): React.CSSProperties => {
@@ -323,6 +324,10 @@ export default function AdminRentalsPage() {
                 const renewLabel = restricted ? "Billing paused" : days == null ? "—" : days >= 0 ? `${r.autoRenew ? "Renews" : "Ends"} in ${days}d` : `Overdue ${-days}d`;
                 const wb = weeklyBilling(r.notes);
                 const wDue = wb ? weeklyDueState(wb.nextDue) : null;
+                const db = dailyBilling(r.notes);
+                const dStamp = db ? dailyPaidStamp(r.notes) : null;
+                const dNextDue = db ? (dStamp?.nextDue ?? db.from) : null;
+                const dDue = dNextDue ? dailyDueState(dNextDue) : null;
                 return (
                   <div key={r.id} style={{ display: "grid", gridTemplateColumns: F.GRID, gap: 18, alignItems: "start", padding: "16px 22px", borderTop: "1px solid var(--divider)", borderLeft: "3px solid", borderLeftColor: attnOf(r) ? "var(--warn-badge-text)" : "transparent" }}>
                     {/* account */}
@@ -341,6 +346,15 @@ export default function AdminRentalsPage() {
                             <span title={`Confirmed on-chain · tx ${ps.tx}`} style={{ font: `600 11px ${F_SANS}`, color: "var(--st-active-fg)" }}>✓ Paid {fmtY(ps.date)} · tx {ps.tx.slice(0, 6)}…</span>
                           ) : null; })()}
                           <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)" }}>Weekly · manual (off-platform)</span>
+                        </>
+                      ) : db && dDue && dNextDue && !restricted ? (
+                        <>
+                          <span style={{ ...chip, ...weeklyStyle(dDue.tone), alignSelf: "flex-start" }}>{dDue.label} · ${db.rateRaw}/day</span>
+                          <span style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted)" }}>Next payment {fmtY(dNextDue)}</span>
+                          {dStamp ? (
+                            <span title={dStamp.tx ? `Auto-summed on-chain · latest tx ${dStamp.tx}` : "Auto-summed on-chain"} style={{ font: `600 11px ${F_SANS}`, color: "var(--st-active-fg)" }}>✓ ${dStamp.total} received{dStamp.tx ? ` · tx ${dStamp.tx.slice(0, 6)}…` : ""}</span>
+                          ) : null}
+                          <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)" }}>Daily · auto (unique address)</span>
                         </>
                       ) : (
                         <>
@@ -365,6 +379,8 @@ export default function AdminRentalsPage() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                       {wb ? (
                         <button onClick={() => markWeeklyPaid(r)} disabled={busy === r.id} title="Log this week's payment as received and roll the due date forward one week" style={{ font: `600 12px ${F_SANS}`, color: "#fff", background: "var(--btn-primary-bg)", border: "none", padding: "7px 10px", borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap" }}>✓ Mark paid (+1 wk)</button>
+                      ) : db ? (
+                        <span title="Payments are summed automatically from this renter's unique TRON address by the daily-payment cron" style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)", whiteSpace: "nowrap" }}>⟳ Auto-tracked on-chain</span>
                       ) : (
                         <>
                           {(r.status === "active" || r.status === "payment_failed" || r.status === "expired") && (
