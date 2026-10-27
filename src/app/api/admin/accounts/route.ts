@@ -5,6 +5,7 @@ import { z } from "zod";
 import * as gologin from "@/services/gologin";
 import { persistImageUrl } from "@/lib/persist-image";
 import { markOwnerOnboardedIfReady } from "@/lib/onboarding";
+import { decryptSecret } from "@/lib/crypto-creds";
 
 const createAccountSchema = z.object({
   linkedinName: z.string().min(1),
@@ -143,6 +144,8 @@ export async function GET(req: NextRequest) {
         || (ownerEmail ? appMap.get(ownerEmail.toLowerCase()) : undefined);
       return {
         ...a,
+        accountPassword: decryptSecret(a.accountPassword),
+        twoFactor: decryptSecret(a.twoFactor),
         ownerName: ownerMap.get(ownerEmail) || app?.fullName || ownerEmail || null,
         ownerEmail: ownerEmail || null,
         ownerApplicationId: app?.id || null,

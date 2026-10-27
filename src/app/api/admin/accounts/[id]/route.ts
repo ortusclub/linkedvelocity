@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { z } from "zod";
 import { persistImageUrl } from "@/lib/persist-image";
 import { markOwnerOnboardedIfReady } from "@/lib/onboarding";
-import { decryptSecret } from "@/lib/crypto-creds";
+import { encryptSecret, decryptSecret } from "@/lib/crypto-creds";
 import { provisionAccount } from "@/lib/provision-account";
 import * as gologin from "@/services/gologin";
 import { restrictionUpdate } from "@/lib/restriction";
@@ -305,6 +305,10 @@ export async function PATCH(
     if (data.status === "available") {
       data.listed = true;
     }
+
+    // Encrypt new credentials before storing them; legacy plaintext reads still work.
+    if (data.accountPassword !== undefined) data.accountPassword = encryptSecret(data.accountPassword);
+    if (data.twoFactor !== undefined) data.twoFactor = encryptSecret(data.twoFactor);
 
     const account = await prisma.linkedInAccount.update({
       where: { id },

@@ -1,5 +1,6 @@
 import { currencyConfigFor } from "@/lib/referral-currency";
 import { prisma } from "@/lib/prisma";
+import { decryptSecret } from "@/lib/crypto-creds";
 
 // ── Single source of truth for the Account Owners view ──
 // Both the admin page (/api/admin/owners) and the Google-Sheets CSV export
@@ -87,8 +88,8 @@ function toAccount(a: {
     ambassadorPayment: a.ambassadorPayment,
     loginEmail: a.loginEmail,
     personalEmail: a.personalEmail,
-    accountPassword: a.accountPassword,
-    twoFactor: a.twoFactor,
+    accountPassword: decryptSecret(a.accountPassword),
+    twoFactor: decryptSecret(a.twoFactor),
     workEmail: a.workEmail,
     restrictedAt: a.restrictedAt,
   };
