@@ -77,7 +77,10 @@ export async function POST(req: NextRequest) {
     select: {
       id: true, gologinProfileId: true, maturingStartedAt: true, maturingStalledAt: true, maturingStalledReason: true, linkedinUrl: true, notes: true,
       status: true, restrictedAt: true, permanentlyRestricted: true, linkedinAccountHealth: true,
-      rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
+      // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
+      // Agent360) — a shadow rental keeps status "available" but the renter is using
+      // the account, so a running campaign on it must be stopped, not left firing.
+      rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] } }, select: { id: true }, take: 1 },
     },
   });
 

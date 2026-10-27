@@ -145,7 +145,11 @@ export async function POST(req: NextRequest) {
     },
     select: {
       id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true,
-      rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false }, select: { id: true }, take: 1 },
+      // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
+      // Agent360): the renter is using the account, so it must not fire its own
+      // connection requests. Shadow rentals keep status "available", so they'd slip
+      // past a status check — we must catch them via the rental itself.
+      rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] } }, select: { id: true }, take: 1 },
     },
   });
 
