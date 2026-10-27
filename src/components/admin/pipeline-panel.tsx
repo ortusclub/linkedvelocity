@@ -611,6 +611,8 @@ export function AccountOnlyCard({ r, patchAccount, deleteRestrictionEvent }: {
 export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
   const { busy, patchApp, patchAccount, deleteRestrictionEvent, workflow, setStage, provisionGologin, createAccount, verifySignin, transferToLv, generateProfile, applyProfile, deleteGologin, logTouch, onDeleteApp } = h;
   const [editSec, setEditSec] = useState<string | null>(null);
+  // null = not rejecting; string = the reason-entry box is open (holds the typed reason).
+  const [rejectReason, setRejectReason] = useState<string | null>(null);
   const live = isLive(r);
   const onboarded = r.status === "onboarded";
   const paid = setupPaid(r);
@@ -851,13 +853,22 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
       {/* ── Footer: accept / onboarded state + delete ── */}
       {!live ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, paddingTop: 14, marginTop: 16, borderTop: "1px solid var(--divider,#eee)", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "flex-start" }}>
             {r.status !== "rejected" && r.status !== "unreachable" && (
-              <select value="" disabled={busy} onChange={(e) => { if (e.target.value) void workflow(r.id, { status: e.target.value }); }} title="Stop / close this application (Withdrawn lives in the Status toggle above)" style={{ font: `700 12px ${F_SANS}`, color: "var(--danger,#c0392b)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
+              <select value="" disabled={busy || rejectReason !== null} onChange={(e) => { const v = e.target.value; if (!v) return; if (v === "rejected") setRejectReason(""); else void workflow(r.id, { status: v }); }} title="Stop / close this application (Withdrawn lives in the Status toggle above)" style={{ font: `700 12px ${F_SANS}`, color: "var(--danger,#c0392b)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
                 <option value="">Close application…</option>
                 <option value="unreachable">Unresponsive — no reply</option>
-                <option value="rejected">Rejected — doesn&apos;t qualify</option>
+                <option value="rejected">Rejected — with reason…</option>
               </select>
+            )}
+            {rejectReason !== null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 260 }}>
+                <textarea autoFocus value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} maxLength={1000} placeholder="Why are you rejecting? (kept on record, e.g. tried to switch referrer verah-77 → aiza)" style={{ font: `500 12px ${F_SANS}`, color: "var(--fg,#111)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", resize: "vertical", width: "100%", boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button disabled={busy || !rejectReason.trim()} onClick={async () => { const reason = rejectReason.trim(); await workflow(r.id, { status: "rejected", addTouch: { ch: "note", text: `Rejected — ${reason}` } }); setRejectReason(null); }} style={{ font: `700 12px ${F_SANS}`, color: "#fff", background: "var(--danger,#c0392b)", border: "none", borderRadius: 8, padding: "7px 12px", cursor: rejectReason.trim() ? "pointer" : "default", opacity: busy || !rejectReason.trim() ? 0.5 : 1 }}>Reject &amp; record reason</button>
+                  <button disabled={busy} onClick={() => setRejectReason(null)} style={{ font: `700 12px ${F_SANS}`, color: "var(--muted,#647189)", background: "transparent", border: "1px solid var(--line,#d6e4fb)", borderRadius: 8, padding: "7px 12px", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
             )}
           </div>
           <span style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>Accept &amp; advance from the Workflow steps above · reopen a closed one with Mark received</span>
