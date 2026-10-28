@@ -856,7 +856,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     const needs2fa = !r.twoFactor && (r.status === "rented" || r.status === "available" || r.status === "trial");
                     const proxyDown = false;      // no stored proxy/GoLogin-check-failed flag yet (Phase 2)
                     const proxyExpiring = false;  // no stored proxy-expiry field on the account yet (Phase 2)
-                    const linkedArmy = false;     // no per-account LinkedArmy marker yet (inventoryPool is all "main")
+                    const linkedArmy = r.inventoryPool === "campaign";   // campaign pool = our idle/fresh accounts earmarked to run LinkedArmy outreach
                     const retired = canonicalStatus(r) === "Permanently restricted/Inaccessible";
                     const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
                     // Auto maturing flag (reconcile-maturing cron): a live LinkedVelocity warm/cold campaign is running.

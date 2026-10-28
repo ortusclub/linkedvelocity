@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { maskPublicAccount } from "@/lib/mask";
 import { getSession } from "@/lib/auth";
-import { publicInventorySlice, hasFullListAccess, PUBLIC_AVAILABLE_WHERE } from "@/lib/public-inventory";
+import { publicInventorySlice, hasFullListAccess, PUBLIC_AVAILABLE_WHERE, SEGREGATED_POOLS } from "@/lib/public-inventory";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   // into a link Sam hands out) unlocks the full roster.
   const fullList = hasFullListAccess(searchParams.get("key"));
   if (fullList) {
-    where.inventoryPool = { notIn: ["ortus", "apex"] };
+    where.inventoryPool = { notIn: SEGREGATED_POOLS };
     if (statusFilter === "available") Object.assign(where, PUBLIC_AVAILABLE_WHERE);
     else if (statusFilter) { where.status = statusFilter; where.listed = true; }
     else and.push({ OR: [
