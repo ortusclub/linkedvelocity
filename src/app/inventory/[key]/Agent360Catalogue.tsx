@@ -37,6 +37,10 @@ export type CatalogueConfig = {
   showAge: boolean;
   // snAddon: if set, show a "+ $N/mo with Sales Navigator" subline under the price (Will = 70).
   snAddon: number | null;
+  // hideSoon: drop the "Freeing up soon" bucket (shadow-held/Ortus accounts). On for Agent360 so we
+  // don't advertise accounts our own engine is still driving (double-renter/leak risk); they only
+  // show once genuinely freed and cleanly handed over.
+  hideSoon?: boolean;
 };
 
 const DEFAULT_CFG: CatalogueConfig = {
@@ -51,6 +55,7 @@ const DEFAULT_CFG: CatalogueConfig = {
   showRent: true,
   showAge: false,
   snAddon: null,
+  hideSoon: true,
 };
 
 const sortVC = (a: A360Row, b: A360Row) => Number(b.v) - Number(a.v) || b.cc - a.cc;
@@ -245,7 +250,10 @@ export default function Agent360Catalogue({ rows, password, cfg = DEFAULT_CFG }:
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, industry, vFilter]);
-  const shownCount = buckets.now.length + buckets.soon.length + buckets.warm.length;
+  const soonItems = cfg.hideSoon ? [] : buckets.soon;
+  const shownCount = buckets.now.length + soonItems.length + buckets.warm.length;
+  // Total excludes shadow-held accounts when they're hidden, so the count matches what's shown.
+  const displayTotal = cfg.hideSoon ? rows.filter((r) => !(r.status === "available" && r.shadow)).length : rows.length;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -339,13 +347,13 @@ export default function Agent360Catalogue({ rows, password, cfg = DEFAULT_CFG }:
               <span className="fcount">{shownCount} shown</span>
             </div>
             <Group eyebrow="Ready today" cls="now" title="Available now" hint={cfg.showRent ? "Live and rentable right now — first come, first served. Hit Rent to take one." : "Live and available right now. Tick the ones you’d like and reply with your picks."} items={buckets.now} picks={picks} onToggle={toggle} showRent={cfg.showRent} showAge={cfg.showAge} snAddon={cfg.snAddon} />
-            <Group eyebrow="Within ~1 week" cls="soon" title="Freeing up soon" hint="Currently finishing another engagement. These can be yours within about a week of ordering." items={buckets.soon} picks={picks} onToggle={toggle} showRent={cfg.showRent} showAge={cfg.showAge} snAddon={cfg.snAddon} />
+            {!cfg.hideSoon && <Group eyebrow="Within ~1 week" cls="soon" title="Freeing up soon" hint="Currently finishing another engagement. These can be yours within about a week of ordering." items={buckets.soon} picks={picks} onToggle={toggle} showRent={cfg.showRent} showAge={cfg.showAge} snAddon={cfg.snAddon} />}
             <Group eyebrow="In warm-up" cls="warm" title="Coming soon" hint="Being aged and warmed now. Earmark any and we’ll prioritise them and hand them over once ready." items={buckets.warm} picks={picks} onToggle={toggle} showRent={cfg.showRent} showAge={cfg.showAge} snAddon={cfg.snAddon} />
             {shownCount === 0 && <div className="noresults">No accounts match those filters. Try clearing them.</div>}
             <p className="note">
               {filtersActive
-                ? <>{shownCount} of {rows.length} accounts match &middot; {buckets.now.length} available now, {buckets.soon.length} within a week, {buckets.warm.length} in warm-up.</>
-                : <>{rows.length} accounts total &middot; {buckets.now.length} available now, {buckets.soon.length} within a week, {buckets.warm.length} in warm-up.</>}<br />
+                ? <>{shownCount} of {displayTotal} accounts match &middot; {buckets.now.length} available now{cfg.hideSoon ? "" : `, ${soonItems.length} within a week`}, {buckets.warm.length} in warm-up.</>
+                : <>{displayTotal} accounts total &middot; {buckets.now.length} available now{cfg.hideSoon ? "" : `, ${soonItems.length} within a week`}, {buckets.warm.length} in warm-up.</>}<br />
               Prices per account / month. {cfg.showRent ? "Rent available accounts directly; earmark anything not yet available and we’ll reserve it for you." : "Tick the ones you’d like and we’ll set them up with Sales Navigator."}
             </p>
           </main>
