@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
       permanentlyRestricted: false,
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360): the renter is using the account, so it must not fire its own
       // connection requests. Shadow rentals keep status "available", so they'd slip
@@ -196,12 +196,24 @@ export async function POST(req: NextRequest) {
       atLevel4(a),
   );
 
+  // PRIORITY: pipeline/onboarding accounts are on a 7-day clock; inventory is open-ended.
+  // So pipeline always goes first, and within each group the longest-waiting (oldest)
+  // account leads — a time-bound onboarding account never waits behind an inventory one.
+  const PIPELINE_STATUS = new Set(["under_construction", "construction_immature", "under_review"]);
+  const isPipeline = (a: { status: string }) => PIPELINE_STATUS.has(a.status);
+  const ordered = [...candidates].sort((a, b) => {
+    const pa = isPipeline(a) ? 0 : 1, pb = isPipeline(b) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+
   let started = 0;
   let gentleStarted = 0;
   let restarted = 0;
   let startFailed = 0;
+  let queueFull = false;
   const errors: { account: string; error: string }[] = [];
-  for (const a of candidates.slice(0, cap)) {
+  for (const a of ordered.slice(0, cap)) {
     const gentle = isFragile(a);
     const isRestart = lastEndedAt.has(a.gologinProfileId!);
     try {
@@ -216,11 +228,18 @@ export async function POST(req: NextRequest) {
       if (isRestart) restarted++;
       started++;
     } catch (e) {
-      // start() threw — the engine couldn't launch this profile (e.g. it can't log in).
-      // Stamp a cooldown so the next tick advances PAST it instead of re-hitting it, and
-      // surface it in the ⚠️ attention list. Only re-logs to the timeline on a new failure.
       const msg = e instanceof Error ? e.message : String(e);
       errors.push({ account: a.loginEmail || a.id, error: msg });
+      // Engine on-ramp full ("You already have N campaigns queued or scheduled"). This is
+      // a GLOBAL limit, not this account's fault — don't penalize it. Just stop adding this
+      // tick; the queue drains as campaigns launch, and we try again next run.
+      if (/queued or scheduled|campaigns? queued|queue slot|CAMPAIGN_QUEUE_FULL/i.test(msg)) {
+        queueFull = true;
+        break;
+      }
+      // Real per-account failure — the engine couldn't launch THIS profile (e.g. it can't
+      // log in). Stamp a cooldown so the next tick advances PAST it instead of re-hitting it,
+      // and surface it in the ⚠️ attention list. Only re-logs to the timeline on a new failure.
       startFailed++;
       const firstTime = !a.maturingStartFailedAt;
       await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: new Date(), maturingStartFailedReason: `couldn't start — ${msg.slice(0, 120)}` } }).catch(() => {});
@@ -228,7 +247,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, started, restarted, gentleStarted, startFailed, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, pipeline: ordered.filter(isPipeline).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
