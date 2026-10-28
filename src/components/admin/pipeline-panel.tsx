@@ -409,7 +409,8 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent, onNote 
           <span style={{ font: `700 10.5px ${F_SANS}`, color: "var(--purple-chip-text,#6b3fd4)" }}>
             Referrer says {r.restrictionReport.type === "recovered" ? "it's unrestricted now" : "the owner did LinkedIn's QR/ID check"} · {fmtDate(r.restrictionReport.at)} — verify, then set Active to recover
           </span>
-          <button onClick={(e) => { e.stopPropagation(); onApp({ setRestrictionReport: null, restrictionReport: null }); }} style={{ marginLeft: "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", border: "none", background: "var(--neutral-bg,#eef1f5)", color: "var(--muted,#647189)" }}>Dismiss</button>
+          {r.accountId && <a href={`/admin/restrictions-v2?focus=${encodeURIComponent(r.accountId)}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Open this account's recovery case to verify and log the outcome" style={{ marginLeft: "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", textDecoration: "none", background: "var(--purple-chip-text,#6b3fd4)", color: "#fff", whiteSpace: "nowrap" }}>Open recovery case →</a>}
+          <button onClick={(e) => { e.stopPropagation(); onApp({ setRestrictionReport: null, restrictionReport: null }); }} style={{ marginLeft: r.accountId ? 0 : "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", border: "none", background: "var(--neutral-bg,#eef1f5)", color: "var(--muted,#647189)" }}>Dismiss</button>
         </div>
       )}
     </div>
