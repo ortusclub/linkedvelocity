@@ -86,11 +86,13 @@ async function pipelineRows(priceFn: (a: PriceInput) => number): Promise<A360Row
       select: sel,
     }),
     prisma.linkedInAccount.findMany({
-      where: { status: { in: ["under_construction", "construction_immature"] }, restrictedAt: null, twoFactorResetNeeded: false, linkedinUrl: { not: null } },
+      where: { status: { in: ["under_construction", "construction_immature"] }, restrictedAt: null, twoFactorResetNeeded: false, exitReason: null, linkedinUrl: { not: null } },
       select: { ...sel, personalEmail: true },
     }),
     prisma.linkedInAccount.findMany({
-      where: { status: "unavailable", restrictedAt: null, twoFactorResetNeeded: false, linkedinUrl: { not: null } },
+      // exitReason set = account left inventory (returned to owner / access lost), so exclude it
+      // even if its pipeline application is still verified — otherwise exited accounts leak into "Coming soon".
+      where: { status: "unavailable", restrictedAt: null, twoFactorResetNeeded: false, exitReason: null, linkedinUrl: { not: null } },
       select: { ...sel, personalEmail: true },
     }),
     prisma.ambassadorApplication.findMany({
