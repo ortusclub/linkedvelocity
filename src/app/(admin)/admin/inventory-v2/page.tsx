@@ -805,7 +805,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
         <div style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 14, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.04)" }}>
           <div style={{ minWidth: 1360 }}>
             <div style={{ display: "grid", gridTemplateColumns: headCols, gap: 12, alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${LINE2}`, background: "#fafbfc", font: `700 10.5px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: MUT }}>
-              <span>Account</span><span>Conn.</span><span>Age</span><span>Flags</span><span>Price</span><span>Renter / status</span><span>LV PoC</span><span>{checkMode ? "Health" : "Updated"}</span><span>Rent</span><span></span><span></span>
+              <span>Account</span><span>Conn.</span><span>Age</span><span>Flags</span><span>Price</span><span>Renter / status</span><span>LV PoC</span><span>{checkMode ? "Health" : "Checked"}</span><span>Rent</span><span></span><span></span>
             </div>
             {grouped.length === 0 && <div style={{ padding: 40, textAlign: "center", font: `500 13.5px ${F}`, color: MUT }}>No accounts match.</div>}
             {grouped.map((g) => {
@@ -993,8 +993,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                               </div>
                             ) : (
                               <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                                <span title={r.updatedAt ? `Last updated ${fmtDY(r.updatedAt)}` : ""} style={{ font: `700 13px ${G}`, color: INK, whiteSpace: "nowrap" }}>{agoShort(r.updatedAt || r.createdAt)}</span>
-                                <span title={r.healthCheckedAt ? `Health checked ${fmtDY(r.healthCheckedAt)}` : "Never health-checked"} style={{ font: `600 10.5px ${F}`, color: hcFg, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hcText}</span>
+                                <span title={r.healthCheckedAt ? `Health checked ${fmtDY(r.healthCheckedAt)}` : "Never health-checked"} style={{ font: `700 13px ${F}`, color: hcFg, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hcText}</span>
+                                <span title={r.updatedAt ? `Last updated ${fmtDY(r.updatedAt)}` : ""} style={{ font: `600 10.5px ${F}`, color: MUT, whiteSpace: "nowrap" }}>updated {agoShort(r.updatedAt || r.createdAt)}</span>
                               </div>
                             );
                           })()}
