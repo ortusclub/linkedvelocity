@@ -98,13 +98,15 @@ function mailDerivedSteps(a: CaseAccount): Step[] {
       else if (/remain(?:s)? restricted|does ?n.?t comply|not comply|rejected|declin|unable to (?:restore|reinstate)|will remain restricted/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn: appeal rejected (email)" });
       else out.push({ k: "li", o: "pending", at, note: "LinkedIn appeal update (email)" });
     } else if (m.type === "id_verification") {
-      // Success FIRST — "removed the restriction" / "verifying your identity" means it worked.
-      // (The failure patterns must be specific to verification, not generic words like "expired"
-      // which also appear in the password-reset-link instructions of a SUCCESS email.)
-      if (/removed (the )?restriction|restriction (has been |was )?(removed|lifted)|pleased to (let you know|inform)|thank you for verifying|verif(y|ied|ying) your identity|successfully verified|identity (has been )?(verified|confirmed)|access (has been )?restored|no longer restricted|reinstat/i.test(t))
+      // FAILURE / resubmit FIRST. LinkedIn's rejection emails lead with "Thanks for TRYING to verify
+      // your identity ... we would need you to upload another ID", so a bare "verify your identity"
+      // must NOT be read as success — that phrase appears in the ID-link request and the resubmit
+      // email too. Only an explicit success phrase ("removed the restriction", "successfully
+      // verified", "identity verified/confirmed") counts; anything ambiguous stays pending, never ok.
+      if (/unable to verify|could ?n.?t verify|couldn.?t verify|verification (was )?(unsuccessful|failed)|we (were|are) unable to|identity (could not|couldn.?t) be|does ?n.?t (meet|comply)|please resubmit|trying to verify|upload another id|another id (apart|other|instead)|apart from the id|a (?:different|another) (?:government[- ]?issued )?id|identification other than|provide .{0,30}(?:different|another).{0,15}id/i.test(t))
+        out.push({ k: "id", o: "fail", at, err: "LinkedIn: ID not accepted — resubmit a different ID (email)" });
+      else if (/removed (the )?restriction|restriction (has been |was )?(removed|lifted)|pleased to (let you know|inform)|thank(?:s| you) (?:you )?for verifying|successfully verified|identity (has been )?(verified|confirmed)|access (has been )?restored|no longer restricted|reinstat/i.test(t))
         out.push({ k: "id", o: "ok", at, note: "LinkedIn: ID verified / restriction removed (email)" });
-      else if (/unable to verify|could ?n.?t verify|couldn.?t verify|verification (was )?(unsuccessful|failed)|we (were|are) unable to|identity (could not|couldn.?t) be|does ?n.?t (meet|comply)|please resubmit/i.test(t))
-        out.push({ k: "id", o: "fail", at, err: "LinkedIn: ID check failed (email)" });
       else out.push({ k: "id", o: "pending", at, note: "LinkedIn ID verification (email)" });
     } else if (m.type === "recovery_appeal" || m.type === "appeal_intake") {
       out.push({ k: "form", o: "pending", at, note: m.type === "appeal_intake" ? "LinkedIn asked for more info (email)" : "Recovery appeal (email)" });
