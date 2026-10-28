@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
       permanentlyRestricted: false,
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360): the renter is using the account, so it must not fire its own
       // connection requests. Shadow rentals keep status "available", so they'd slip
@@ -177,17 +177,29 @@ export async function POST(req: NextRequest) {
     return false;
   }
 
+  // Skip an account whose last auto-start THREW (engine couldn't launch it — e.g. the
+  // profile can't log in) until a cooldown elapses. Without this the cron re-picks the
+  // same failing accounts at the front every tick, burning all `cap` start slots on
+  // them and never reaching the accounts that CAN start. After the cooldown it retries
+  // once; a persistently-broken account just surfaces in the ⚠️ attention list.
+  const STARTFAIL_COOLDOWN_MS = Math.max(1, Number(process.env.MATURING_STARTFAIL_COOLDOWN_H) || 6) * 3600000;
+  function startFailOk(a: { maturingStartFailedAt: Date | null }): boolean {
+    return !a.maturingStartFailedAt || Date.now() - a.maturingStartFailedAt.getTime() >= STARTFAIL_COOLDOWN_MS;
+  }
+
   const candidates = accounts.filter(
     (a) =>
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
       campaignOk(a.gologinProfileId) &&
+      startFailOk(a) &&
       atLevel4(a),
   );
 
   let started = 0;
   let gentleStarted = 0;
   let restarted = 0;
+  let startFailed = 0;
   const errors: { account: string; error: string }[] = [];
   for (const a of candidates.slice(0, cap)) {
     const gentle = isFragile(a);
@@ -198,15 +210,25 @@ export async function POST(req: NextRequest) {
         "system",
       );
       await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? `gentle warm→cold ramp (fragile — ${a.status === "under_construction" ? "still in construction" : "recently restricted"})` : "warm→cold ramp"}`, "system").catch(() => {});
+      // Clear any prior start-failure mark now that it launched.
+      if (a.maturingStartFailedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: null, maturingStartFailedReason: null } }).catch(() => {});
       if (gentle) gentleStarted++;
       if (isRestart) restarted++;
       started++;
     } catch (e) {
-      errors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
+      // start() threw — the engine couldn't launch this profile (e.g. it can't log in).
+      // Stamp a cooldown so the next tick advances PAST it instead of re-hitting it, and
+      // surface it in the ⚠️ attention list. Only re-logs to the timeline on a new failure.
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push({ account: a.loginEmail || a.id, error: msg });
+      startFailed++;
+      const firstTime = !a.maturingStartFailedAt;
+      await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: new Date(), maturingStartFailedReason: `couldn't start — ${msg.slice(0, 120)}` } }).catch(() => {});
+      if (firstTime) await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `⚠️ Maturing could not start (auto) — ${msg.slice(0, 140)}`, "system").catch(() => {});
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, started, restarted, gentleStarted, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, started, restarted, gentleStarted, startFailed, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
