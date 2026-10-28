@@ -8,7 +8,7 @@ import { grantRentalAccess } from "@/lib/rental-access";
 import { SALES_NAV_MONTHLY } from "@/lib/utils";
 import { SHADOW_MONTHLY_PRICE, yieldShadowRentals, isShadowRenterEmail, shadowRateFor } from "@/lib/shadow-rental";
 import { lookupDiscount, discountedPrice, consumeDiscount, type AppliedDiscount } from "@/lib/discounts";
-import { PUBLIC_AVAILABLE_WHERE, RENTABLE_WHERE } from "@/lib/public-inventory";
+import { PUBLIC_AVAILABLE_WHERE, RENTABLE_WHERE, SEGREGATED_POOLS } from "@/lib/public-inventory";
 
 export async function POST(req: Request) {
   try {
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
 
         for (const account of accounts) {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${account.id}))`;
-          const current = await tx.linkedInAccount.findFirst({ where: { id: account.id, status: "available", listed: true, inventoryPool: { notIn: ["ortus", "apex"] }, restrictedAt: null, twoFactorResetNeeded: false } });
+          const current = await tx.linkedInAccount.findFirst({ where: { id: account.id, status: "available", listed: true, inventoryPool: { notIn: SEGREGATED_POOLS }, restrictedAt: null, twoFactorResetNeeded: false } });
           if (!current) throw new Error("Account is no longer available");
           if (isShadow && await tx.rental.count({ where: { linkedinAccountId: account.id, isShadow: true, status: { in: ["active", "pending_access", "payment_failed"] } } })) throw new Error("Account already has a shadow renter");
           const withSalesNav = addonFor(account) > 0;
