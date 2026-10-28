@@ -153,7 +153,6 @@ export default async function PricingPage() {
             </span>
             <span><strong style={{ color: "#0B1220" }}>Verified badge</strong> &mdash; add <strong style={{ color: "#0A66C2" }}>+$20/mo</strong> on profiles with the blue check</span>
           </span>
-          <span style={{ fontSize: 14.5, color: "#5A6473" }}>Weekly &amp; daily rates available on request</span>
         </div>
       </div>
 
