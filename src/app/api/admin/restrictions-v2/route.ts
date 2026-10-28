@@ -16,6 +16,11 @@ const RECOVERED_WINDOW_MS = 30 * 86400000;
 
 const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as RestrictionEvent[]) : []);
 const dayMs = 86400000;
+// A LinkedIn reply that could REOPEN an already-closed case: a reinstatement / "your identity is
+// verified" / "restriction removed" signal. On a terminal (lost/done) case, only such a positive
+// reply counts as "needs action" — a repeat rejection that re-confirms the closed outcome does not.
+// Kept in sync with the positive patterns in recovery-case.ts mailDerivedSteps.
+const REOPEN_RE = /reinstat|restored?\b|access (?:has been )?restored|no longer restricted|back online|removed (?:the )?restriction|restriction (?:has been |was )?(?:removed|lifted)|pleased to (?:let you know|inform)|thank you for verifying|verif(?:y|ied|ying) your identity|successfully verified|identity (?:has been )?(?:verified|confirmed)/i;
 
 // "Last touch" = the most recent bit of OUR activity on a case (a recovery send, a hand-logged
 // step incl. a note, or a status change). It deliberately excludes captured LinkedIn mail — an
@@ -176,8 +181,15 @@ export async function GET(req: Request) {
       const todayStartMs = Math.floor((now + MANILA) / dayMs) * dayMs - MANILA;
       const lastActionMs = touches.filter((t) => t[1] !== "restricted").reduce((m, t) => Math.max(m, t[0]), 0);
       const touchedToday = lastActionMs >= todayStartMs;
-      // A captured LinkedIn reply we haven't acted on since it arrived = needs a response now.
-      const newReply = (mailByAccount.get(a.id) || []).some((m) => m.status === "needs_review" && m.receivedAt.getTime() > lastActionMs);
+      // A captured LinkedIn reply we haven't acted on since it arrived = needs a response now — but
+      // once a case is CLOSED (recovered or written off as lost/perma), LinkedIn often sends a repeat
+      // rejection that just re-confirms the outcome. That must NOT drag the case back into Needs
+      // action. So on a terminal case, a new reply only counts if it's a positive/reinstatement signal
+      // that could actually reopen it; an open case still surfaces any unacted reply.
+      const terminal = d.bucket === "lost" || d.bucket === "done";
+      const newReply = (mailByAccount.get(a.id) || []).some((m) =>
+        m.status === "needs_review" && m.receivedAt.getTime() > lastActionMs &&
+        (!terminal || REOPEN_RE.test(`${m.subject || ""} ${m.bodyText || ""}`)));
       const clearedToday = d.bucket === "action" && touchedToday && !newReply;
       const flags = newReply ? [{ kind: "reply" as const, label: "📧 LinkedIn replied", tip: "LinkedIn replied — respond, then it clears" }, ...d.flags]
         : clearedToday ? [{ kind: "today" as const, label: "✓ Done today", tip: "You acted on this today — back tomorrow if still open" }, ...d.flags]
@@ -194,6 +206,9 @@ export async function GET(req: Request) {
         wf: wf.cards, wfNext: wf.next, wfLevel: wf.level,
         emails: (mailByAccount.get(a.id) || []).map((m) => ({ id: m.id, status: m.status, type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
         renterName: renterByAccount.get(a.id) || null,
+        // The referrer's self-report from the portal ("it's unrestricted" / "QR check done").
+        // Surfaced so the page can float these to the top for an admin to verify + close.
+        report: acct.restrictionReport,
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,
       };
