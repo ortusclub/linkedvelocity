@@ -614,6 +614,13 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
   // null = not rejecting; string = the reason-entry box is open (holds the typed reason).
   const [rejectReason, setRejectReason] = useState<string | null>(null);
   const live = isLive(r);
+  // A row whose linked account has been pulled (withdrawn/removed) or permanently
+  // restricted (retired) is dead even if the application still reads as "live"
+  // (status approved/onboarded). Without this, the account toggle marks the account
+  // removed but the application stays approved → the row never leaves the active
+  // pipeline and there's no visible way to close it. Treat a dead account like a
+  // not-live row so the "Close application…" footer (Unresponsive / Rejected) shows.
+  const accountDead = r.accountStatus === "removed" || r.accountStatus === "retired";
   const onboarded = r.status === "onboarded";
   const paid = setupPaid(r);
   const acctSave = (patch: Record<string, unknown>, reload = false) => { if (r.accountId) patchAccount(r.id, r.accountId, patch, reload); };
@@ -851,7 +858,7 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
       </div>
 
       {/* ── Footer: accept / onboarded state + delete ── */}
-      {!live ? (
+      {!live || accountDead ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, paddingTop: 14, marginTop: 16, borderTop: "1px solid var(--divider,#eee)", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "flex-start" }}>
             {r.status !== "rejected" && r.status !== "unreachable" && (
