@@ -495,6 +495,7 @@ export default function RestrictionsV2Page() {
   const [phaseF, setPhaseF] = useState("all");
   const [touchSort, setTouchSort] = useState<"asc" | "desc" | null>(null);
   const [pocF, setPocF] = useState("all");
+  const [refF, setRefF] = useState("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -539,6 +540,7 @@ export default function RestrictionsV2Page() {
   const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.referrerName, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
   const matchPhase = (r: Row) => phaseF === "all" || r.status === phaseF;
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
+  const matchRef = (r: Row) => refF === "all" || (refF === "none" ? !r.referrerName : r.referrerName === refF);
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
   const closed = (r: Row) => (r.resolvedAt || r.lostOutcome ? 1 : 0);
   // Open tabs default to stalest-first by last touch (oldest / never-touched at top) so neglected
@@ -556,7 +558,7 @@ export default function RestrictionsV2Page() {
   // Referrer-reported open cases float above everything else that's open (but below closed, which
   // stays at the bottom) so a "verify this" never gets buried.
   const reportPr = (r: Row) => (reported(r) ? 0 : 1);
-  const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc)
+  const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef)
     .sort((a, b) => touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b)) : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
 
   const openCases = all.filter(isOpenCase);
@@ -582,6 +584,10 @@ export default function RestrictionsV2Page() {
   const pocChips: Array<{ key: string; label: string; n: number }> = [
     { key: "all", label: "Everyone" }, ...pocNames.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
   ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.poc : r.poc === o.key)).length }));
+  const refNames = [...new Set(all.map((r) => r.referrerName).filter((x): x is string => !!x))].sort();
+  const refOpts: Array<{ key: string; label: string; n: number }> = [
+    { key: "all", label: "All referrers" }, ...refNames.map((rn) => ({ key: rn, label: rn })), { key: "none", label: "No referrer" },
+  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.referrerName : r.referrerName === o.key)).length }));
 
   const colTpl = "minmax(200px,1.6fr) 120px 110px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
 
@@ -625,7 +631,13 @@ export default function RestrictionsV2Page() {
             </button>
           ); })}
         </div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, login email, renter, PoC or error…" style={{ flex: 1, minWidth: 240, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Referrer</span>
+          <select value={refF} onChange={(e) => setRefF(e.target.value)} title="Filter by the account's referrer" style={{ border: `1.5px solid ${refF !== "all" ? "#2563eb" : "#e3e6ec"}`, background: refF !== "all" ? "#eef4ff" : "#fff", color: "#0b1220", borderRadius: 999, padding: "6px 12px", font: `700 12px ${F_SANS}`, cursor: "pointer", outline: "none", maxWidth: 220 }}>
+            {refOpts.map((o) => <option key={o.key} value={o.key}>{o.label} ({o.n})</option>)}
+          </select>
+        </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, login email, renter, PoC, referrer or error…" style={{ flex: 1, minWidth: 240, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
       </div>
 
       {error && <div style={{ font: `500 13px ${F_SANS}`, color: "#b91c1c" }}>{error}</div>}
@@ -658,7 +670,7 @@ export default function RestrictionsV2Page() {
                           <span style={{ width: 16, height: 16, borderRadius: "50%", background: r.poc ? colorOf(r.poc) : "#cbd2dc", color: "#fff", font: `700 8px ${F_SANS}`, display: "grid", placeItems: "center" }}>{r.poc ? iniOf(r.poc) : "–"}</span>
                           {r.poc || "No PoC"}
                         </span>
-                        {r.referrerName && <span title={`Referred by ${r.referrerName}`} style={{ font: `600 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4338ca", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 }}>Ref: {r.referrerName}</span>}
+                        {r.referrerName && <span onClick={(e) => { e.stopPropagation(); setRefF(refF === r.referrerName ? "all" : r.referrerName!); }} title={refF === r.referrerName ? "Clear referrer filter" : `Filter by ${r.referrerName}`} style={{ font: `600 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: refF === r.referrerName ? "#4338ca" : "#eef2ff", color: refF === r.referrerName ? "#fff" : "#4338ca", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170, cursor: "pointer" }}>Ref: {r.referrerName}</span>}
                         {r.report && <span title={`Referrer reported ${r.report.type === "recovered" ? "the account is unrestricted" : "the QR/ID check is done"}${r.report.at ? ` on ${fmt(r.report.at).split(",")[0]}` : ""} — verify on LinkedIn, then Mark recovered`} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#fef9c3", color: "#854d0e", whiteSpace: "nowrap" }}>📣 Referrer: {r.report.type === "recovered" ? "unrestricted" : "QR done"}</span>}
                         <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
                         {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
