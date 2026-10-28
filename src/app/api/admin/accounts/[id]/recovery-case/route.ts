@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 // (→ available) and hand-back close the case for good, archiving its steps into the restriction log.
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional(), at: z.string().max(40).optional() }),
-  z.object({ action: z.literal("toggle_step"), kind: z.enum(["gl", "pw"]), password: z.string().max(200).optional() }),
+  z.object({ action: z.literal("toggle_step"), kind: z.enum(["gl", "pw"]), password: z.string().max(200).optional(), noReset: z.boolean().optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
   z.object({ action: z.literal("set_poc"), poc: z.string().max(80) }),
   z.object({ action: z.literal("mark_recovered"), note: z.string().max(500).optional() }),
@@ -169,8 +169,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (input.action === "toggle_step") {
       const has = stored.steps.some((s) => s.k === input.kind);
-      if (has) stored.steps = stored.steps.filter((s) => s.k !== input.kind);
-      else { stored.steps.push({ k: input.kind, o: "ok", at: now.toISOString() }); if (input.kind === "pw" && input.password?.trim()) await setPassword(id, input.password); }
+      if (has) {
+        stored.steps = stored.steps.filter((s) => s.k !== input.kind);
+      } else if (input.kind === "pw") {
+        // Don't let the password step be ticked on the honour system: require an actual new password
+        // (saved + encrypted) OR an explicit "no reset needed" when LinkedIn didn't force a reset.
+        // Otherwise an account warms up toward relist while we don't actually hold the login.
+        const typed = input.password?.trim();
+        if (typed) await setPassword(id, typed);
+        else if (!input.noReset) return NextResponse.json({ error: "Enter the new password, or choose ‘No reset needed’, before completing the password step." }, { status: 400 });
+        stored.steps.push({ k: "pw", o: "ok", at: now.toISOString(), note: typed ? "New password set & saved" : "No reset needed — existing login kept" });
+      } else {
+        stored.steps.push({ k: input.kind, o: "ok", at: now.toISOString() });
+      }
       await persistCase(id, stored);
       return NextResponse.json({ ok: true });
     }

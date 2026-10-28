@@ -219,7 +219,7 @@ const WF_MAP: Record<string, Record<string, unknown>> = {
 function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
   const [pw, setPw] = useState("");
   const run = (id: string) => { const b = WF_MAP[id]; if (b) post(b); };
-  const toggle = (kind: "gl" | "pw") => post({ action: "toggle_step", kind, ...(kind === "pw" && pw.trim() ? { password: pw.trim() } : {}) });
+  const toggle = (kind: "gl" | "pw", opts?: { noReset?: boolean }) => post({ action: "toggle_step", kind, ...(kind === "pw" && pw.trim() ? { password: pw.trim() } : {}), ...(opts?.noReset ? { noReset: true } : {}) });
   const bstyle = (v: string): CSSProperties => ({ border: v === "primary" ? "none" : `1px solid ${v === "danger" ? "#f3c7c7" : "#dde1e8"}`, background: v === "primary" ? "#2563eb" : "#fff", color: v === "primary" ? "#fff" : v === "danger" ? "#b91c1c" : "#0b1220", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" });
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -244,12 +244,25 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
                   <a href="https://linkedvelocity.com/guide/restricted-account" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ What to put in each field (guide)</a>
                 </div>
               )}
-              {w.checks?.map((ck) => (
-                <label key={ck.key} style={{ display: "flex", gap: 8, alignItems: "center", font: `600 12.5px ${F_SANS}`, color: "#0b1220", cursor: "pointer" }}>
-                  <input type="checkbox" checked={ck.on} onChange={() => toggle(ck.key)} style={{ width: 15, height: 15, accentColor: "#16a34a" }} />{ck.label}
-                </label>
-              ))}
-              {w.hasPw && <input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password (saves to account)" style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12px ${MONO}`, color: "#0b1220", outline: "none", minWidth: 0 }} />}
+              {w.checks?.map((ck) => {
+                // The password step can't be ticked on the honour system — enter the new password
+                // (saved + encrypted), or explicitly mark that LinkedIn didn't force a reset.
+                if (ck.key === "pw" && w.hasPw) return (
+                  <div key="pw" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <span style={{ font: `600 12.5px ${F_SANS}`, color: "#0b1220" }}>Password reset</span>
+                    <input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password (saves to account)" style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "6px 9px", font: `500 12px ${MONO}`, color: "#0b1220", outline: "none", minWidth: 0 }} />
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button disabled={!pw.trim()} onClick={() => toggle("pw")} style={{ ...bstyle(pw.trim() ? "primary" : "secondary"), opacity: pw.trim() ? 1 : 0.5, cursor: pw.trim() ? "pointer" : "not-allowed" }}>Save &amp; mark done</button>
+                      <button onClick={() => toggle("pw", { noReset: true })} style={bstyle("secondary")}>No reset needed</button>
+                    </div>
+                  </div>
+                );
+                return (
+                  <label key={ck.key} style={{ display: "flex", gap: 8, alignItems: "center", font: `600 12.5px ${F_SANS}`, color: "#0b1220", cursor: "pointer" }}>
+                    <input type="checkbox" checked={ck.on} onChange={() => toggle(ck.key)} style={{ width: 15, height: 15, accentColor: "#16a34a" }} />{ck.label}
+                  </label>
+                );
+              })}
               {w.hasBar && <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ height: 6, borderRadius: 999, background: "#eef0f4", overflow: "hidden" }}><div style={{ height: "100%", width: `${w.pct || 0}%`, background: "#16a34a", borderRadius: 999 }} /></div>
                 <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{w.barLabel}</span>
