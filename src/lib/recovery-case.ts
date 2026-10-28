@@ -419,7 +419,10 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
     const st: WfState = id ? (id.o === "ok" ? "done" : id.o === "fail" ? "fail" : "wait") : (rec || fm) ? "skip" : open ? "todo" : "lock";
     const actions: WfAction[] = [];
     if (!rec && !lost && open) {
-      if (!id) actions.push({ id: "id_sent", label: idRejects ? "Mark resubmitted" : "Mark form sent", variant: "primary" });
+      if (!id) actions.push(
+        { id: "id_sent", label: idRejects ? "Mark resubmitted" : "Mark form sent", variant: "primary" },
+        { id: "id_fail", label: "Form didn't work", variant: "danger" },
+      );
       if (id && id.o === "pending") actions.push(
         { id: "id_ok", label: "Worked → recovered", variant: "primary" },
         { id: "id_reject", label: "ID unaccepted → resubmit", variant: "secondary" },

@@ -239,6 +239,7 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
               <span style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.45, color: "#5b6779" }}>{w.sub}</span>
               {(w.n === 2 || w.n === 3) && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 1 }}>
+                  {w.n === 2 && <a href="https://www.linkedin.com/help/linkedin/ask/LI-DEFAULT-NEW" target="_blank" rel="noopener noreferrer" style={{ font: `700 11.5px ${F_SANS}`, color: "#0a66c2", textDecoration: "none" }}>↗ Open the contact form (Verifications)</a>}
                   {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/TS-F-APPEAL" target="_blank" rel="noopener noreferrer" style={{ font: `700 11.5px ${F_SANS}`, color: "#0a66c2", textDecoration: "none" }}>↗ Open the appeal form</a>}
                   {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/LI-DEFAULT-NEW" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ General contact form (try this first)</a>}
                   <a href="https://linkedvelocity.com/guide/restricted-account" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ What to put in each field (guide)</a>
@@ -303,13 +304,13 @@ function EmailLog({ emails, accountId, onChange }: { emails: MailEvt[]; accountI
 // contact/appeal form (LinkedIn blocks an address already tied to an account). LinkedIn's reply lands
 // back on this case automatically (see the LinkedIn emails panel) via the inbound capture webhook.
 type AppealBox = { id: string; address: string; createdAt: string };
-function AppealMailboxPanel({ accountId, accountName }: { accountId: string; accountName: string }) {
+function AppealMailboxPanel({ accountId, accountName, linkedinUrl, loginEmail }: { accountId: string; accountName: string; linkedinUrl: string | null; loginEmail: string | null }) {
   const [list, setList] = useState<AppealBox[] | null>(null);
   const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   // Varied per-account appeal message (never the same template across accounts — see appeal-message.ts).
-  const appealMsg = buildAppealMessage({ name: accountName, seed: accountId });
+  const appealMsg = buildAppealMessage({ name: accountName, seed: accountId, url: linkedinUrl, email: loginEmail });
   useEffect(() => {
     let live = true;
     (async () => {
@@ -466,7 +467,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
 
         {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <AppealMailboxPanel accountId={r.id} accountName={r.name} />
+          <AppealMailboxPanel accountId={r.id} accountName={r.name} linkedinUrl={r.linkedinUrl} loginEmail={r.email} />
           <QrCard r={r} reload={reload} />
           <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Restriction history · {r.cnt}×</span>
