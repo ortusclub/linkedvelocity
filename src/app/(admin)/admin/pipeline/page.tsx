@@ -4,7 +4,7 @@
 // (nothing here writes anywhere the live pipeline doesn't), reorganised around
 // WHOSE TURN it is: To action / Waiting on them / Maturing / Onboarded / Stopped,
 // with a handler lens, claim/bulk-assign, and the same expanded-row panel.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney } from "@/lib/referral-currency";
 import { formatName } from "@/lib/utils";
 import { isLikelyTestEmail } from "@/lib/test-mode";
@@ -68,6 +68,14 @@ export default function PipelineNewPage() {
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // Maturing daily check: walk the 1-week-hold accounts, log today's connections + a ✓/✕ health tick.
   const [checkMode, setCheckMode] = useState(false);
+  // Mirror checkMode into a ref so the background-refresh effect (mounted once, empty deps) can read
+  // the current value and PAUSE while the daily check is open. Without this, the 10s interval — or a
+  // window focus/visibility change (e.g. tabbing out to verify an account, then back) — refetches and
+  // rebuilds rows from the server, dropping an optimistic ✓/✕ tick that hasn't committed yet. That's
+  // the "the check reverts, then goes back to check itself on its own" bug: the stale refetch unchecks
+  // it, the next refetch (after the save lands) re-checks it.
+  const checkModeRef = useRef(checkMode);
+  checkModeRef.current = checkMode;
   const [hideDone, setHideDone] = useState(false);
   const [connDraft, setConnDraft] = useState<Record<string, string>>({});
 
@@ -105,7 +113,8 @@ export default function PipelineNewPage() {
   useEffect(() => {
     let stopped = false; let refreshing = false;
     const refresh = async () => {
-      if (document.visibilityState !== "visible" || refreshing) return;
+      // Pause while the daily check is open so a refetch can't clobber an uncommitted ✓/✕ tick.
+      if (checkModeRef.current || document.visibilityState !== "visible" || refreshing) return;
       refreshing = true;
       try {
         const res = await fetch("/api/admin/onboarding", { cache: "no-store" });
