@@ -23,6 +23,7 @@ type Row = {
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   newReply: boolean; clearedToday: boolean;
+  report: { type?: "qr_done" | "recovered"; at?: string } | null;
   lastTouchAt: number | null; lastTouchLabel: string;
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
@@ -239,6 +240,7 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
               <span style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.45, color: "#5b6779" }}>{w.sub}</span>
               {(w.n === 2 || w.n === 3) && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 1 }}>
+                  {w.n === 2 && <a href="https://www.linkedin.com/help/linkedin/ask/LI-DEFAULT-NEW" target="_blank" rel="noopener noreferrer" style={{ font: `700 11.5px ${F_SANS}`, color: "#0a66c2", textDecoration: "none" }}>↗ Open the contact form (Verifications)</a>}
                   {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/TS-F-APPEAL" target="_blank" rel="noopener noreferrer" style={{ font: `700 11.5px ${F_SANS}`, color: "#0a66c2", textDecoration: "none" }}>↗ Open the appeal form</a>}
                   {w.n === 3 && <a href="https://www.linkedin.com/help/linkedin/ask/LI-DEFAULT-NEW" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ General contact form (try this first)</a>}
                   <a href="https://linkedvelocity.com/guide/restricted-account" target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${F_SANS}`, color: "#5b6779", textDecoration: "none" }}>↗ What to put in each field (guide)</a>
@@ -303,13 +305,13 @@ function EmailLog({ emails, accountId, onChange }: { emails: MailEvt[]; accountI
 // contact/appeal form (LinkedIn blocks an address already tied to an account). LinkedIn's reply lands
 // back on this case automatically (see the LinkedIn emails panel) via the inbound capture webhook.
 type AppealBox = { id: string; address: string; createdAt: string };
-function AppealMailboxPanel({ accountId, accountName }: { accountId: string; accountName: string }) {
+function AppealMailboxPanel({ accountId, accountName, linkedinUrl, loginEmail }: { accountId: string; accountName: string; linkedinUrl: string | null; loginEmail: string | null }) {
   const [list, setList] = useState<AppealBox[] | null>(null);
   const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   // Varied per-account appeal message (never the same template across accounts — see appeal-message.ts).
-  const appealMsg = buildAppealMessage({ name: accountName, seed: accountId });
+  const appealMsg = buildAppealMessage({ name: accountName, seed: accountId, url: linkedinUrl, email: loginEmail });
   useEffect(() => {
     let live = true;
     (async () => {
@@ -466,7 +468,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
 
         {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <AppealMailboxPanel accountId={r.id} accountName={r.name} />
+          <AppealMailboxPanel accountId={r.id} accountName={r.name} linkedinUrl={r.linkedinUrl} loginEmail={r.email} />
           <QrCard r={r} reload={reload} />
           <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Restriction history · {r.cnt}×</span>
@@ -502,12 +504,33 @@ export default function RestrictionsV2Page() {
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
+  // Deep-link: /admin/restrictions-v2?focus=<accountId> (e.g. from the pipeline restriction
+  // banner). Once rows load, show everything so the case isn't filtered out, expand it, scroll to
+  // it and ring it briefly. Read from location (not useSearchParams) to avoid a Suspense boundary.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const focusedRef = useRef(false);
+  useEffect(() => { try { const p = new URLSearchParams(window.location.search).get("focus"); if (p) setFocusId(p); } catch { /* no-op */ } }, []);
+  useEffect(() => {
+    if (!focusId || !rows || focusedRef.current || !rows.some((r) => r.id === focusId)) return;
+    focusedRef.current = true;
+    setFilter("all");
+    setOpen((o) => ({ ...o, [focusId]: true }));
+    const s = setTimeout(() => { document.getElementById(`case-${focusId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 80);
+    const c = setTimeout(() => setFocusId(null), 4500);
+    return () => { clearTimeout(s); clearTimeout(c); };
+  }, [focusId, rows]);
+
   const all = rows || [];
   const hasIdFail = (r: Row) => r.steps.some((s) => s.k === "id" && s.o === "fail");
   const isOpenCase = (r: Row) => r.bucket !== "done" && r.bucket !== "lost";
-  // Needs action = a new LinkedIn reply to handle, OR an action-bucket case we haven't cleared today.
+  // A referrer self-reported from the portal ("it's unrestricted" / "QR check done") on a case
+  // that's still open — the team needs to verify it on LinkedIn and either mark it recovered or
+  // keep working it. These don't otherwise change the case bucket, so surface them explicitly.
+  const reported = (r: Row) => !!r.report && isOpenCase(r);
+  // Needs action = a new LinkedIn reply to handle, a fresh referrer report to verify, OR an
+  // action-bucket case we haven't cleared today.
   // Cases we acted on today drop to All open (clearedToday) and come back next day if still open.
-  const needsAction = (r: Row) => r.newReply || (r.bucket === "action" && !r.clearedToday);
+  const needsAction = (r: Row) => r.newReply || reported(r) || (r.bucket === "action" && !r.clearedToday);
   const pick: Record<string, (r: Row) => boolean> = {
     action: needsAction, open: isOpenCase, owner: (r) => r.bucket === "owner",
     linkedin: (r) => r.bucket === "linkedin", idfail: (r) => isOpenCase(r) && hasIdFail(r),
@@ -532,8 +555,11 @@ export default function RestrictionsV2Page() {
     if (bv == null) return touchDir === "asc" ? 1 : -1;
     return touchDir === "asc" ? av - bv : bv - av;
   };
+  // Referrer-reported open cases float above everything else that's open (but below closed, which
+  // stays at the bottom) so a "verify this" never gets buried.
+  const reportPr = (r: Row) => (reported(r) ? 0 : 1);
   const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef)
-    .sort((a, b) => touchDir ? (closed(a) - closed(b) || byTouch(a, b)) : (closed(a) - closed(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
+    .sort((a, b) => touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b)) : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
 
   const openCases = all.filter(isOpenCase);
   const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
@@ -631,7 +657,7 @@ export default function RestrictionsV2Page() {
               const st = ST[r.status] || [r.status, "#f1f5f9", "#475569"];
               const days = r.restrictedMs / 86400e3;
               return (
-                <div key={r.id}>
+                <div key={r.id} id={`case-${r.id}`} style={focusId === r.id ? { outline: "2px solid #2563eb", outlineOffset: -2, borderRadius: 10 } : undefined}>
                   <div onClick={() => setOpen((o) => ({ ...o, [r.id]: !isOpen }))} style={{ display: "grid", gridTemplateColumns: colTpl, gap: 14, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid #eef0f4", boxShadow: `inset 3px 0 0 ${r.urgent ? "#dc2626" : "transparent"}`, background: isOpen ? "#fafbfc" : "#fff", cursor: "pointer" }}>
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                       <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -645,6 +671,7 @@ export default function RestrictionsV2Page() {
                           {r.poc || "No PoC"}
                         </span>
                         {r.referrerName && <span onClick={(e) => { e.stopPropagation(); setRefF(refF === r.referrerName ? "all" : r.referrerName!); }} title={refF === r.referrerName ? "Clear referrer filter" : `Filter by ${r.referrerName}`} style={{ font: `600 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: refF === r.referrerName ? "#4338ca" : "#eef2ff", color: refF === r.referrerName ? "#fff" : "#4338ca", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170, cursor: "pointer" }}>Ref: {r.referrerName}</span>}
+                        {r.report && <span title={`Referrer reported ${r.report.type === "recovered" ? "the account is unrestricted" : "the QR/ID check is done"}${r.report.at ? ` on ${fmt(r.report.at).split(",")[0]}` : ""} — verify on LinkedIn, then Mark recovered`} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#fef9c3", color: "#854d0e", whiteSpace: "nowrap" }}>📣 Referrer: {r.report.type === "recovered" ? "unrestricted" : "QR done"}</span>}
                         <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
                         {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
                       </div>

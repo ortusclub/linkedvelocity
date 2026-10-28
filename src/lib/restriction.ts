@@ -59,10 +59,18 @@ type RestrictionAccount = {
 // appending the event to the shared log. On recover, credit an active rental's downtime
 // by extending its currentPeriodEnd (a side effect done here). Returns only the account
 // fields to merge into a linkedInAccount update — the caller performs the write.
+//
+// `applyCredit` (default true) controls whether recover extends the rental here and now. The
+// restrictions-v2 case flow passes false: recovery (LinkedIn restoring the account) does NOT yet
+// make it usable for the renter — we still reset the password and re-establish the GoLogin login
+// first — so that flow defers the downtime credit until hand-back (see the recovery-case route),
+// measuring the full restriction→handback window. The old inventory/pipeline toggle, which has no
+// hand-back step, keeps crediting at recovery (default).
 export async function restrictionUpdate(
   account: RestrictionAccount,
   restrict: boolean,
   note?: string,
+  applyCredit = true,
 ): Promise<{ restrictedAt: Date | null; restrictionLog?: RestrictionEvent[]; creditedDays?: number }> {
   const log: RestrictionEvent[] = Array.isArray(account.restrictionLog)
     ? (account.restrictionLog as RestrictionEvent[])
@@ -86,19 +94,21 @@ export async function restrictionUpdate(
   // Recover: nothing to do if it wasn't restricted.
   if (!account.restrictedAt) return { restrictedAt: null };
   let creditedDays = 0;
-  const downtimeMs = Date.now() - new Date(account.restrictedAt).getTime();
-  const active = await prisma.rental.findFirst({
-    where: { linkedinAccountId: account.id, status: { in: ["active", "pending_access"] } },
-  });
-  if (active?.currentPeriodEnd && downtimeMs > 0) {
-    const extended = new Date(new Date(active.currentPeriodEnd).getTime() + downtimeMs);
-    creditedDays = Math.round(downtimeMs / 86400000);
-    // Also bank the credited days on the rental so the dashboard can show the applied figure
-    // (cause-agnostic running total), not just the live "accruing" estimate.
-    await prisma.rental.update({
-      where: { id: active.id },
-      data: { currentPeriodEnd: extended, downtimeCreditDays: { increment: creditedDays } },
+  if (applyCredit) {
+    const downtimeMs = Date.now() - new Date(account.restrictedAt).getTime();
+    const active = await prisma.rental.findFirst({
+      where: { linkedinAccountId: account.id, status: { in: ["active", "pending_access"] } },
     });
+    if (active?.currentPeriodEnd && downtimeMs > 0) {
+      const extended = new Date(new Date(active.currentPeriodEnd).getTime() + downtimeMs);
+      creditedDays = Math.round(downtimeMs / 86400000);
+      // Also bank the credited days on the rental so the dashboard can show the applied figure
+      // (cause-agnostic running total), not just the live "accruing" estimate.
+      await prisma.rental.update({
+        where: { id: active.id },
+        data: { currentPeriodEnd: extended, downtimeCreditDays: { increment: creditedDays } },
+      });
+    }
   }
   return {
     restrictedAt: null,

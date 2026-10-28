@@ -149,6 +149,7 @@ export function Navbar({ brand }: { brand: Brand }) {
               {loading ? null : user ? (
                 <>
                   <Link href="/dashboard" className="kl-nav-dash">Dashboard</Link>
+                  <Link href="/developer" className="kl-nav-dash">Developer</Link>
                   <Link href="/dashboard#wallet" className="kl-balance">
                     <span className="kl-balance-label">Balance</span>
                     ${balance !== null ? parseFloat(balance).toFixed(2) : '—'}

@@ -23,6 +23,7 @@ import { sortAccountsByLastUpdated } from "@/lib/account-notes";
 import { toIndustryBucket, INDUSTRY_BUCKETS } from "@/lib/industry";
 import { IssueActions } from "@/components/admin/issue-actions";
 import { ambassadorIssueContact } from "@/lib/issue-contacts";
+import AccountEditForm from "@/components/admin/account-edit-form";
 
 type Touch = { ch: string; text: string; by: string; at: string; [k: string]: unknown };
 type ConnPoint = { at: string; count: number; note?: "rented" | "returned" | string };
@@ -56,10 +57,15 @@ interface Account {
   ownerUpdatedAt: string | null;
   restrictedAt: string | null;
   permanentlyRestricted: boolean;
+  exitReason: string | null;
   proxyHost: string | null;
   proxyLocation: string | null;
   warmupStartedAt: string | null;
   maturingStartedAt: string | null;
+  maturingStalledAt: string | null;
+  maturingStalledReason: string | null;
+  maturingStartFailedAt: string | null;
+  maturingStartFailedReason: string | null;
   healthCheckedAt: string | null;
   linkedinAccountHealth: string | null;
   twoFactor: string | null;
@@ -123,6 +129,9 @@ const STATUS_OPTS: [string, string][] = [["available", "Available"], ["unavailab
 function canonicalStatus(a: Account): string {
   if (a.status === "retired") return "Permanently restricted/Inaccessible";
   if (a.status === "removed") return "Removed";
+  // Owner exits (status unavailable + an exit reason): the account is out of our hands —
+  // returned to the owner or our access was cut. Group it as inaccessible, never Construction.
+  if (a.status === "unavailable" && a.exitReason) return "Permanently restricted/Inaccessible";
   if (a.status !== "rented" && a.ownerApplicationId && !a.ownerSetupPaidAt) return "Initial";
   if (a.restrictedAt || a.status === "maintenance") return "Maintenance";
   if (a.status === "rented") return "Rented";
@@ -166,7 +175,7 @@ const ATTN_OPTS: { key: AttnKey | "attention"; label: string }[] = [
   { key: "incident", label: "🔴 Open incident" },
   { key: "overdue", label: "Overdue payment" },
   { key: "rotate", label: "Rotate 2FA" },
-  { key: "2fa", label: "2FA reset needed" },
+  { key: "2fa", label: "No 2FA on file" },
   { key: "restricted", label: "Restricted" },
   { key: "incomplete", label: "Incomplete catalogue" },
 ];
@@ -303,6 +312,8 @@ export default function InventoryV2Page() {
   const [poc, setPoc] = useState("all");
   const [needs, setNeeds] = useState("all");
   const [matOnly, setMatOnly] = useState(false);
+  const [stalledOnly, setStalledOnly] = useState(false);
+  const [armyOnly, setArmyOnly] = useState(false); // show only the LinkedArmy campaign pool
   const [groupFilter, setGroupFilter] = useState("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<Record<string, "account" | "mail" | "activity" | "overview">>({});
@@ -453,9 +464,9 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   };
   const recheck = async (a: Account) => { setBusy(a.id); try { await fetch(`/api/admin/accounts/${a.id}/check-health`, { method: "POST" }); await load(); } finally { setBusy(null); } };
   // Status-strip state machine. Active/Restricted go through /restricted (keeps downtime-credit +
-  // billing-paused logic in one place); Perm./Withdrawn through /state; and listing an unrented
-  // account Active runs the rental-ready gate (blocked → the server's reason is shown).
-  const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "withdrawn") => {
+  // billing-paused logic in one place); Perm./Returned-to-owner/Access-removed through /state; and
+  // listing an unrented account Active runs the rental-ready gate (blocked → the server's reason is shown).
+  const setState = async (a: Account, pill: "active" | "restricted" | "perm" | "returned" | "accesslost") => {
     if (pill === "restricted" && !confirmRestrict(a)) return;
     const notify = pill === "restricted" && confirmNotify(a);
     const H = { "Content-Type": "application/json" };
@@ -464,8 +475,9 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (pill === "restricted") {
         const res = await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: true, notifyOwnerReferrer: notify }) });
         if (notify && res.ok) { const d = await res.json().catch(() => ({})); reportNotify(d.notify ?? null); }
-      } else if (pill === "perm" || pill === "withdrawn") {
-        await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state: pill }) });
+      } else if (pill === "perm" || pill === "returned" || pill === "accesslost") {
+        const state = pill === "perm" ? "perm" : pill === "returned" ? "returned" : "access_lost";
+        await fetch(`/api/admin/accounts/${a.id}/state`, { method: "POST", headers: H, body: JSON.stringify({ state }) });
       } else {
         // Active: clear whatever non-active state it's in, then (if unrented) list it through the gate.
         if (a.restrictedAt) await fetch(`/api/admin/accounts/${a.id}/restricted`, { method: "POST", headers: H, body: JSON.stringify({ restricted: false }) });
@@ -483,7 +495,6 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       await load();
     } finally { setBusy(null); }
   };
-  const trial = async (a: Account) => { setBusy(a.id); try { await fetch(`/api/admin/accounts/${a.id}/trial`, { method: "POST" }); await load(); } finally { setBusy(null); } };
   const toggleRent = async (a: Account) => {
     if (a.status === "rented" || a.status === "trial") return;
     const next = a.status === "available" ? "unavailable" : "available";
@@ -549,6 +560,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (supply === "shadow" && !a.shadowRenter) return false;
       if (needs !== "all") { const fl = attention(a); if (needs === "attention" ? !ATTN_ACTIONABLE.some((k) => fl.has(k)) : !fl.has(needs as AttnKey)) return false; }
       if (matOnly && !a.maturingStartedAt) return false;
+      if (stalledOnly && !a.maturingStalledAt && !a.maturingStartFailedAt) return false;
+      if (armyOnly && a.inventoryPool !== "campaign") return false;
       if (ql) { const hay = [a.linkedinName, a.loginEmail, a.ownerName, a.rentals[0]?.user?.fullName, a.location, a.industry].join(" ").toLowerCase(); if (!hay.includes(ql)) return false; }
       return true;
     };
@@ -563,7 +576,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (passes(a, g, "ind")) { const k = indBucket(a); ind$[k] = (ind$[k] || 0) + 1; }
     }
     return { filtered, conn$, age$, ver$, sn$, ind$ };
-  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, sn, ind, needs, matOnly, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, sn, ind, needs, matOnly, stalledOnly, armyOnly, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtered = view.filtered;
 
   // Live counts per attention flag (over the whole inventory) — shown in the filter so you can see
@@ -631,8 +644,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   }, [withGroup, accounts, grossCollected]);
 
   const totalShown = sorted.length;
-  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || poc !== "all" || groupFilter !== "all";
-  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSn("all"); setInd("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setPoc("all"); setGroupFilter("all"); };
+  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || stalledOnly || armyOnly || poc !== "all" || groupFilter !== "all";
+  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSn("all"); setInd("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setStalledOnly(false); setArmyOnly(false); setPoc("all"); setGroupFilter("all"); };
 
   const inp: React.CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: INK, outline: "none" };
   const headCols = "minmax(0,2.2fr) 78px 64px minmax(0,1.3fr) 104px minmax(0,1.2fr) 100px 92px 52px 56px 16px";
@@ -761,6 +774,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={inp}><option value="upd">Last updated</option><option value="price">Price, high → low</option><option value="conn">Connections, most first</option><option value="age">Age, oldest first</option><option value="name">Name A–Z</option></select>
             {(() => { const n = accounts.filter((a) => a.maturingStartedAt).length; return <button onClick={() => setMatOnly((v) => !v)} title="Show only accounts currently maturing" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(matOnly ? { borderColor: "#f59e0b", background: "#fff7ed", color: "#c2410c", fontWeight: 700 } : {}) }}>🔥 Maturing{n ? ` (${n})` : ""}</button>; })()}
+            {(() => { const n = accounts.filter((a) => a.maturingStalledAt || a.maturingStartFailedAt).length; return n ? <button onClick={() => setStalledOnly((v) => !v)} title="Show only accounts whose maturing needs attention — a campaign that isn't sending (login/identity review) or that couldn't start at all (e.g. can't log in)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(stalledOnly ? { borderColor: "#ca8a04", background: "#fef9c3", color: "#854d0e", fontWeight: 700 } : {}) }}>⚠ Stalled ({n})</button> : null; })()}
+            {(() => { const n = accounts.filter((a) => a.inventoryPool === "campaign").length; return n ? <button onClick={() => setArmyOnly((v) => !v)} title="Show only the LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(armyOnly ? { borderColor: "#0e7490", background: "#ecfeff", color: "#0e7490", fontWeight: 700 } : {}) }}>⚑ LinkedArmy ({n})</button> : null; })()}
             {hasFilters && <button onClick={clearAll} style={{ border: "none", background: "none", color: BLUE, font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filters</button>}
           </div>
         </div>
@@ -790,7 +805,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
         <div style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 14, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.04)" }}>
           <div style={{ minWidth: 1360 }}>
             <div style={{ display: "grid", gridTemplateColumns: headCols, gap: 12, alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${LINE2}`, background: "#fafbfc", font: `700 10.5px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: MUT }}>
-              <span>Account</span><span>Conn.</span><span>Age</span><span>Flags</span><span>Price</span><span>Renter / status</span><span>LV PoC</span><span>{checkMode ? "Health" : "Updated"}</span><span>Rent</span><span></span><span></span>
+              <span>Account</span><span>Conn.</span><span>Age</span><span>Flags</span><span>Price</span><span>Renter / status</span><span>LV PoC</span><span>{checkMode ? "Health" : "Checked"}</span><span>Rent</span><span></span><span></span>
             </div>
             {grouped.length === 0 && <div style={{ padding: 40, textAlign: "center", font: `500 13.5px ${F}`, color: MUT }}>No accounts match.</div>}
             {grouped.map((g) => {
@@ -840,15 +855,20 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                       || (rt0?.status === "active" && !!rt0.currentPeriodEnd && new Date(rt0.currentPeriodEnd).getTime() < nowMs)
                       || (r.status === "rented" && !!r.manualPaidUntil && new Date(r.manualPaidUntil).getTime() < nowMs);
                     const needsRotate = r.twoFactorResetNeeded;   // 2FA key + GoLogin link rotation after a rental ends
-                    // "2FA reset needed": a rentable account with no 2FA secret stored (the ~9 flagged in the audit).
+                    // "No 2FA on file": a rentable account with no 2FA secret stored (the ~9 flagged in the audit). Not renter-related.
                     const needs2fa = !r.twoFactor && (r.status === "rented" || r.status === "available" || r.status === "trial");
                     const proxyDown = false;      // no stored proxy/GoLogin-check-failed flag yet (Phase 2)
                     const proxyExpiring = false;  // no stored proxy-expiry field on the account yet (Phase 2)
-                    const linkedArmy = false;     // no per-account LinkedArmy marker yet (inventoryPool is all "main")
+                    const linkedArmy = r.inventoryPool === "campaign";   // campaign pool = our idle/fresh accounts earmarked to run LinkedArmy outreach
                     const retired = canonicalStatus(r) === "Permanently restricted/Inaccessible";
                     const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
                     // Auto maturing flag (reconcile-maturing cron): a live LinkedVelocity warm/cold campaign is running.
                     const matDays = r.maturingStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.maturingStartedAt).getTime()) / 86400000)) : null;
+                    // Stalled / couldn't-start: it has a campaign that isn't maturing (login/identity review),
+                    // or the cron couldn't launch a campaign at all (couldn't log in). Both need attention.
+                    const stalledTs = r.maturingStalledAt || r.maturingStartFailedAt;
+                    const stalledWhy = r.maturingStalledReason || r.maturingStartFailedReason || "campaign not sending";
+                    const stalledDays = stalledTs ? Math.max(0, Math.floor((nowMs - new Date(stalledTs).getTime()) / 86400000)) : null;
                     // Recently recovered: not currently restricted, last restriction-log event was a recovery <=30d ago.
                     const recovered = !r.restrictedAt && (() => { const log = Array.isArray(r.restrictionLog) ? r.restrictionLog : []; const last = log[log.length - 1]; return !!last && last.event === "recovered" && (nowMs - new Date(last.at).getTime()) <= 30 * 86400000; })();
                     const isConstruction = r.status === "under_construction" || r.status === "construction_immature";
@@ -877,7 +897,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (overdue) flags.push({ l: `Overdue ${money(price)}`, ...RP, tip: "Renewal payment failed — chase the renter" });
                     if (needsRotate) flags.push({ l: "Rotate", ...RP, tip: "Rotate 2FA key + GoLogin link before re-renting" });
                     // Open access issues: no stored per-account access-issue list yet (IssueActions only emails) — inert for now.
-                    if (needs2fa) flags.push({ l: "2FA reset needed", ...RP, tip: "No 2FA is set on this account — configure/reset it" });
+                    if (needs2fa) flags.push({ l: "No 2FA on file", ...RP, tip: "No 2FA secret is stored for this account — add it in the account editor. (Not about the renter; separate from the 'Rotate' handover flag.)" });
                     if (r.mailIncidentOpen > 0) flags.push({ l: `🔴 ${r.mailIncidentOpen} incident`, bg: "#fee2e2", fg: "#991b1b", tip: `${r.mailIncidentOpen} open account-mail incident${r.mailIncidentOpen === 1 ? "" : "s"} — open the Account mail tab` });
                     if (r.mailNeedsReview > 0) flags.push({ l: `✉ ${r.mailNeedsReview} mail`, bg: "#eef2ff", fg: "#4338ca", tip: `${r.mailNeedsReview} security email${r.mailNeedsReview === 1 ? "" : "s"} need review — open the Account mail tab` });
                     if (r.restrictedAt && !retired) flags.push({ l: `Restricted ${fmtD(r.restrictedAt)}`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently restricted by LinkedIn" });
@@ -886,6 +906,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (proxyExpiring) flags.push({ l: "Proxy expiring", bg: "#fffbeb", fg: "#92400e", tip: "Proxy plan expires within 7 days" });
                     if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: "Running LinkedArmy campaigns" });
                     if (matDays != null) flags.push({ l: `🔥 ${matDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
+                    else if (stalledDays != null) flags.push({ l: `⚠ stalled ${stalledDays}d`, bg: "#fef9c3", fg: "#854d0e", tip: `Maturing needs attention — ${stalledWhy}. It isn't actually maturing (stuck, or the campaign couldn't start); fix it (e.g. the login), not a healthy fire.` });
                     else if (warmDays != null && isConstruction) flags.push({ l: `🔥 ${warmDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Days in warm-up" });
                     if (recovered) flags.push({ l: "Recovered", bg: "#fffbeb", fg: "#92400e", tip: "Recently restricted, now recovered" });
                     if (r.shadowRenter) flags.push({ l: `◐ Shadow · ${shadowName(r.shadowRenter)}`, bg: "#eff4ff", fg: "#2563eb", tip: `Shadow supply (${shadowName(r.shadowRenter)}) — still available to rent` });
@@ -937,7 +958,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                           <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
                             {rn ? (<>
                               <span style={{ font: `600 13px ${F}`, color: INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rn.fullName || rn.email}</span>
-                              <span style={{ font: `600 11px ${F}`, color: rt0?.status === "pending_access" ? "#c2410c" : SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rt0?.status === "pending_access" ? "awaiting access" : `next ${fmtD(r.rentals[0]?.currentPeriodEnd || null)}`}</span>
+                              <span style={{ font: `600 11px ${F}`, color: rt0?.status === "pending_access" ? "#c2410c" : SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rt0?.status === "pending_access" ? (r.rentals[0]?.currentPeriodEnd ? `awaiting access · next ${fmtD(r.rentals[0]?.currentPeriodEnd)}` : "awaiting access") : `next ${fmtD(r.rentals[0]?.currentPeriodEnd || null)}`}</span>
                             </>) : r.shadowRenter ? (<>
                               <span style={{ font: `600 13px ${F}`, color: BLUE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{shadowName(r.shadowRenter)}</span>
                               <span style={{ font: `600 11px ${F}`, color: MUT, whiteSpace: "nowrap" }}>shadow · yields on rent</span>
@@ -961,23 +982,25 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                             const hcFg = r.restrictedAt || retired ? REDD : r.healthCheckedAt ? GREEND : MUT;
                             return checkMode && checkable(r) ? (
                               <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 4 }}>
-                                <button onClick={() => markActive(r)} title="Healthy — mark active" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${GREEN}`, background: !r.restrictedAt && done ? GREEN : "#fff", color: !r.restrictedAt && done ? "#fff" : GREEND, font: `800 14px ${F}`, cursor: "pointer" }}>✓</button>
-                                <button onClick={() => setRestricted(r, true)} title="Restricted" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${RED}`, background: r.restrictedAt ? RED : "#fff", color: r.restrictedAt ? "#fff" : REDD, font: `800 13px ${F}`, cursor: "pointer" }}>✕</button>
+                                {/* Fire on mouse-DOWN, not click: during the daily check the connections input is
+                                    focused, and clicking a button first blurs that input (saving the count and
+                                    re-rendering the row), which swallows the trailing click — so the first tap
+                                    looked like it did nothing and needed a second. mousedown lands before the blur,
+                                    so the tick registers on the first press; the input still blurs right after and
+                                    saves the connection. onMouseDown's preventDefault isn't used, so blur/save runs. */}
+                                <button onMouseDown={() => markActive(r)} title="Healthy — mark active" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${GREEN}`, background: !r.restrictedAt && done ? GREEN : "#fff", color: !r.restrictedAt && done ? "#fff" : GREEND, font: `800 14px ${F}`, cursor: "pointer" }}>✓</button>
+                                <button onMouseDown={() => setRestricted(r, true)} title="Restricted" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${RED}`, background: r.restrictedAt ? RED : "#fff", color: r.restrictedAt ? "#fff" : REDD, font: `800 13px ${F}`, cursor: "pointer" }}>✕</button>
                               </div>
                             ) : (
                               <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                                <span title={r.updatedAt ? `Last updated ${fmtDY(r.updatedAt)}` : ""} style={{ font: `700 13px ${G}`, color: INK, whiteSpace: "nowrap" }}>{agoShort(r.updatedAt || r.createdAt)}</span>
-                                <span title={r.healthCheckedAt ? `Health checked ${fmtDY(r.healthCheckedAt)}` : "Never health-checked"} style={{ font: `600 10.5px ${F}`, color: hcFg, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hcText}</span>
+                                <span title={r.healthCheckedAt ? `Health checked ${fmtDY(r.healthCheckedAt)}` : "Never health-checked"} style={{ font: `700 13px ${F}`, color: hcFg, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hcText}</span>
+                                <span title={r.updatedAt ? `Last updated ${fmtDY(r.updatedAt)}` : ""} style={{ font: `600 10.5px ${F}`, color: MUT, whiteSpace: "nowrap" }}>updated {agoShort(r.updatedAt || r.createdAt)}</span>
                               </div>
                             );
                           })()}
                           {/* rent toggle */}
                           <div onClick={(e) => e.stopPropagation()}>
                             <button onClick={() => toggleRent(r)} disabled={r.status === "rented" || r.status === "trial"} title={rentOn ? "Listed for rent" : "Not listed"} style={{ position: "relative", width: 36, height: 20, borderRadius: 999, border: "none", cursor: r.status === "rented" || r.status === "trial" ? "not-allowed" : "pointer", padding: 0, background: rentOn ? GREEN : "#cbd2dc", opacity: r.status === "rented" || r.status === "trial" ? 0.5 : 1 }}><span style={{ position: "absolute", top: 2, left: rentOn ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .15s" }} /></button>
-                          </div>
-                          {/* trial */}
-                          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", justifyContent: "flex-end" }}>
-                            {canonicalStatus(r) === "Available" && !r.shadowRenter && <button onClick={() => trial(r)} disabled={busy === r.id} style={{ border: `1px solid #dde1e8`, background: "#fff", color: INK, borderRadius: 8, padding: "5px 10px", font: `700 12px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Trial</button>}
                           </div>
                           <span style={{ font: `700 14px ${F}`, color: MUT, display: "inline-block", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
                         </div>
@@ -1392,7 +1415,7 @@ function RestrictionHistory({ accountId, log, onSaved }: { accountId: string; lo
 
 function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, release, onRentalReady, patch, patchApp, reload }: {
   r: Account; tab: "account" | "mail" | "activity" | "overview"; setTab: (t: "account" | "mail" | "activity" | "overview") => void; busy: boolean; price: number;
-  setState: (pill: "active" | "restricted" | "perm" | "withdrawn") => void; recheck: () => void;
+  setState: (pill: "active" | "restricted" | "perm" | "returned" | "accesslost") => void; recheck: () => void;
   hold: (days: number, heldFor: string) => void; release: () => void; onRentalReady: (ready: boolean) => void;
   patch: (id: string, body: Record<string, unknown>, reload?: boolean) => Promise<Response | undefined>;
   patchApp: (appId: string, body: Record<string, unknown>) => Promise<Response | undefined>; reload: () => void;
@@ -1402,6 +1425,9 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
   const [holdFor, setHoldFor] = useState("");
   const [obOpen, setObOpen] = useState(!!r.offboarding?.open || !!r.twoFactorResetNeeded);
   const [copied, setCopied] = useState(false);
+  // Full-editor-inline: when on, the Account tab swaps its read-only grid for the
+  // same editor the /admin/accounts/[id] page uses (no navigating away).
+  const [editing, setEditing] = useState(false);
   const copyRentLink = () => {
     const link = `${typeof window !== "undefined" ? window.location.origin : ""}/checkout?accounts=${r.id}&direct=1`;
     const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1800); };
@@ -1486,15 +1512,22 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
     <div onClick={(e) => e.stopPropagation()} style={{ position: "sticky", left: 0, width: "calc(100vw - 96px)", maxWidth: 1328, padding: "4px 16px 14px", background: "#fafbfc", cursor: "default" }}>
       {/* Status strip — the one place to change account state (replaces Mark active / Mark restricted). */}
       {(() => {
-        const sel = (r.permanentlyRestricted || r.status === "retired") ? "perm" : r.restrictedAt ? "restricted" : (r.status === "unavailable" || r.status === "removed") ? "withdrawn" : "active";
-        const PILLS: { k: "active" | "restricted" | "perm" | "withdrawn"; l: string; bg: string; fg: string }[] = [
+        // Off-market (unavailable/removed) splits by exitReason: "returned" = clean handback,
+        // "access_lost" = owner cut our access. A plain delisted account (no exitReason, e.g. the
+        // rent toggle, or a legacy generic "Withdrawn") highlights neither exit pill.
+        const sel = (r.permanentlyRestricted || r.status === "retired") ? "perm" : r.restrictedAt ? "restricted" : (r.status === "unavailable" || r.status === "removed") ? (r.exitReason === "access_lost" ? "accesslost" : r.exitReason === "returned" ? "returned" : "") : "active";
+        const PILLS: { k: "active" | "restricted" | "perm" | "returned" | "accesslost"; l: string; bg: string; fg: string }[] = [
           { k: "active", l: "Active", bg: "#e7f7ee", fg: "#0f7a3d" },
           { k: "restricted", l: "Restricted", bg: "#fff7ed", fg: "#c2410c" },
           { k: "perm", l: "Perm. restricted", bg: "#fef2f2", fg: "#b91c1c" },
-          { k: "withdrawn", l: "Withdrawn", bg: "#f1f3f6", fg: "#5b6779" },
+          { k: "returned", l: "Returned to owner", bg: "#f1f3f6", fg: "#5b6779" },
+          { k: "accesslost", l: "Access removed", bg: "#fef2f2", fg: "#b91c1c" },
         ];
         const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
         const matDays = r.maturingStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.maturingStartedAt).getTime()) / 86400000)) : null;
+        const stalledTs = r.maturingStalledAt || r.maturingStartFailedAt;
+        const stalledWhy = r.maturingStalledReason || r.maturingStartFailedReason || "campaign not sending";
+        const stalledDays = stalledTs ? Math.max(0, Math.floor((Date.now() - new Date(stalledTs).getTime()) / 86400000)) : null;
         return (
           <div style={{ background: "#fff", border: `1px solid #e6e9ee`, borderRadius: 12, padding: "11px 14px", margin: "4px 0 10px", display: "flex", alignItems: "center", gap: "12px 28px", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1510,6 +1543,8 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
             </div>
             {matDays !== null
               ? <span title="Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {matDays}d</span>
+              : stalledDays !== null
+              ? <span title={`Maturing needs attention — ${stalledWhy}. Isn't actually maturing (stuck, or couldn't start); fix it (e.g. the login).`} style={{ font: `700 11.5px ${F}`, color: "#854d0e", background: "#fef9c3", borderRadius: 999, padding: "3px 10px" }}>⚠ stalled {stalledDays}d</span>
               : warmDays !== null && (r.status === "under_construction" || r.status === "construction_immature") && <span style={{ font: `700 11.5px ${F}`, color: "#c2410c", background: "#fff7ed", borderRadius: 999, padding: "3px 10px" }}>🔥 {warmDays}d</span>}
           </div>
         );
@@ -1525,6 +1560,13 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
         const heldActive = !!r.heldUntil && new Date(r.heldUntil) > new Date();
         const complete = !!(r.linkedinHeadline && r.location && r.industry && (r.profilePhotoUrl || r.profileScreenshotUrl));
         const fieldStyle = { border: "1px solid #dde1e8", background: "#fff", borderRadius: 9, padding: "8px 10px", font: `500 13px ${F}`, color: INK, outline: "none", width: "100%" } as const;
+        if (editing) {
+          return (
+            <div style={{ padding: "2px 2px 8px" }}>
+              <AccountEditForm accountId={r.id} embedded onSaved={reload} onClose={() => setEditing(false)} onDeleted={() => { setEditing(false); reload(); }} />
+            </div>
+          );
+        }
         return (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 10, alignItems: "start" }}>
             {/* Column 1 — Owner & rental */}
@@ -1588,7 +1630,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
             {/* Column 2 — Log in */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
               <Card pad="14px">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><a href={`/admin/accounts/${r.id}`} target="_blank" rel="noreferrer" title="Open the full editor — login/personal/work email, password, GoLogin, pricing… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>Edit account ↗</a>{r.gologinProfileId && <button onClick={regenShareLink} disabled={regenBusy || busy} title="Regenerate the GoLogin share link so it carries the profile's current name (use after a rename / out-of-band email change)" style={{ font: `700 12px ${F}`, color: BLUE, background: "transparent", border: `1px solid ${BLUE}`, borderRadius: 7, padding: "3px 9px", cursor: regenBusy ? "wait" : "pointer", opacity: regenBusy ? 0.6 : 1 }}>{regenBusy ? "Regenerating…" : "↻ Regen link"}</button>}{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Lbl>Log in</Lbl><button onClick={() => setEditing(true)} title="Edit the full account record inline — login/personal/work email, password, GoLogin, pricing, proxy… (changing the login email here also renames the GoLogin profile)" style={{ marginLeft: "auto", font: `700 12.5px ${F}`, color: BLUE, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>Edit account</button>{r.gologinProfileId && <button onClick={regenShareLink} disabled={regenBusy || busy} title="Regenerate the GoLogin share link so it carries the profile's current name (use after a rename / out-of-band email change)" style={{ font: `700 12px ${F}`, color: BLUE, background: "transparent", border: `1px solid ${BLUE}`, borderRadius: 7, padding: "3px 9px", cursor: regenBusy ? "wait" : "pointer", opacity: regenBusy ? 0.6 : 1 }}>{regenBusy ? "Regenerating…" : "↻ Regen link"}</button>}{r.gologinShareLink && <a href={r.gologinShareLink} target="_blank" rel="noreferrer" style={{ font: `700 12.5px ${F}`, color: BLUE, textDecoration: "none" }}>↗ Open GoLogin</a>}</div>
                 <Totp accountId={r.id} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Login email (work)</Lbl><Copyable value={r.loginEmail} /></div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}><Lbl>Personal email</Lbl><Copyable value={r.personalEmail} /></div>

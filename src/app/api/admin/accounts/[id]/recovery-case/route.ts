@@ -12,8 +12,10 @@ export const dynamic = "force-dynamic";
 // Restrictions v2 — mutate one case. Drives the recovery workflow end to end: log a step, set the
 // reason/PoC, mark the owner contacted, recover (QR/ID/appeal/LinkedIn), secure the account
 // (GoLogin + password reset), and finally relist or hand back. A successful verify step RECOVERS
-// the account (clears restrictedAt, credits rental downtime) but KEEPS THE CASE OPEN through the
-// post-recovery steps; non-rented accounts go to "under construction" for the warm-up. Relist
+// the account (clears restrictedAt) but KEEPS THE CASE OPEN through the post-recovery steps;
+// non-rented accounts go to "under construction" for the warm-up. The rental downtime credit is
+// NOT applied at recovery — the renter still can't use the account until we hand it back (password
+// reset / GoLogin), so hand-back is where we credit the full restriction→handback window. Relist
 // (→ available) and hand-back close the case for good, archiving its steps into the restriction log.
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional(), at: z.string().max(40).optional() }),
@@ -29,13 +31,14 @@ const schema = z.discriminatedUnion("action", [
 
 const asJson = (v: unknown) => v as unknown as Prisma.InputJsonValue;
 
-// Recover the account but KEEP the case open for the post-recovery workflow. Clears restrictedAt
-// and credits any rental downtime (via restrictionUpdate), marks the case resolved, and parks a
-// non-rented account in "under construction" for the warm-up.
+// Recover the account but KEEP the case open for the post-recovery workflow. Clears restrictedAt,
+// marks the case resolved, and parks a non-rented account in "under construction" for the warm-up.
+// The downtime credit is deferred to hand-back (applyCredit=false): recovery ≠ usable for the
+// renter yet, so crediting here would under-count the real outage.
 async function recoverKeepOpen(id: string, stored: StoredCase, now: Date) {
   const acct = await prisma.linkedInAccount.findUnique({ where: { id }, select: { id: true, restrictedAt: true, restrictionLog: true, status: true } });
   if (!acct) throw new Error("Account not found");
-  const fields = await restrictionUpdate(acct, false);
+  const fields = await restrictionUpdate(acct, false, undefined, false);
   stored.resolvedAt = now.toISOString();
   const activeRental = await prisma.rental.findFirst({ where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] } }, select: { id: true } });
   const toConstruction = !activeRental && acct.status !== "rented" && acct.status !== "under_construction";
@@ -52,11 +55,39 @@ async function recoverKeepOpen(id: string, stored: StoredCase, now: Date) {
 
 // Final close (relist / hand back): archive the case's steps into the latest "recovered" log event
 // for history, clear the live case + recovery_* fields, and (on relist) put the account back as available.
+// On HAND-BACK (relist=false) this is also where the rental downtime credit lands — deferred from
+// recovery because the renter couldn't use the account until now. We measure the full outage
+// (last "restricted" event → now), extend the active rental's renewal date, bank the days, and
+// stamp the figure onto the archived "recovered" event so the dashboard can explain the credit.
 async function closeFinal(id: string, stored: StoredCase, relist: boolean) {
   const acct = await prisma.linkedInAccount.findUnique({ where: { id }, select: { restrictionLog: true } });
   const log = (Array.isArray(acct?.restrictionLog) ? acct!.restrictionLog : []) as Array<RestrictionEvent & { reason?: string; steps?: Step[] }>;
   const lastRec = [...log].reverse().find((e) => e.event === "recovered");
   if (lastRec) { if (stored.reason) lastRec.reason = stored.reason; if (stored.steps?.length) lastRec.steps = stored.steps; }
+
+  if (!relist) {
+    // Credit the full restriction→handback downtime to the active rental (the deferred credit).
+    const start = [...log].reverse().find((e) => e.event === "restricted");
+    const startMs = start ? Date.parse(start.at) : NaN;
+    const downtimeMs = Number.isFinite(startMs) ? Date.now() - startMs : 0;
+    if (downtimeMs > 0) {
+      const active = await prisma.rental.findFirst({
+        where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] } },
+        select: { id: true, currentPeriodEnd: true },
+      });
+      if (active?.currentPeriodEnd) {
+        const creditedDays = Math.round(downtimeMs / 86400000);
+        if (creditedDays > 0) {
+          await prisma.rental.update({
+            where: { id: active.id },
+            data: { currentPeriodEnd: new Date(new Date(active.currentPeriodEnd).getTime() + downtimeMs), downtimeCreditDays: { increment: creditedDays } },
+          });
+          if (lastRec) lastRec.creditedDays = creditedDays;
+        }
+      }
+    }
+  }
+
   await prisma.linkedInAccount.update({
     where: { id },
     data: {

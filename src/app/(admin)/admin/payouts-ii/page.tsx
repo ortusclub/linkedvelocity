@@ -55,6 +55,8 @@ interface Row {
   daysLate: number;
   ownerName: string | null;
   ownerEmail: string | null;
+  referredBy: string | null;
+  referrerName: string | null;
   ownerPhone: string | null;
   contactChannel: string | null;
   paymentMethod: string | null;
@@ -280,6 +282,7 @@ function AccountRow({ r, onMarkPaid, onUpdatePayout, onHold }: { r: Row; onMarkP
         <div style={{ borderTop: "1px solid var(--border,#eee)", padding: "16px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 16, background: "var(--panel,#fafafa)" }}>
           {/* Payout (money OUT to ambassador) */}
           <D label="Owner (ambassador)">{r.ownerName || "—"}</D>
+          <D label="Referred by">{r.referrerName ? <>{r.referrerName}{r.referredBy && r.referredBy.toLowerCase() !== r.referrerName.toLowerCase() ? <span style={{ color: "var(--muted,#6b7280)" }}> · {r.referredBy}</span> : null}</> : <span style={{ color: "var(--muted,#9aa0a6)" }}>—</span>}</D>
           <D label="Payment method">{r.paymentMethod || <span style={{ color: "var(--st-cancel-fg,#c0392b)" }}>not set</span>}{r.paymentDetail ? ` · ${r.paymentDetail}` : ""}{r.payoutName ? <> · <b style={{ color: "var(--fg,#111)" }}>{r.payoutName}</b></> : <span style={{ color: "var(--st-cancel-fg,#c0392b)" }}> · name not set</span>}</D>
           <D label="Monthly payout">{r.monthlyAmount > 0 ? ownerMoney(r.monthlyAmount, r.payoutCurrency) : "—"}</D>
           <D label="Last payment">{r.lastPaidAt ? `${r.lastPaidAmount != null ? ownerMoney(r.lastPaidAmount, r.payoutCurrency) + " · " : ""}${fmtDate(r.lastPaidAt)}` : "none yet"}</D>

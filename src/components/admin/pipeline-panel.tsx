@@ -322,7 +322,7 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
   );
 }
 
-export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: Row; onAccount: (patch: Record<string, unknown>, reload?: boolean) => void; onApp: (patch: Record<string, unknown>) => void; onDeleteEvent: (at: string) => void }) {
+export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent, onNote }: { r: Row; onAccount: (patch: Record<string, unknown>, reload?: boolean) => void; onApp: (patch: Record<string, unknown>) => void; onDeleteEvent: (at: string) => void; onNote?: (text: string) => void }) {
   const hasAcct = !!r.accountId;
   const issue = (r.accountIssue || "").toLowerCase();
   const restrictIssue = issue.includes("withdrawn") || issue.includes("permanent") || issue.includes("restricted");
@@ -346,13 +346,16 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: 
         if (!window.confirm(`Mark ${name} restricted?\n\nOnly do this if LinkedIn actually restricted the account.${rented ? " It pauses the renter's billing." : ""}`)) return;
         const notifyOwnerReferrer = window.confirm(`Email the owner + referrer now that ${name} is restricted?\n\nSends the "account restricted / payment suspended" message (includes their login details + 2FA recovery link when a password is on file) and logs it on the account. Cancel just marks it restricted without emailing.`);
         onAccount({ restrictedAt: new Date().toISOString(), notifyOwnerReferrer, ...undead }, true);
+        onNote?.(`Marked restricted${notifyOwnerReferrer ? " · emailed owner + referrer" : ""}`);
         return;
       }
       const patch: Record<string, unknown> = key === "active" ? { restrictedAt: null, ...undead } : key === "retired" ? { status: "retired", restrictedAt: new Date().toISOString() } : { status: "removed" };
       if (key === "active" && restrictIssue) patch.accountIssue = null;
       onAccount(patch, true);
+      onNote?.(key === "active" ? "Marked active (recovered)" : key === "retired" ? "Marked permanently restricted" : "Marked withdrawn");
     } else {
       onApp({ accountIssue: key === "active" ? null : key === "restricted" ? "Restricted" : key === "retired" ? "Permanently restricted" : "Withdrawn" });
+      onNote?.(key === "active" ? "Marked active" : key === "restricted" ? "Marked restricted" : key === "retired" ? "Marked permanently restricted" : "Marked withdrawn");
     }
   };
   const opts: { key: "active" | "restricted" | "retired" | "withdrawn"; label: string; tone: [string, string] }[] = [
@@ -406,7 +409,8 @@ export function RestrictionControl({ r, onAccount, onApp, onDeleteEvent }: { r: 
           <span style={{ font: `700 10.5px ${F_SANS}`, color: "var(--purple-chip-text,#6b3fd4)" }}>
             Referrer says {r.restrictionReport.type === "recovered" ? "it's unrestricted now" : "the owner did LinkedIn's QR/ID check"} · {fmtDate(r.restrictionReport.at)} — verify, then set Active to recover
           </span>
-          <button onClick={(e) => { e.stopPropagation(); onApp({ setRestrictionReport: null, restrictionReport: null }); }} style={{ marginLeft: "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", border: "none", background: "var(--neutral-bg,#eef1f5)", color: "var(--muted,#647189)" }}>Dismiss</button>
+          {r.accountId && <a href={`/admin/restrictions-v2?focus=${encodeURIComponent(r.accountId)}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Open this account's recovery case to verify and log the outcome" style={{ marginLeft: "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", textDecoration: "none", background: "var(--purple-chip-text,#6b3fd4)", color: "#fff", whiteSpace: "nowrap" }}>Open recovery case →</a>}
+          <button onClick={(e) => { e.stopPropagation(); onApp({ setRestrictionReport: null, restrictionReport: null }); }} style={{ marginLeft: r.accountId ? 0 : "auto", font: `700 10px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, cursor: "pointer", border: "none", background: "var(--neutral-bg,#eef1f5)", color: "var(--muted,#647189)" }}>Dismiss</button>
         </div>
       )}
     </div>
@@ -608,7 +612,16 @@ export function AccountOnlyCard({ r, patchAccount, deleteRestrictionEvent }: {
 export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
   const { busy, patchApp, patchAccount, deleteRestrictionEvent, workflow, setStage, provisionGologin, createAccount, verifySignin, transferToLv, generateProfile, applyProfile, deleteGologin, logTouch, onDeleteApp } = h;
   const [editSec, setEditSec] = useState<string | null>(null);
+  // null = not rejecting; string = the reason-entry box is open (holds the typed reason).
+  const [rejectReason, setRejectReason] = useState<string | null>(null);
   const live = isLive(r);
+  // A row whose linked account has been pulled (withdrawn/removed) or permanently
+  // restricted (retired) is dead even if the application still reads as "live"
+  // (status approved/onboarded). Without this, the account toggle marks the account
+  // removed but the application stays approved → the row never leaves the active
+  // pipeline and there's no visible way to close it. Treat a dead account like a
+  // not-live row so the "Close application…" footer (Unresponsive / Rejected) shows.
+  const accountDead = r.accountStatus === "removed" || r.accountStatus === "retired";
   const onboarded = r.status === "onboarded";
   const paid = setupPaid(r);
   const acctSave = (patch: Record<string, unknown>, reload = false) => { if (r.accountId) patchAccount(r.id, r.accountId, patch, reload); };
@@ -746,7 +759,7 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
               {r.accountId && editToggle("cred", credEditing)}
             </div>
           }>
-            <div><div style={{ ...labelCss, marginBottom: 6 }}>Status</div><RestrictionControl r={r} onAccount={acctSave} onApp={(patch) => patchApp(r.id, patch)} onDeleteEvent={(at) => { if (r.accountId) deleteRestrictionEvent(r.accountId, at); }} /></div>
+            <div><div style={{ ...labelCss, marginBottom: 6 }}>Status</div><RestrictionControl r={r} onAccount={acctSave} onApp={(patch) => patchApp(r.id, patch)} onDeleteEvent={(at) => { if (r.accountId) deleteRestrictionEvent(r.accountId, at); }} onNote={(text) => { void logTouch(r.id, "note", text, ""); }} /></div>
             {r.accountId && (
               <div><div style={{ ...labelCss, marginBottom: 6 }}>Warm-up</div>
                 <button onClick={(e) => { e.stopPropagation(); acctSave({ warmupStartedAt: r.warmupStartedAt ? null : new Date().toISOString() }, true); }} disabled={busy} title="Toggle whether this account is actively being warmed up (Ortus app)" style={{ font: `600 11.5px ${F_SANS}`, padding: "5px 11px", borderRadius: 999, cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", border: "1px solid", borderColor: r.warmupStartedAt ? "transparent" : "var(--input-border,#dcdce0)", background: r.warmupStartedAt ? "var(--warn-badge-bg,#fef3c7)" : "transparent", color: r.warmupStartedAt ? "var(--warn-badge-text,#b7791f)" : "var(--muted,#647189)" }}>{r.warmupStartedAt ? `🔥 ${ageDays(r.warmupStartedAt)}d` : "Not warming up"}</button>
@@ -846,15 +859,24 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
       </div>
 
       {/* ── Footer: accept / onboarded state + delete ── */}
-      {!live ? (
+      {!live || accountDead ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, paddingTop: 14, marginTop: 16, borderTop: "1px solid var(--divider,#eee)", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "flex-start" }}>
             {r.status !== "rejected" && r.status !== "unreachable" && (
-              <select value="" disabled={busy} onChange={(e) => { if (e.target.value) void workflow(r.id, { status: e.target.value }); }} title="Stop / close this application (Withdrawn lives in the Status toggle above)" style={{ font: `700 12px ${F_SANS}`, color: "var(--danger,#c0392b)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
+              <select value="" disabled={busy || rejectReason !== null} onChange={(e) => { const v = e.target.value; if (!v) return; if (v === "rejected") setRejectReason(""); else void workflow(r.id, { status: v }); }} title="Stop / close this application (Withdrawn lives in the Status toggle above)" style={{ font: `700 12px ${F_SANS}`, color: "var(--danger,#c0392b)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
                 <option value="">Close application…</option>
                 <option value="unreachable">Unresponsive — no reply</option>
-                <option value="rejected">Rejected — doesn&apos;t qualify</option>
+                <option value="rejected">Rejected — with reason…</option>
               </select>
+            )}
+            {rejectReason !== null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 260 }}>
+                <textarea autoFocus value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} maxLength={1000} placeholder="Why are you rejecting? (kept on record, e.g. tried to switch referrer verah-77 → aiza)" style={{ font: `500 12px ${F_SANS}`, color: "var(--fg,#111)", background: "var(--card,#fff)", border: "1px solid var(--danger-border,#e6b4ad)", borderRadius: 8, padding: "8px 10px", resize: "vertical", width: "100%", boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button disabled={busy || !rejectReason.trim()} onClick={async () => { const reason = rejectReason.trim(); await workflow(r.id, { status: "rejected", addTouch: { ch: "note", text: `Rejected — ${reason}` } }); setRejectReason(null); }} style={{ font: `700 12px ${F_SANS}`, color: "#fff", background: "var(--danger,#c0392b)", border: "none", borderRadius: 8, padding: "7px 12px", cursor: rejectReason.trim() ? "pointer" : "default", opacity: busy || !rejectReason.trim() ? 0.5 : 1 }}>Reject &amp; record reason</button>
+                  <button disabled={busy} onClick={() => setRejectReason(null)} style={{ font: `700 12px ${F_SANS}`, color: "var(--muted,#647189)", background: "transparent", border: "1px solid var(--line,#d6e4fb)", borderRadius: 8, padding: "7px 12px", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
             )}
           </div>
           <span style={{ font: `500 11.5px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>Accept &amp; advance from the Workflow steps above · reopen a closed one with Mark received</span>

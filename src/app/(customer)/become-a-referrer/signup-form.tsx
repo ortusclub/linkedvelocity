@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Method = "whatsapp" | "telegram" | "viber";
 type Result = { slug: string; shareUrl: string; portalUrl: string; existing: boolean };
@@ -14,6 +14,16 @@ export default function ReferrerSignupForm() {
   const [result, setResult] = useState<Result | null>(null);
   const [copied, setCopied] = useState(false);
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  // Prefill the name when we linked someone here from an invite (?name=). Read after mount
+  // (not useSearchParams) so the static page needs no Suspense boundary, and never clobber
+  // anything the person has already typed. We deliberately don't take email from the URL.
+  useEffect(() => {
+    try {
+      const name = new URLSearchParams(window.location.search).get("name")?.trim() || "";
+      if (name) setForm(f => ({ ...f, name: f.name || name }));
+    } catch { /* no query / unavailable — leave fields empty */ }
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

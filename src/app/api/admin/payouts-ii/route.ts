@@ -54,6 +54,15 @@ export async function GET() {
       },
     });
 
+    // Referrer slug → display name, so each card can show who referred this ambassador.
+    const referrers = await prisma.referrer.findMany({ select: { slug: true, name: true, paymentName: true } });
+    const referrerBySlug = new Map<string, string>();
+    for (const r of referrers) {
+      const label = r.name || r.paymentName || r.slug;
+      if (r.slug) referrerBySlug.set(r.slug.toLowerCase(), label);
+      if (r.name) referrerBySlug.set(r.name.toLowerCase(), label);
+    }
+
     // When one email has several applications (duplicate signups), prefer the onboarded one
     // so an account resolves to its live owner, not a stale still-onboarding duplicate — which
     // would classify the account "Still onboarding" and silently drop its real payout row.
@@ -238,6 +247,10 @@ export async function GET() {
         daysLate,
         ownerName,
         ownerEmail: ownerEmail || null,
+        referredBy: (app?.referredBy || "").trim() || null,
+        referrerName: (app?.referredBy || "").trim()
+          ? (referrerBySlug.get((app!.referredBy as string).trim().toLowerCase()) || (app!.referredBy as string).trim())
+          : null,
         ownerPhone: app?.contactNumber || null,
         contactChannel: app?.contactChannel || null,
         paymentMethod: method,

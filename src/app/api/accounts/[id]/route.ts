@@ -2,6 +2,7 @@ import { monthlyRentalPrice } from "@/lib/account-pricing";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { maskPublicAccount } from "@/lib/mask";
+import { SEGREGATED_POOLS } from "@/lib/public-inventory";
 
 export async function GET(
   _req: Request,
@@ -31,9 +32,9 @@ export async function GET(
     },
   });
 
-  // Pooled (Ortus/Apex) accounts are segregated inventory — not exposed via the public
-  // detail endpoint (only reachable by their pool account through its dashboard).
-  if (!account || account.inventoryPool === "ortus" || account.inventoryPool === "apex") {
+  // Segregated-pool accounts (Ortus/Apex referrer pools, or our own campaign pool) are not
+  // exposed via the public detail endpoint.
+  if (!account || SEGREGATED_POOLS.includes(account.inventoryPool)) {
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 

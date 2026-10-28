@@ -213,6 +213,10 @@ model LinkedInAccount {
   restrictedAt          DateTime?     @map("restricted_at")  // admin-set: account restricted by LinkedIn, recovering
   warmupStartedAt       DateTime?     @map("warmup_started_at") // set while the account is being warmed up (Ortus app); null = not warming. Orthogonal to status.
   maturingStartedAt     DateTime?     @map("maturing_started_at") // AUTO (reconcile-maturing cron): set while a live LinkedVelocity maturing campaign is running for this profile; null = not maturing. Drives the 🔥 badge on Inventory + Pipeline. Never set/cleared by hand.
+  maturingStalledAt     DateTime?     @map("maturing_stalled_at") // AUTO (reconcile-maturing cron): set when this profile HAS a campaign but it isn't actually maturing — stuck on a login/identity review (needs_review) or otherwise not sending. Drives the ⚠️ "stalled" badge. Mutually exclusive with maturingStartedAt. Never set/cleared by hand.
+  maturingStalledReason String?       @map("maturing_stalled_reason") // AUTO: short human reason for the stall (e.g. "login / identity review"), shown in the ⚠️ badge tooltip.
+  maturingStartFailedAt DateTime?     @map("maturing_start_failed_at") // AUTO (auto-start-maturing cron): set when start() THREW for this account (engine couldn't launch a campaign — e.g. the profile can't log in). Makes the cron SKIP it for a cooldown so it advances to startable accounts instead of re-hitting the same failing ones every tick. Cleared on a successful start or when it's rented/restricted. Also surfaces in the ⚠️ attention list.
+  maturingStartFailedReason String?   @map("maturing_start_failed_reason") // AUTO: short reason the start failed (first line of the engine error), for the ⚠️ badge tooltip.
   profileBuild          Json?         @map("profile_build") // Level-4 generated profile (headline/about/2 past PH roles/PH school/US location) to copy-paste into LinkedIn
   // admin-set (from the Replacements workqueue): LinkedIn restriction is permanent — the
   // account can't be recovered. Renters see "Permanently restricted" and can only replace it.
@@ -222,6 +226,11 @@ model LinkedInAccount {
   // until cleared. Reason is free text (e.g. "Inaccessible — can't log in").
   payoutHoldReason      String?       @map("payout_hold_reason")
   payoutHeldAt          DateTime?     @map("payout_held_at")
+  // admin-set (status strip): how an owner exited while the account was off-market
+  // (status=unavailable). "returned" = owner took the account back with clear comms;
+  // "access_lost" = owner cut off our access. Null for any other off-market reason
+  // (the old generic "Withdrawn"). Only meaningful while status=unavailable.
+  exitReason            String?       @map("exit_reason")
   // LV handler (PoC) for an inventory-only account that has no ambassador application
   // (e.g. Ortus-owned accounts handled by Ton). For accounts WITH an application the PoC
   // lives on the application; this covers the account-only pipeline rows.
