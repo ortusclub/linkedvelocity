@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
     select: {
       id: true, gologinProfileId: true, maturingStartedAt: true, maturingStalledAt: true, maturingStalledReason: true, maturingStartFailedAt: true, linkedinUrl: true, notes: true,
-      status: true, restrictedAt: true, permanentlyRestricted: true, linkedinAccountHealth: true,
+      status: true, restrictedAt: true, permanentlyRestricted: true, linkedinAccountHealth: true, inventoryPool: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360) — a shadow rental keeps status "available" but the renter is using
       // the account, so a running campaign on it must be stopped, not left firing.
@@ -103,7 +103,10 @@ export async function POST(req: NextRequest) {
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
-      a.status === "retired" || a.status === "maintenance";
+      a.status === "retired" || a.status === "maintenance" ||
+      // Campaign pool = our own LinkedArmy outreach personas, run by hand. If the engine
+      // ever has a live warm-up/maturing campaign on one, stop it — we don't auto-warm these.
+      a.inventoryPool === "campaign";
 
     if (blocked) {
       if (entry && entry.ids.length) {
@@ -113,6 +116,7 @@ export async function POST(req: NextRequest) {
         const reason =
           a.status === "rented" || a.rentals.length > 0 ? "account rented"
           : a.restrictedAt || a.permanentlyRestricted ? "account restricted"
+          : a.inventoryPool === "campaign" ? "campaign pool (manual outreach)"
           : `account ${a.status}`;
         await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `Maturing stopped (auto) — ${reason}`, "system").catch(() => {});
         stopped++;

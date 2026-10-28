@@ -136,6 +136,9 @@ export async function POST(req: NextRequest) {
     where: {
       gologinProfileId: { not: null },
       status: { notIn: ["removed", "rented", "retired", "maintenance"] },
+      // Campaign pool = our own LinkedArmy outreach personas, run by hand. Never auto-start
+      // a warm-up/maturing campaign on them (it would fight the real outreach we run).
+      inventoryPool: { not: "campaign" },
       // Only hard exclusions: rented (renter is using it) and an explicit restriction
       // mark (restrictedAt / permanentlyRestricted — reconcile auto-STOPS those, so
       // starting them would just fight it). No readiness gate otherwise: if a verified
