@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = await prisma.linkedInAccount.findMany({
-    where: { status: { not: "removed" }, linkedinUrl: { not: null } },
+    // Campaign-pool accounts are our own LinkedArmy outreach personas — run by hand, never
+    // by the maturing/warm-up engine. Keep them out of the engine feed entirely.
+    where: { status: { not: "removed" }, linkedinUrl: { not: null }, inventoryPool: { not: "campaign" } },
     select: {
       gologinProfileId: true,
       loginEmail: true,
