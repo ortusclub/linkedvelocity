@@ -448,8 +448,9 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   // 4 — GoLogin login + password reset (after recovery)
   {
     const st: WfState = gl && pw ? "done" : securing ? "todo" : rec ? "done" : "lock";
+    const pwLabel = !pw ? "Password reset & saved" : pw.note?.startsWith("No reset") ? "No reset needed · existing login kept" : "New password set & saved";
     mk(4, "Log in on GoLogin + reset password", "LinkedIn normally asks for a fresh login and new password after recovery", st, {
-      checks: [{ key: "gl", label: "Logged in via GoLogin profile", on: !!gl }, { key: "pw", label: "Password reset & saved", on: !!pw }],
+      checks: [{ key: "gl", label: "Logged in via GoLogin profile", on: !!gl }, { key: "pw", label: pwLabel, on: !!pw }],
       hasPw: securing && !pw,
     });
   }
