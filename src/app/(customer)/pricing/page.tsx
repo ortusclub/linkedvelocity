@@ -9,8 +9,8 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: isArmy ? "Pricing — How LinkedArmy Operator Pricing Works" : "Pricing — How LinkedVelocity Account Rental Pricing Works",
     description: isArmy
-      ? "Every LinkedIn Operator is priced by quality — connections, account age, Sales Navigator and more. See the pricing tiers and what sets each price."
-      : "Every LinkedIn account is priced by quality — connections, account age, Sales Navigator and more. See the pricing tiers and what sets each price.",
+      ? "Every LinkedIn Operator is priced by quality — connections, account age, the verified badge and more. See the pricing tiers and what sets each price."
+      : "Every LinkedIn account is priced by quality — connections, account age, the verified badge and more. See the pricing tiers and what sets each price.",
     alternates: { canonical: "/pricing" },
   };
 }
@@ -21,7 +21,7 @@ const CALENDAR_URL = "https://calendar.google.com/calendar/u/0/appointments/sche
 type Tier = {
   eyebrow: string; eyebrowBg: string; eyebrowFg: string; name: string; topColor: string; dots: string[];
   person: string; role: string; initials: string; avatarBg: string;
-  connections: string; verified: string; verifiedOn: boolean; nav: string; navOn: boolean;
+  connections: string; age: string;
   desc: string; price: string; featured?: boolean; ribbon?: string;
 };
 
@@ -29,32 +29,31 @@ const TIERS: Tier[] = [
   {
     eyebrow: "Entry", eyebrowBg: "#EAF2FC", eyebrowFg: "#0A66C2", name: "New / Basic", topColor: "#4B9BEA", dots: ["#0A66C2", "#D3DAE3", "#D3DAE3"],
     person: "Jordan T.", role: "Sales Associate", initials: "JT", avatarBg: "#4B9BEA",
-    connections: "<500", verified: "No", verifiedOn: false, nav: "—", navOn: false,
-    desc: "Newer profiles with under 500 connections and no Sales Navigator. Great for testing or higher-volume, lower-stakes outreach.",
-    price: "$45",
+    connections: "<500", age: "Newer",
+    desc: "Newer profiles with under 500 connections. Great for testing or higher-volume, lower-stakes outreach.",
+    price: "from $45",
   },
   {
     eyebrow: "Sweet spot", eyebrowBg: "#0A66C2", eyebrowFg: "#FFFFFF", name: "Established", topColor: "#0A66C2", dots: ["#0A66C2", "#0A66C2", "#D3DAE3"],
     person: "Anna K.", role: "Marketing Manager", initials: "AK", avatarBg: "#0A66C2",
-    connections: "500+", verified: "Yes", verifiedOn: true, nav: "—", navOn: false,
-    desc: "Verified profiles with 500+ connections. The reliable middle ground most teams choose. Sales Navigator available as a +$70/mo add-on.",
-    price: "$75", featured: true, ribbon: "Most popular",
+    connections: "500+", age: "1 yr+",
+    desc: "Established profiles with 500+ connections and a year or more of history. The reliable middle ground most teams choose.",
+    price: "from $75", featured: true, ribbon: "Most popular",
   },
   {
     eyebrow: "Top tier", eyebrowBg: "#0D1B2A", eyebrowFg: "#FFFFFF", name: "Premium", topColor: "#0D1B2A", dots: ["#0A66C2", "#0A66C2", "#0A66C2"],
     person: "Marcus L.", role: "VP of Sales", initials: "ML", avatarBg: "#0D1B2A",
-    connections: "1,000+", verified: "Yes", verifiedOn: true, nav: "✓", navOn: true,
-    desc: "Senior, large networks with Sales Navigator available. Maximum reach and credibility for serious outreach.",
-    price: "$110+",
+    connections: "1,000+", age: "2 yr+",
+    desc: "Senior profiles with large, mature networks. Maximum reach and credibility for serious outreach.",
+    price: "from $110",
   },
 ];
 
 const stroke = { fill: "none", stroke: "#0A66C2", strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 const FACTORS = [
   { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>, title: "Connections", desc: "More connections = more reach." },
-  { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>, title: "Account age", desc: "Older = more trusted, lower risk." },
-  { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></svg>, title: "Sales Navigator", desc: "Premium outreach power." },
-  { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><path d="M12 2l2.4 1.8 3 .2.9 2.9 2.1 2.1-1.1 2.8 1.1 2.8-2.1 2.1-.9 2.9-3 .2L12 22l-2.4-1.8-3-.2-.9-2.9-2.1-2.1L4.7 12 3.6 9.2l2.1-2.1.9-2.9 3-.2z" /><path d="M9 12l2 2 4-4" /></svg>, title: "Photo & verification", desc: "Signals a real, credible profile." },
+  { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>, title: "Account age", desc: "Older = more trusted, lower risk. Two accounts with the same connections can price differently on age alone." },
+  { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><path d="M12 2l2.4 1.8 3 .2.9 2.9 2.1 2.1-1.1 2.8 1.1 2.8-2.1 2.1-.9 2.9-3 .2L12 22l-2.4-1.8-3-.2-.9-2.9-2.1-2.1L4.7 12 3.6 9.2l2.1-2.1.9-2.9 3-.2z" /><path d="M9 12l2 2 4-4" /></svg>, title: "Verified badge", desc: "The blue check adds trust — a +$20/mo add-on." },
   { icon: <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>, title: "Seniority & industry", desc: "Senior titles open more doors." },
 ];
 
@@ -64,7 +63,7 @@ export default async function PricingPage() {
     <div className={blogFontVars} style={{ fontFamily: INT, color: "#0B1220", background: "linear-gradient(180deg,#F4F7FB 0%,#FBFCFD 340px,#FBFCFD 100%)" }}>
       <style>{`
         .pp2-tiers{max-width:1160px;margin:0 auto;padding:44px 40px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;align-items:stretch;}
-        .pp2-factors{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;}
+        .pp2-factors{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
         .pp2-card{transition:transform .22s cubic-bezier(.2,.7,.3,1), box-shadow .22s ease;}
         .pp2-card:hover{transform:translateY(-7px)!important;box-shadow:0 22px 48px rgba(16,24,40,0.13), 0 4px 12px rgba(16,24,40,0.07)!important;}
         .pp2-featured:hover{transform:translateY(-16px)!important;box-shadow:0 34px 70px rgba(10,102,194,0.26), 0 6px 18px rgba(10,102,194,0.14)!important;}
@@ -119,11 +118,10 @@ export default async function PricingPage() {
               </div>
 
               {/* stats */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 18 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18 }}>
                 {[
                   { v: t.connections, l: "connections", c: "#0A66C2" },
-                  { v: t.verified, l: "verified", c: t.verifiedOn ? "#00A150" : "#C2C9D2" },
-                  { v: t.nav, l: "Sales Nav", c: t.navOn ? "#00A150" : "#C2C9D2" },
+                  { v: t.age, l: "account age", c: "#0A66C2" },
                 ].map((s) => (
                   <div key={s.l} style={{ background: "#F8FAFC", border: "1px solid #EDEFF2", borderRadius: 10, padding: "12px 6px", textAlign: "center" }}>
                     <div style={{ fontFamily: POP, fontWeight: 700, fontSize: 17, color: s.c }}>{s.v}</div>
@@ -144,6 +142,19 @@ export default async function PricingPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* add-ons */}
+      <div className="pp2-wrap" style={{ maxWidth: 1160, margin: "30px auto 0", padding: "0 40px" }}>
+        <div style={{ display: "flex", gap: "14px 28px", flexWrap: "wrap", alignItems: "center", justifyContent: "center", textAlign: "center", background: "#FFFFFF", border: "1px solid #EAECEF", borderRadius: 14, padding: "18px 24px", boxShadow: "0 1px 2px rgba(16,24,40,0.03)" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10, fontSize: 14.5, color: "#37424F" }}>
+            <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: "50%", background: "#0A66C2", color: "#fff" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            </span>
+            <span><strong style={{ color: "#0B1220" }}>Verified badge</strong> &mdash; add <strong style={{ color: "#0A66C2" }}>+$20/mo</strong> on profiles with the blue check</span>
+          </span>
+          <span style={{ fontSize: 14.5, color: "#5A6473" }}>Weekly &amp; daily rates available on request</span>
+        </div>
       </div>
 
       {/* managed option (LinkedArmy only) — the tiers above are "run it yourself", this is "we run it" */}
