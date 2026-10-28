@@ -979,8 +979,14 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                             const hcFg = r.restrictedAt || retired ? REDD : r.healthCheckedAt ? GREEND : MUT;
                             return checkMode && checkable(r) ? (
                               <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 4 }}>
-                                <button onClick={() => markActive(r)} title="Healthy — mark active" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${GREEN}`, background: !r.restrictedAt && done ? GREEN : "#fff", color: !r.restrictedAt && done ? "#fff" : GREEND, font: `800 14px ${F}`, cursor: "pointer" }}>✓</button>
-                                <button onClick={() => setRestricted(r, true)} title="Restricted" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${RED}`, background: r.restrictedAt ? RED : "#fff", color: r.restrictedAt ? "#fff" : REDD, font: `800 13px ${F}`, cursor: "pointer" }}>✕</button>
+                                {/* Fire on mouse-DOWN, not click: during the daily check the connections input is
+                                    focused, and clicking a button first blurs that input (saving the count and
+                                    re-rendering the row), which swallows the trailing click — so the first tap
+                                    looked like it did nothing and needed a second. mousedown lands before the blur,
+                                    so the tick registers on the first press; the input still blurs right after and
+                                    saves the connection. onMouseDown's preventDefault isn't used, so blur/save runs. */}
+                                <button onMouseDown={() => markActive(r)} title="Healthy — mark active" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${GREEN}`, background: !r.restrictedAt && done ? GREEN : "#fff", color: !r.restrictedAt && done ? "#fff" : GREEND, font: `800 14px ${F}`, cursor: "pointer" }}>✓</button>
+                                <button onMouseDown={() => setRestricted(r, true)} title="Restricted" style={{ width: 34, height: 30, borderRadius: 8, border: `1.5px solid ${RED}`, background: r.restrictedAt ? RED : "#fff", color: r.restrictedAt ? "#fff" : REDD, font: `800 13px ${F}`, cursor: "pointer" }}>✕</button>
                               </div>
                             ) : (
                               <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
