@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   const accounts = await prisma.linkedInAccount.findMany({
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
     select: {
-      id: true, gologinProfileId: true, maturingStartedAt: true, maturingStalledAt: true, maturingStalledReason: true, linkedinUrl: true, notes: true,
+      id: true, gologinProfileId: true, maturingStartedAt: true, maturingStalledAt: true, maturingStalledReason: true, maturingStartFailedAt: true, linkedinUrl: true, notes: true,
       status: true, restrictedAt: true, permanentlyRestricted: true, linkedinAccountHealth: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360) — a shadow rental keeps status "available" but the renter is using
@@ -117,15 +117,15 @@ export async function POST(req: NextRequest) {
         await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `Maturing stopped (auto) — ${reason}`, "system").catch(() => {});
         stopped++;
       }
-      if (a.maturingStartedAt || a.maturingStalledAt)
-        await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: null, maturingStalledAt: null, maturingStalledReason: null } });
+      if (a.maturingStartedAt || a.maturingStalledAt || a.maturingStartFailedAt)
+        await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: null, maturingStalledAt: null, maturingStalledReason: null, maturingStartFailedAt: null, maturingStartFailedReason: null } });
       continue;
     }
 
     if (startAt) {
       // Healthy: at least one campaign actively maturing → 🔥. Clear any stale ⚠️.
       if (!a.maturingStartedAt) {
-        await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: startAt, maturingStalledAt: null, maturingStalledReason: null } });
+        await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartedAt: startAt, maturingStalledAt: null, maturingStalledReason: null, maturingStartFailedAt: null, maturingStartFailedReason: null } });
         await logWarmupActivity(
           a.id,
           a.linkedinUrl,
