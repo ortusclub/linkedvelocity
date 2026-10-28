@@ -313,6 +313,7 @@ export default function InventoryV2Page() {
   const [needs, setNeeds] = useState("all");
   const [matOnly, setMatOnly] = useState(false);
   const [stalledOnly, setStalledOnly] = useState(false);
+  const [armyOnly, setArmyOnly] = useState(false); // show only the LinkedArmy campaign pool
   const [groupFilter, setGroupFilter] = useState("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<Record<string, "account" | "mail" | "activity" | "overview">>({});
@@ -560,6 +561,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (needs !== "all") { const fl = attention(a); if (needs === "attention" ? !ATTN_ACTIONABLE.some((k) => fl.has(k)) : !fl.has(needs as AttnKey)) return false; }
       if (matOnly && !a.maturingStartedAt) return false;
       if (stalledOnly && !a.maturingStalledAt && !a.maturingStartFailedAt) return false;
+      if (armyOnly && a.inventoryPool !== "campaign") return false;
       if (ql) { const hay = [a.linkedinName, a.loginEmail, a.ownerName, a.rentals[0]?.user?.fullName, a.location, a.industry].join(" ").toLowerCase(); if (!hay.includes(ql)) return false; }
       return true;
     };
@@ -574,7 +576,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (passes(a, g, "ind")) { const k = indBucket(a); ind$[k] = (ind$[k] || 0) + 1; }
     }
     return { filtered, conn$, age$, ver$, sn$, ind$ };
-  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, sn, ind, needs, matOnly, stalledOnly, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [withGroup, groupFilter, poc, cty, renter, ver, conn, supply, age, sn, ind, needs, matOnly, stalledOnly, armyOnly, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtered = view.filtered;
 
   // Live counts per attention flag (over the whole inventory) — shown in the filter so you can see
@@ -642,8 +644,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   }, [withGroup, accounts, grossCollected]);
 
   const totalShown = sorted.length;
-  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || stalledOnly || poc !== "all" || groupFilter !== "all";
-  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSn("all"); setInd("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setStalledOnly(false); setPoc("all"); setGroupFilter("all"); };
+  const hasFilters = q || cty !== "all" || renter !== "all" || ver !== "all" || conn !== "all" || age !== "all" || sn !== "all" || ind !== "all" || supply !== "all" || needs !== "all" || matOnly || stalledOnly || armyOnly || poc !== "all" || groupFilter !== "all";
+  const clearAll = () => { setQ(""); setCty("all"); setRenter("all"); setVer("all"); setConn("all"); setAge("all"); setSn("all"); setInd("all"); setSupply("all"); setNeeds("all"); setMatOnly(false); setStalledOnly(false); setArmyOnly(false); setPoc("all"); setGroupFilter("all"); };
 
   const inp: React.CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: INK, outline: "none" };
   const headCols = "minmax(0,2.2fr) 78px 64px minmax(0,1.3fr) 104px minmax(0,1.2fr) 100px 92px 52px 56px 16px";
@@ -773,6 +775,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={inp}><option value="upd">Last updated</option><option value="price">Price, high → low</option><option value="conn">Connections, most first</option><option value="age">Age, oldest first</option><option value="name">Name A–Z</option></select>
             {(() => { const n = accounts.filter((a) => a.maturingStartedAt).length; return <button onClick={() => setMatOnly((v) => !v)} title="Show only accounts currently maturing" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(matOnly ? { borderColor: "#f59e0b", background: "#fff7ed", color: "#c2410c", fontWeight: 700 } : {}) }}>🔥 Maturing{n ? ` (${n})` : ""}</button>; })()}
             {(() => { const n = accounts.filter((a) => a.maturingStalledAt || a.maturingStartFailedAt).length; return n ? <button onClick={() => setStalledOnly((v) => !v)} title="Show only accounts whose maturing needs attention — a campaign that isn't sending (login/identity review) or that couldn't start at all (e.g. can't log in)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(stalledOnly ? { borderColor: "#ca8a04", background: "#fef9c3", color: "#854d0e", fontWeight: 700 } : {}) }}>⚠ Stalled ({n})</button> : null; })()}
+            {(() => { const n = accounts.filter((a) => a.inventoryPool === "campaign").length; return n ? <button onClick={() => setArmyOnly((v) => !v)} title="Show only the LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(armyOnly ? { borderColor: "#0e7490", background: "#ecfeff", color: "#0e7490", fontWeight: 700 } : {}) }}>⚑ LinkedArmy ({n})</button> : null; })()}
             {hasFilters && <button onClick={clearAll} style={{ border: "none", background: "none", color: BLUE, font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filters</button>}
           </div>
         </div>
