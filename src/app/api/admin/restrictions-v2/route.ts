@@ -168,7 +168,9 @@ export async function GET(req: Request) {
       addTouch(a.recoveryQrAt, "QR sent");
       addTouch(a.recoveryOutcomeAt, a.recoveryOutcome === "worked" ? "owner back in" : a.recoveryOutcome === "stuck" ? "owner stuck" : "owner replied");
       addTouch(acct.outreachEmailAt, "restriction email");
-      for (const s of stored.steps || []) addTouch(s.at, TOUCH_LABEL[s.k] || "logged");
+      // A pending id step = we SENT the ID-verification / Verifications contact form (that's what the
+      // Step 2 "Mark form sent" button logs), so label the touch "form sent" rather than "ID logged".
+      for (const s of stored.steps || []) addTouch(s.at, s.k === "id" && s.o === "pending" ? "form sent" : (TOUCH_LABEL[s.k] || "logged"));
       for (const e of log) addTouch(e.at, e.event === "recovered" ? "recovered" : "restricted");
       if (d.resolvedAt) addTouch(new Date(d.resolvedAt), "resolved");
       if (d.closedAt) addTouch(new Date(d.closedAt), d.lostOutcome === "perma" ? "perma-restricted" : "closed");
