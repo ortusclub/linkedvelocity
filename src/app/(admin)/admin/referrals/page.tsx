@@ -160,7 +160,6 @@ export default function AdminReferralsPage() {
   // Deep-link focus: the referrer to open on load, tracked by ID (not name) so it
   // survives the row being renamed slug↔display-name when applications load in.
   const [focusRefId, setFocusRefId] = useState<string | null>(null);
-  const [nextMonday, setNextMonday] = useState("");
   const [referrers, setReferrers] = useState<Referrer[]>([]);
   const [visibleCount, setVisibleCount] = useState(20);
   const [showAdd, setShowAdd] = useState(false);
@@ -186,10 +185,6 @@ export default function AdminReferralsPage() {
     fetch("/api/admin/ambassadors").then((r) => r.json()).then((d) => setApps(d.applications || [])).finally(() => setLoading(false));
     fetch("/api/admin/referrers").then((r) => r.json()).then((d) => setReferrers(d.referrers || [])).catch(() => {});
     reloadPayouts();
-    // Next Monday label (client-only to avoid hydration mismatch).
-    const d = new Date();
-    d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
-    setNextMonday(d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }));
     // Local YYYY-MM-DD for the date inputs (client-only to avoid hydration mismatch).
     const n = new Date();
     setToday(`${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`);
@@ -643,9 +638,8 @@ export default function AdminReferralsPage() {
       {/* payout schedule banner */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--band)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "12px 16px", marginBottom: 22, flexWrap: "wrap" }}>
         <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)", flex: "none" }} />
-        <span style={{ font: `600 12.5px ${F_SANS}`, color: "var(--text2)" }}>Payouts run every Monday.</span>
-        <span style={{ font: `500 12.5px ${F_SANS}`, color: "var(--muted)" }}>A commission becomes payable once the account passes its stability check (after the 3-day / 1-week hold); payouts run the next Monday.</span>
-        {nextMonday && <span style={{ marginLeft: "auto", font: `600 12px ${F_SANS}`, color: "var(--accent)", whiteSpace: "nowrap" }}>Next payout · {nextMonday}</span>}
+        <span style={{ font: `600 12.5px ${F_SANS}`, color: "var(--text2)" }}>We pay out daily.</span>
+        <span style={{ font: `500 12.5px ${F_SANS}`, color: "var(--muted)" }}>A commission becomes payable once the account passes its stability check (after the 3-day / 1-week hold), then it&apos;s paid out — around the same time the account owner is paid.</span>
       </div>
 
       {/* leaderboard */}
