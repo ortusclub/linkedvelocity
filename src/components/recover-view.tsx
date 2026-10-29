@@ -65,7 +65,7 @@ export default function RecoverView() {
             </a>
             <span style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>Hard to scan? <a href={info.qrUrl} target="_blank" rel="noopener noreferrer">Tap the code to open it full-size</a>.</span>
           </div>
-          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>. If it asks you to upload an ID, see LinkedIn&apos;s <a href={TIPS} target="_blank" rel="noopener noreferrer">ID verification troubleshooting tips</a>.</p>
+          <p className={styles.notice}>If LinkedIn asks for a <strong>6-digit code</strong> instead, <a href={codeLink}>tap here to get it</a>. If it asks you to upload an ID, <strong>do it on your phone</strong>. The ID check only works on a mobile device, not a laptop or desktop. See LinkedIn&apos;s <a href={TIPS} target="_blank" rel="noopener noreferrer">ID verification troubleshooting tips</a>.</p>
 
           {/* Did it work? — owner self-report, so the team knows whether to move on or step in. */}
           {outcome === "worked" ? (
