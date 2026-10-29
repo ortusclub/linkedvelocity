@@ -42,12 +42,17 @@ export async function GET() {
           accountAgeMonths: true, loginEmail: true, workEmail: true, proxyHost: true, proxyLocation: true,
         },
       }),
-      prisma.rental.findMany({ select: { linkedinAccountId: true, user: { select: { company: true, fullName: true, email: true } } } }),
+      prisma.rental.findMany({ select: { linkedinAccountId: true, accessGrantedAt: true, accessRevokedAt: true, user: { select: { company: true, fullName: true, email: true } } } }),
       prisma.accountMailEvent.findMany({ where: { type: { in: ["id_verification", "appeal_update", "recovery_appeal", "appeal_intake", "restriction"] } }, select: { linkedinAccountId: true, type: true, subject: true, bodyText: true } }),
     ]);
 
-    // Renters per account (canonical-ish labels), and a rented-ever flag.
+    // Renters per account (canonical-ish labels), and a rented-ever flag. We also keep each named
+    // renter's ACCESS WINDOW ([access granted, access revoked ?? now]) so a restriction can be
+    // attributed to whoever actually held the account when it fired — "restricted while rented" —
+    // rather than to anyone who ever touched it. A rental with no accessGrantedAt (never opened /
+    // still pending) gets no window, so a restriction before the renter opened it never counts.
     const rentersByAccount = new Map<string, Set<string>>();
+    const rentalWindows = new Map<string, { label: string; start: number; end: number }[]>();
     const alias: Record<string, string> = { "lydia@profilepartner.net": "ProfilePartner", "info@ortus.solutions": "Ortus", "info@apexstrategy.io": "Apex" };
     const exclude = new Set(["samuel.adcock@gmail.com", "sdnuqwdfnuwq@ortus.solutions"]);
     for (const r of rentals) {
@@ -58,6 +63,13 @@ export async function GET() {
       const label = alias[mailA] || r.user?.company || r.user?.fullName || "Renter";
       const set = rentersByAccount.get(r.linkedinAccountId) || new Set(); set.add(label); rentersByAccount.set(r.linkedinAccountId, set);
       rentersByAccount.set(r.linkedinAccountId, set);
+      if (r.accessGrantedAt) {
+        const start = r.accessGrantedAt.getTime();
+        const end = r.accessRevokedAt ? r.accessRevokedAt.getTime() : now;
+        const arr = rentalWindows.get(r.linkedinAccountId) || [];
+        arr.push({ label, start, end });
+        rentalWindows.set(r.linkedinAccountId, arr);
+      }
     }
 
     // Cause signal: an id_verification email means an identity-type restriction. Appeal/recovery
@@ -113,13 +125,26 @@ export async function GET() {
       const rentersSet = rentersByAccount.get(a.id) || new Set<string>();
       const renters = [...rentersSet].filter((x) => x !== "__rented__");
 
+      // Restricted-while-rented: the renters whose access window contained at least one restriction
+      // episode. This is the fair "on their watch" attribution (vs. ever-rented × ever-restricted).
+      const windows = rentalWindows.get(a.id) || [];
+      const rwrSet = new Set<string>();
+      if (windows.length) {
+        for (const ep of episodes) {
+          const epMs = Date.parse(ep.at);
+          if (Number.isNaN(epMs)) continue;
+          for (const w of windows) if (epMs >= w.start && epMs <= w.end) rwrSet.add(w.label);
+        }
+      }
+      const restrictedWhileRentedBy = [...rwrSet];
+
       return {
         id: a.id, name: a.linkedinName, url: a.linkedinUrl, status: a.status, verified: a.linkedinVerified,
         createdAt: a.createdAt ? a.createdAt.toISOString() : null,
         everRestricted, open: openNow, recovered: everRestricted && !openNow, perma: !!a.permanentlyRestricted,
         restrictCount, firstRestrictedAt, lastRestrictedAt, episodes,
         proxyHost: host, proxyType, geo, ageMonths: a.accountAgeMonths,
-        rentedEver: rentersSet.size > 0, renters,
+        rentedEver: rentersSet.size > 0, renters, restrictedWhileRentedBy,
         emailDomain: domainOf(a.loginEmail) || domainOf(a.workEmail),
         cause,
         recoveryPool,
