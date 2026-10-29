@@ -17,6 +17,35 @@ function matchClauses(email: string, linkedinUrl?: string) {
   return { address, slug, urlMatch };
 }
 
+// A still-OPEN prior application that this fresh submission is just a repeat of — the
+// commonest real duplicate (see Raquella/Jhann/Sheena, all verah-77, Oct 2026): the same
+// person files the form 2-3 times, minutes apart, from different emails or a logged-in vs
+// public session, so the narrow same-email+same-submitter+10min guard misses them.
+//
+// Keyed on the LinkedIn PROFILE (slug), which is the account's true identity — the same
+// profile can't be two rentals, so a prior non-rejected application for it is always a
+// duplicate no matter the email, submitter or how long ago. For a URL-less lead (walk-up)
+// we fall back to the same email, also URL-less, within 24h. Both deliberately leave room
+// for the legitimate cases the signup allows: re-applying after a rejection (rejected apps
+// are excluded) and signing up a genuinely DIFFERENT second account on the same email (a
+// different profile URL, so a different slug). Returns the earliest matching app (the
+// original) so the caller can hand it back instead of creating another row.
+export async function openDuplicateApplication(email: string, linkedinUrl?: string) {
+  const { address, slug, urlMatch } = matchClauses(email, linkedinUrl);
+  if (slug) {
+    return prisma.ambassadorApplication.findFirst({ where: { status: { notIn: ["rejected"] }, OR: urlMatch }, orderBy: { createdAt: "asc" } });
+  }
+  return prisma.ambassadorApplication.findFirst({
+    where: {
+      status: { notIn: ["rejected"] },
+      linkedinUrl: "",
+      createdAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      OR: [{ email: { equals: address, mode: "insensitive" } }, { linkedinEmail: { equals: address, mode: "insensitive" } }],
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
 export async function existingApplicationAccount(email: string, linkedinUrl?: string) {
   const { address, urlMatch } = matchClauses(email, linkedinUrl);
   const [application, account] = await Promise.all([
