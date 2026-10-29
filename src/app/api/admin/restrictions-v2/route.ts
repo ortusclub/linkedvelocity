@@ -187,11 +187,15 @@ export async function GET(req: Request) {
       // action. So on a terminal case, a new reply only counts if it's a positive/reinstatement signal
       // that could actually reopen it; an open case still surfaces any unacted reply.
       const terminal = d.bucket === "lost" || d.bucket === "done";
-      const newReply = (mailByAccount.get(a.id) || []).some((m) =>
+      const unactedReplies = (mailByAccount.get(a.id) || []).filter((m) =>
         m.status === "needs_review" && m.receivedAt.getTime() > lastActionMs &&
         (!terminal || REOPEN_RE.test(`${m.subject || ""} ${m.bodyText || ""}`)));
+      const newReply = unactedReplies.length > 0;
+      // Age of the newest unacted reply so an old response is distinguishable from a fresh one on the
+      // badge (e.g. "0d" = today, "3d" = sat for three days).
+      const newReplyAge = newReply ? `${Math.max(0, Math.floor((now - Math.max(...unactedReplies.map((m) => m.receivedAt.getTime()))) / dayMs))}d` : "";
       const clearedToday = d.bucket === "action" && touchedToday && !newReply;
-      const flags = newReply ? [{ kind: "reply" as const, label: "📧 LinkedIn replied", tip: "LinkedIn replied — respond, then it clears" }, ...d.flags]
+      const flags = newReply ? [{ kind: "reply" as const, label: `📧 LinkedIn replied · ${newReplyAge}`, tip: `LinkedIn replied ${newReplyAge} ago. Respond, then it clears.` }, ...d.flags]
         : clearedToday ? [{ kind: "today" as const, label: "✓ Done today", tip: "You acted on this today — back tomorrow if still open" }, ...d.flags]
         : d.flags;
 
