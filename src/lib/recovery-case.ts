@@ -91,10 +91,19 @@ export type CaseAccount = {
 function mailDerivedSteps(a: CaseAccount): Step[] {
   const out: Step[] = [];
   for (const m of a.mailEvents || []) {
-    const t = `${m.subject || ""} ${m.bodyText || ""}`;
+    // CRITICAL: LinkedIn's case emails echo OUR own message back in the "Member … Your Question:"
+    // turns of the discussion thread. Classifying the raw body means our phrasing ("restore access",
+    // "verify my identity", "completed verification") gets read as LinkedIn's verdict — e.g. a
+    // follow-up that says "restore access" was being marked as a reinstatement. So strip every
+    // "Member <date> …" turn (our side) and classify only LinkedIn's Response/Auto-Response text.
+    const linkedinOnly = (m.bodyText || "").replace(
+      /\bMember \d{1,2}\/\d{1,2}\/\d{2,4}\b[\s\S]*?(?=\b(?:Auto-Response|Response|Member) \d{1,2}\/\d{1,2}\/\d{2,4}\b|$)/gi,
+      " ",
+    );
+    const t = `${m.subject || ""} ${linkedinOnly}`;
     const at = m.receivedAt;
     if (m.type === "appeal_update") {
-      if (/reinstat|restored?\b|access (?:has been )?restored|no longer restricted|back online/i.test(t)) out.push({ k: "li", o: "ok", at, note: "LinkedIn: appeal approved (email)" });
+      if (/reinstat|access (?:has been|is|was) restored|we.?ve restored|your account (?:has been )?restored|restriction (?:has been |was )?(?:removed|lifted)|no longer restricted|back online/i.test(t)) out.push({ k: "li", o: "ok", at, note: "LinkedIn: appeal approved (email)" });
       else if (/remain(?:s)? restricted|does ?n.?t comply|not comply|rejected|declin|unable to (?:restore|reinstate)|will remain restricted/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn: appeal rejected (email)" });
       else out.push({ k: "li", o: "pending", at, note: "LinkedIn appeal update (email)" });
     } else if (m.type === "id_verification") {
