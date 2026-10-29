@@ -313,6 +313,29 @@ export async function PATCH(
       }
     }
 
+    // Forward sync: keep the linked inventory account's name in step with the pipeline name.
+    // The name is copied pipeline→inventory only once, when the account is first created, so a
+    // later edit here used to leave the two views out of step. Now an actual name change is
+    // carried onto the linked account too (same matching as the restriction sync above), so the
+    // pipeline and inventory always show the same name. Best-effort — never fail the PATCH.
+    if (rest.fullName !== undefined && application.fullName && application.fullName !== currentApp.fullName) {
+      try {
+        const linked = await prisma.linkedInAccount.findFirst({
+          where: {
+            status: { notIn: ["removed", "retired"] },
+            OR: [
+              { notes: { contains: `Owner: ${application.email}` } },
+              ...(application.linkedinUrl ? [{ linkedinUrl: application.linkedinUrl }] : []),
+            ],
+          },
+          select: { id: true, linkedinName: true },
+        });
+        if (linked && linked.linkedinName !== application.fullName) {
+          await prisma.linkedInAccount.update({ where: { id: linked.id }, data: { linkedinName: application.fullName } });
+        }
+      } catch (e) { console.error("pipeline→inventory name sync failed", e); }
+    }
+
     return NextResponse.json({ application });
   } catch (error) {
     if (error instanceof z.ZodError) {
