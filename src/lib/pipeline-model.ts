@@ -456,7 +456,7 @@ export const GRID4: CSSProperties = { display: "grid", gridTemplateColumns: "rep
 // Whose move is it right now, derived from the same data the live pipeline uses.
 // us = needs an admin now · them = waiting on applicant/referrer · timer = maturing
 // hold (the ONLY wait) · live = onboarded & earning · dead = not progressing.
-export type Turn = "us" | "them" | "timer" | "live" | "dead";
+export type Turn = "us" | "recovery" | "them" | "timer" | "live" | "dead";
 export const WAIT_DAYS = 1; // daily: once we've messaged, re-check for a reply the next day
 export const MAX_CHASES = 3;
 // Outbound chases (our messages, excluding replies/bookings/notes) — the chase counter.
@@ -504,12 +504,14 @@ export const turnOf = (r: Row): TurnInfo => {
   const restricted = !!r.accountRestrictedAt || (r.accountIssue || "").toLowerCase().includes("restricted");
   if (restricted && blockKind(r) === "restricted") {
     if (r.accountId) {
-      // Daily re-check for every restricted account (incl. referrer-reported ones):
-      // once marked checked today it snoozes to tomorrow; else it's due with the buttons.
-      if (restrictionCheckedToday(r)) return { turn: "them", label: "Restricted · re-checked today — due tomorrow" };
-      if (r.restrictionReport) return { turn: "us", recheckDue: true, label: "Verify restriction — referrer says it's cleared" };
+      // A restricted account has its own home now — the recovery case tracker
+      // (/admin/restrictions-v2). Keep it OUT of "To action" so the daily to-do isn't
+      // flooded with restrictions; it lives in its own "In recovery" bucket, still with the
+      // quick re-check buttons + a link into the case. Referrer-reported ones surface there too.
+      if (restrictionCheckedToday(r)) return { turn: "recovery", label: "In recovery · re-checked today — due tomorrow" };
+      if (r.restrictionReport) return { turn: "recovery", recheckDue: true, label: "In recovery — referrer says it's cleared, verify" };
       const last = r.healthCheckedAt ? ageDays(r.healthCheckedAt) : null;
-      return { turn: "us", recheckDue: true, label: last == null ? "Re-check restriction — not checked yet" : `Re-check restriction · last checked ${last}d ago` };
+      return { turn: "recovery", recheckDue: true, label: last == null ? "In recovery — not re-checked yet" : `In recovery · last checked ${last}d ago` };
     }
     // App-only restriction (no linked account to stamp a health-check): same daily re-check
     // + buttons as accounts, but snoozed via a follow-up date instead of healthCheckedAt.

@@ -20,12 +20,13 @@ import {
 const TURN_META: Record<Turn | "all", { tile: string; chip: string; bg: string; fg: string; dot: string; sub: string }> = {
   all:   { tile: "All", chip: "ALL", bg: "var(--blue-chip-bg,#e8f0fe)", fg: "var(--blue-chip-text,#1a56db)", dot: "var(--blue-chip-text,#1a56db)", sub: "every pipeline stage" },
   us:    { tile: "To action",       chip: "ACTION",    bg: "var(--warn-badge-bg,#fef3e2)", fg: "var(--warn-badge-text,#b7791f)", dot: "var(--warn-badge-text,#b7791f)", sub: "needs us now" },
+  recovery: { tile: "In recovery",  chip: "RECOVERY",  bg: "var(--rose-chip-bg,#fff1f2)",  fg: "var(--rose-chip-text,#be123c)",  dot: "var(--rose-chip-text,#be123c)",  sub: "restricted · handle in Restrictions" },
   them:  { tile: "Waiting on them", chip: "WAITING",   bg: "var(--blue-chip-bg,#e8f0fe)",  fg: "var(--blue-chip-text,#1a56db)",  dot: "var(--blue-chip-text,#1a56db)",  sub: "applicant or referrer" },
   timer: { tile: "Maturing",        chip: "TIMER",     bg: "var(--st-conv-bg,#efe8fd)",    fg: "var(--st-conv-fg,#6d28d9)",      dot: "var(--st-conv-fg,#6d28d9)",      sub: "1-week hold" },
   live:  { tile: "Onboarded",       chip: "ONBOARDED", bg: "var(--st-active-bg,#e6f4ea)",  fg: "var(--st-active-fg,#188038)",    dot: "var(--st-active-fg,#188038)",    sub: "live & earning" },
   dead:  { tile: "Stopped",         chip: "STOPPED",   bg: "var(--st-cancel-bg,#fdecea)",  fg: "var(--st-cancel-fg,#c0392b)",    dot: "var(--st-cancel-fg,#c0392b)",    sub: "not progressing" },
 };
-const TURN_ORDER: (Turn | "all")[] = ["all", "us", "them", "timer", "live", "dead"];
+const TURN_ORDER: (Turn | "all")[] = ["all", "us", "recovery", "them", "timer", "live", "dead"];
 const GROUP_OPTS: { key: string; label: string }[] = [
   { key: "level", label: "Level" }, { key: "handler", label: "Handler" }, { key: "referrer", label: "Referrer" }, { key: "none", label: "None" },
 ];
@@ -371,7 +372,7 @@ export default function PipelineNewPage() {
 
   // Tile counts — over everything (ignores the who/level/search filters, like a scoreboard).
   const tileCounts = useMemo(() => {
-    const c: Record<Turn, number> = { us: 0, them: 0, timer: 0, live: 0, dead: 0 };
+    const c: Record<Turn, number> = { us: 0, recovery: 0, them: 0, timer: 0, live: 0, dead: 0 };
     for (const { t } of withTurn) c[t.turn]++;
     return c;
   }, [withTurn]);
@@ -666,7 +667,7 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
         </div>
         {r.referredBy ? <a href={`/admin/referrals?ref=${encodeURIComponent(r.referredBy)}`} onClick={(e) => e.stopPropagation()} style={{ font: `700 12.5px ${F_SANS}`, color: "var(--link,#0a66c2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.referredBy}</a> : <span style={{ color: "var(--muted2,#b6bbc2)" }}>—</span>}
         <span style={{ justifySelf: "start", font: `700 11px ${F_SANS}`, padding: "3px 8px", borderRadius: 7, background: typeColor(r)[0], color: typeColor(r)[1], whiteSpace: "nowrap" }}>{effectiveType(r).label}</span>
-        <div style={{ display: "flex", flexDirection: "column" }}><span style={{ font: `700 12.5px ${F_GRO}`, color: applied >= 14 && !["live", "dead"].includes(t.turn) ? "var(--st-cancel-fg,#c0392b)" : "var(--fg,#111)" }}>{applied === 0 ? "Today" : applied + "d"}</span><span style={{ font: `500 10px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>{fmtDate(r.createdAt)}</span></div>
+        <div style={{ display: "flex", flexDirection: "column" }}><span style={{ font: `700 12.5px ${F_GRO}`, color: applied >= 14 && !["live", "dead", "recovery"].includes(t.turn) ? "var(--st-cancel-fg,#c0392b)" : "var(--fg,#111)" }}>{applied === 0 ? "Today" : applied + "d"}</span><span style={{ font: `500 10px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>{fmtDate(r.createdAt)}</span></div>
         <span style={{ justifySelf: "start", font: `700 11px ${F_SANS}`, padding: "3px 8px", borderRadius: 999, background: r.linkedinVerified ? "#dcfce7" : "#f1f3f6", color: r.linkedinVerified ? "#15803d" : "#9aa0a6", whiteSpace: "nowrap" }}>{r.linkedinVerified ? "✓ Yes" : "No"}</span>
         <span style={{ justifySelf: "start", font: `700 11px ${F_SANS}`, padding: "3px 9px", borderRadius: 999, background: levelPill(lvl)[0], color: levelPill(lvl)[1], whiteSpace: "nowrap" }}>{LEVEL_CHIP[String(lvl)]}</span>
         <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0, overflow: "hidden" }}>
@@ -674,8 +675,9 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
             <span style={{ flex: "none", font: `800 9px ${F_SANS}`, letterSpacing: ".05em", padding: "3px 7px", borderRadius: 6, background: m.bg, color: m.fg }}>{m.chip}</span>
             <span title={t.label} style={{ font: `600 12.5px ${F_SANS}`, color: "var(--fg,#111)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "help" }}>{t.label}</span>
           </div>
-          {(t.stopSuggested || (t.recheckDue && !!r.accountId)) && (
+          {(t.stopSuggested || (t.recheckDue && !!r.accountId) || (t.turn === "recovery" && !!r.accountId)) && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {t.turn === "recovery" && r.accountId && <a href={`/admin/restrictions-v2?focus=${encodeURIComponent(r.accountId)}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Open this account's recovery case" style={{ flex: "none", border: "1px solid #fecdd3", background: "#fff1f2", color: "#be123c", borderRadius: 7, padding: "3px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap", textDecoration: "none" }}>Open recovery case →</a>}
               {t.stopSuggested && <button onClick={(e) => { e.stopPropagation(); void handlers.setStage(r, "unreachable"); }} title="Stop chasing — mark Unresponsive" style={{ flex: "none", border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", borderRadius: 7, padding: "3px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>Mark Stopped</button>}
               {t.recheckDue && (<>
                 <button onClick={(e) => { e.stopPropagation(); if (r.accountId) { handlers.patchAccount(r.id, r.accountId, { linkedinAccountHealth: "restricted" }, true); } else { const d = new Date(); d.setDate(d.getDate() + 1); handlers.patchApp(r.id, { nextFollowUp: d.toISOString() }, true); } }} title="Still restricted — snooze the re-check to tomorrow" style={{ flex: "none", border: "1px solid #fcd34d", background: "#fffbeb", color: "#92400e", borderRadius: 7, padding: "3px 8px", font: `700 11px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>Still restricted</button>
