@@ -82,7 +82,7 @@ export interface Row {
   paymentDetails: string | null;
   payoutName: string | null;
   verifiedAt: string | null;
-  qcChecks: { photo?: boolean; headline?: boolean; about?: boolean; connections?: boolean; experiences?: boolean; education?: boolean; sessionsOut?: boolean; noRememberedPw?: boolean; gologinRemoved?: boolean } | null;
+  qcChecks: { photo?: boolean; headline?: boolean; about?: boolean; connections?: boolean; experiences?: boolean; education?: boolean; followLinkedarmy?: boolean; engagedPost?: boolean; thanksMessage?: boolean; sessionsOut?: boolean; noRememberedPw?: boolean; gologinRemoved?: boolean } | null;
   emailPrimaryAt: string | null;
   linkedinVerified: boolean;
   provisionStatus: string | null;
@@ -317,6 +317,9 @@ export const QC_ITEMS: [keyof NonNullable<Row["qcChecks"]>, string][] = [
   ["experiences", "Has at least two experiences"],
   ["education", "Has education listed"],
   ["connections", "Has sent new connection requests"],
+  ["followLinkedarmy", "Follows LinkedArmy on LinkedIn"],
+  ["engagedPost", "Liked or commented on a post"],
+  ["thanksMessage", "Messaged a new connection (thanks for connecting)"],
 ];
 export const eligibleMs = (r: Row): number | null => (r.onboardedAt ? new Date(r.onboardedAt).getTime() + 86400000 : null);
 export const setupDue = (r: Row): boolean => { if (setupPaid(r)) return false; const due = eligibleMs(r); return due !== null && Date.now() >= due; };
