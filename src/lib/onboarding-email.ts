@@ -207,6 +207,17 @@ export async function forwardOnboardingEmail(emailId: string) {
   if (code) {
     try { await prisma.onboardingEmailSetup.update({ where: { sessionId: e.sessionId }, data: { lastCode: code, lastCodeAt: new Date() } }); } catch { /* best effort */ }
   }
+  // Only forward a genuine email-confirmation message: LinkedIn's confirm link, or a verification
+  // code the owner actually needs. Other LinkedIn mail that lands while the forwarding window is
+  // open — a restriction/appeal update, a security notice, a generic notification — must NOT be
+  // relayed, because it goes out under the onboarding "Confirm your new LinkedIn email" subject
+  // with a reassurance header ("password unchanged, you keep full access") that is false and
+  // alarming on those emails (e.g. an appeal rejection saying the account stays restricted). Mark
+  // the delivery handled so it isn't retried, and return without sending.
+  if (!confirmUrl && !code) {
+    await prisma.onboardingEmailDelivery.update({ where: { emailId }, data: { status: "skipped", sentAt: new Date(), leaseUntil: null } });
+    return;
+  }
   try {
     const current = await prisma.onboardingEmailSetup.findUnique({ where: { sessionId: e.sessionId }, include: { session: { select: { state: true } } } });
     if (!current || !forwardingActive(current, current.session.state)) return;
