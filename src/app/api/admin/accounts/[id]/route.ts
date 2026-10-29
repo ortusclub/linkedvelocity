@@ -12,6 +12,7 @@ import { notifyBillingPaused } from "@/lib/billing-pause-notify";
 import { notifyRestrictionOwnerReferrer } from "@/lib/restrict-notify";
 import { setupPaidDate } from "@/lib/payment-schedule";
 import { logWarmupActivity } from "@/lib/warmup-activity";
+import { logProxyChange } from "@/lib/proxy-activity";
 import { rentalReadyStatus, RENTAL_READY_ITEMS, type ChecklistState } from "@/lib/rental-ready";
 
 const updateSchema = z.object({
@@ -252,6 +253,14 @@ export async function PATCH(
       (data as Record<string, unknown>).warmupStartedAt = next;
     }
 
+    // Capture the pre-change proxy so a manual repoint is logged to the Activity feed with a
+    // date (and who did it). Read before the update; logged after it lands (best-effort).
+    let proxyBefore: { host: string | null; port: number | null; location: string | null } | null = null;
+    if (data.proxyHost !== undefined || data.proxyPort !== undefined) {
+      const cur = await prisma.linkedInAccount.findUnique({ where: { id }, select: { proxyHost: true, proxyPort: true, proxyLocation: true } });
+      proxyBefore = cur ? { host: cur.proxyHost, port: cur.proxyPort, location: cur.proxyLocation } : null;
+    }
+
     // "Joined LinkedIn" month (from About this member): ISO string → Date, null to clear.
     // Also derive accountAgeMonths from it unless the same request sets age explicitly.
     if (data.linkedinJoinedAt !== undefined) {
@@ -314,6 +323,18 @@ export async function PATCH(
     // Log a warm-up start/stop/re-warm to the owner's Activity feed (best-effort).
     if (warmupChange) {
       try { await logWarmupActivity(id, account.linkedinUrl, account.notes, warmupChange, admin.fullName || admin.email); } catch (e) { console.error("warmup activity log failed", e); }
+    }
+
+    // Log a proxy repoint to the Activity feed with a date (best-effort; never fails the edit).
+    if (proxyBefore) {
+      try {
+        await logProxyChange(
+          { id, linkedinUrl: account.linkedinUrl, notes: account.notes },
+          proxyBefore,
+          { host: account.proxyHost, port: account.proxyPort, location: account.proxyLocation },
+          admin.fullName || admin.email,
+        );
+      } catch (e) { console.error("proxy activity log failed", e); }
     }
 
     // Newly restricted via this edit: tell any real renter(s) their billing is paused, and
