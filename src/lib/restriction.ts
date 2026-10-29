@@ -22,30 +22,61 @@ export type RestrictionEvent = {
   note?: string;
   creditedDays?: number;
   proxy?: RestrictionProxy;
+  // Context snapshotted at the MOMENT of a "restricted" event (best-effort current state then), so
+  // the analysis dashboard can attribute a restriction by domain / renter / age / connections /
+  // location without relying on mutable current state. Cause is deliberately NOT here: it usually
+  // arrives later via a LinkedIn email (and ~92% of restrictions have no email at all), so it's
+  // enriched afterward from captured mail, not stamped on the spot.
+  domain?: string | null;       // login (or work) email domain
+  renter?: string | null;       // active/pending renter label (company → name → email)
+  ageMonths?: number | null;
+  connections?: number | null;
+  location?: string | null;     // the account's profile location
+  verified?: boolean | null;
+  acctStatus?: string | null;   // account status at the time (rented / under_construction / …)
 };
 
-// Read the account's current proxy (host:port) and enrich it from the proxies table
-// (provider/type/verified country). Best-effort: returns null only if no proxy is set,
-// and still returns host:port when the proxies table has no matching row.
-async function snapshotProxy(accountId: string): Promise<RestrictionProxy | null> {
+// Snapshot the account's context at the moment of a restriction: proxy (host/geo, enriched from the
+// proxies table), login-email domain, the active renter, age, connection count, profile location,
+// verified + status. Best-effort — any field we can't read is simply omitted. This is what lets the
+// restriction dashboard attribute by point-in-time facts instead of mutable current state.
+async function snapshotContext(accountId: string): Promise<Partial<RestrictionEvent>> {
   const a = await prisma.linkedInAccount.findUnique({
     where: { id: accountId },
-    select: { proxyHost: true, proxyPort: true },
+    select: {
+      proxyHost: true, proxyPort: true, loginEmail: true, workEmail: true,
+      accountAgeMonths: true, connectionCount: true, linkedinVerified: true, location: true, status: true,
+    },
   });
-  if (!a || !a.proxyHost) return null;
-  const p =
-    a.proxyPort != null
-      ? await prisma.proxy.findUnique({
-          where: { host_port: { host: a.proxyHost, port: a.proxyPort } },
-          select: { provider: true, type: true, verifiedCountry: true },
-        })
-      : null;
+  if (!a) return {};
+  let proxy: RestrictionProxy | undefined;
+  if (a.proxyHost) {
+    const p =
+      a.proxyPort != null
+        ? await prisma.proxy.findUnique({
+            where: { host_port: { host: a.proxyHost, port: a.proxyPort } },
+            select: { provider: true, type: true, verifiedCountry: true },
+          })
+        : null;
+    proxy = { host: a.proxyHost, port: a.proxyPort ?? null, provider: p?.provider ?? null, type: p?.type ?? null, country: p?.verifiedCountry ?? null };
+  }
+  const rental = await prisma.rental.findFirst({
+    where: { linkedinAccountId: accountId, status: { in: ["active", "pending_access"] } },
+    orderBy: { startDate: "desc" },
+    select: { user: { select: { email: true, company: true, fullName: true } } },
+  });
+  const renter = rental?.user ? (rental.user.company || rental.user.fullName || rental.user.email || null) : null;
+  const email = (a.loginEmail || a.workEmail || "").toLowerCase();
+  const domain = email.includes("@") ? email.split("@")[1] || null : null;
   return {
-    host: a.proxyHost,
-    port: a.proxyPort ?? null,
-    provider: p?.provider ?? null,
-    type: p?.type ?? null,
-    country: p?.verifiedCountry ?? null,
+    ...(proxy ? { proxy } : {}),
+    domain,
+    renter,
+    ageMonths: a.accountAgeMonths ?? null,
+    connections: a.connectionCount ?? null,
+    location: a.location ?? null,
+    verified: a.linkedinVerified ?? null,
+    acctStatus: a.status ?? null,
   };
 }
 
@@ -81,12 +112,12 @@ export async function restrictionUpdate(
     // Already restricted → keep the original open timestamp and log nothing (no dupes).
     if (account.restrictedAt) return { restrictedAt: account.restrictedAt };
     const at = new Date();
-    const proxy = await snapshotProxy(account.id);
+    const snap = await snapshotContext(account.id);
     return {
       restrictedAt: at,
       restrictionLog: [
         ...log,
-        { at: at.toISOString(), event: "restricted", ...(trimmed ? { note: trimmed } : {}), ...(proxy ? { proxy } : {}) },
+        { at: at.toISOString(), event: "restricted", ...(trimmed ? { note: trimmed } : {}), ...snap },
       ],
     };
   }
