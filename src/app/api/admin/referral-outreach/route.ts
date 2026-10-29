@@ -39,6 +39,9 @@ function pickChat(method?: string | null, handle?: string | null, contacts?: unk
   let m = (pref?.method || method || "").toLowerCase();
   const h = (pref?.handle || handle || "").trim();
   if (!h) return null;
+  // An email stored as a contact is NOT a chat channel — its "@" must not be read as Telegram.
+  const bare = h.replace(/^(telegram|whatsapp|viber|phone|email)\s*:/i, "").trim();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bare)) return null;
   const blob = `${m} ${h}`.toLowerCase();
   if (/telegram|t\.me|@/.test(blob)) m = "telegram";
   else if (/viber/.test(blob)) m = "viber";
