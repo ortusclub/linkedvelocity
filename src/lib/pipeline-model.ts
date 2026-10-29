@@ -513,13 +513,15 @@ export const turnOf = (r: Row): TurnInfo => {
       const last = r.healthCheckedAt ? ageDays(r.healthCheckedAt) : null;
       return { turn: "recovery", recheckDue: true, label: last == null ? "In recovery — not re-checked yet" : `In recovery · last checked ${last}d ago` };
     }
-    // App-only restriction (no linked account to stamp a health-check): same daily re-check
-    // + buttons as accounts, but snoozed via a follow-up date instead of healthCheckedAt.
+    // App-only restriction (no linked account to stamp a health-check): also lives in the
+    // "In recovery" bucket — out of To action — same as account-linked ones. It still carries
+    // the daily re-check buttons, but snoozed via a follow-up date instead of healthCheckedAt.
     // "Still restricted" sets follow-up to tomorrow; "Cleared" clears the accountIssue flag.
-    if (r.restrictionReport) return { turn: "us", recheckDue: true, label: "Verify restriction — referrer says it's cleared" };
-    if (r.nextFollowUp && +new Date(r.nextFollowUp) > Date.now()) return { turn: "them", label: `Restricted · re-checked — follow up ${fmtDate(r.nextFollowUp)}` };
+    // (No restrictions-v2 case link, since there is no account to open.)
+    if (r.restrictionReport) return { turn: "recovery", recheckDue: true, label: "In recovery — referrer says it's cleared, verify" };
+    if (r.nextFollowUp && +new Date(r.nextFollowUp) > Date.now()) return { turn: "recovery", label: `In recovery · re-checked — follow up ${fmtDate(r.nextFollowUp)}` };
     const flagged = (r.outreachLog || []).some((t) => !["reply", "booked", "done", "note"].includes(t.ch) && !AUTO_BY.test((t.by || "").trim()));
-    return { turn: "us", recheckDue: true, label: flagged ? "Re-check — restriction still open?" : "Flag restriction with owner" };
+    return { turn: "recovery", recheckDue: true, label: flagged ? "In recovery — restriction still open?" : "In recovery — flag restriction with owner" };
   }
 
   const ns = nextStep(r);
