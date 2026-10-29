@@ -14,7 +14,7 @@ type Acct = {
   createdAt: string | null; everRestricted: boolean; open: boolean; recovered: boolean; perma: boolean;
   restrictCount: number; firstRestrictedAt: string | null; lastRestrictedAt: string | null; episodes: Episode[];
   proxyHost: string | null; proxyType: "datacenter" | "residential" | "none"; geo: "match" | "mismatch" | "unknown" | "none";
-  ageMonths: number | null; rentedEver: boolean; renters: string[]; emailDomain: string | null; cause: string; recoveryPool: boolean;
+  ageMonths: number | null; rentedEver: boolean; renters: string[]; restrictedWhileRentedBy: string[]; emailDomain: string | null; cause: string; recoveryPool: boolean;
 };
 type Data = { now: number; recoveryHosts: string[]; accounts: Acct[] };
 
@@ -78,7 +78,6 @@ const DIMS: { key: string; label: string; fn: (a: Acct) => string | null; note?:
   { key: "geo", label: "Proxy geo vs home region", fn: (a) => (a.recoveryPool ? null : a.geo === "match" ? "Geo matches (PH)" : a.geo === "mismatch" ? "Geo mismatch" : a.geo === "unknown" ? "Proxy · geo unknown" : "No proxy") },
   { key: "age", label: "Account age", fn: (a) => ageBucket(a.ageMonths) },
   { key: "rented", label: "Rented vs never rented", fn: (a) => (a.rentedEver ? "Rented at least once" : "Never rented") },
-  { key: "renter", label: "Renter", fn: (a) => (a.renters.length ? a.renters[0] : null), note: "⚠ Over-attributes. This is ever-rented × ever-restricted, NOT restricted-while-rented — an account restricted before a renter opened it (or while still pending access) still counts against them. Don't read this as a renter's fault rate; it only shows which renters hold restriction-prone stock." },
   { key: "email", label: "Login email domain", fn: (a) => a.emailDomain || "No login email" },
   { key: "cohort", label: "Creation cohort", fn: (a) => (a.createdAt ? halfOf(a.createdAt) : null) },
   { key: "cause", label: "Restriction cause", fn: (a) => (a.everRestricted ? a.cause : null), note: "Cause comes from captured LinkedIn security email. Most restrictions are phone/Persona checkpoints with no email, so Unknown dominates." },
@@ -150,7 +149,33 @@ export default function RestrictionAnalysisPage() {
   }), [base]);
 
   // Drivers ranked by gap.
-  const drivers = useMemo(() => DIMS.map((d) => ({ ...d, ...dimension(base, d.fn) })).sort((a, b) => b.gap - a.gap), [base]);
+  const drivers = useMemo(() => {
+    type Drv = {
+      key: string; label: string; note?: string; minShow?: number; segs: Seg[]; gap: number;
+      fn: (a: Acct) => string | null;
+      heldKey?: (a: Acct, k: string) => boolean; restrictedKey?: (a: Acct, k: string) => boolean;
+    };
+    const generic: Drv[] = DIMS.map((d) => ({ ...d, ...dimension(base, d.fn) }));
+    // Renter = restricted WHILE RENTED. For each renter: n = accounts they've held (access granted at
+    // some point); restricted = accounts restricted during their access window. A restriction before a
+    // renter opened the account, or after it was handed back, no longer counts against them.
+    const map = new Map<string, { n: number; r: number }>();
+    for (const a of base) {
+      for (const l of a.renters) { const row = map.get(l) || { n: 0, r: 0 }; row.n += 1; map.set(l, row); }
+      for (const l of a.restrictedWhileRentedBy) { const row = map.get(l) || { n: 0, r: 0 }; row.r += 1; map.set(l, row); }
+    }
+    const rSegs: Seg[] = [...map.entries()].map(([key, v]) => ({ key, label: key, n: v.n, restricted: v.r, rate: v.n ? v.r / v.n : 0 })).sort((x, y) => y.rate - x.rate);
+    const rBig = rSegs.filter((s) => s.n >= 10);
+    const rGap = rBig.length >= 2 ? rBig[0].rate - rBig[rBig.length - 1].rate : 0;
+    const renter: Drv = {
+      key: "renter", label: "Renter", minShow: 3, segs: rSegs, gap: rGap,
+      note: "Restricted while rented — each restriction is attributed only to the renter who actually held the account when it fired (access granted, not yet handed back). Count = accounts the renter has held; rate = share restricted on their watch.",
+      fn: (a) => a.restrictedWhileRentedBy[0] ?? a.renters[0] ?? null,
+      heldKey: (a, k) => a.renters.includes(k),
+      restrictedKey: (a, k) => a.restrictedWhileRentedBy.includes(k),
+    };
+    return [...generic, renter].sort((a, b) => b.gap - a.gap);
+  }, [base]);
 
   // Hypothesis checks (provisioning vs renters).
   const checks = useMemo(() => {
@@ -353,7 +378,7 @@ export default function RestrictionAnalysisPage() {
         <div><span style={h3}>Variables ranked by gap</span><p style={sub}>Gap = worst segment&apos;s ever-restricted rate minus the best, counting only segments with 10+ accounts. Red = worst, green = best. Click a rate to see its accounts.</p></div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,460px),1fr))", gap: 16, alignItems: "start" }}>
           {drivers.map((d, i) => {
-            const shown = d.segs.filter((s) => s.n >= 5);
+            const shown = d.segs.filter((s) => s.n >= (d.minShow ?? 5));
             const big = d.segs.filter((s) => s.n >= 10);
             const worst = big[0]?.key, best = big[big.length - 1]?.key;
             const maxR = Math.max(0.0001, ...shown.map((s) => s.rate));
@@ -368,9 +393,9 @@ export default function RestrictionAnalysisPage() {
                 {shown.map((s) => (
                   <div key={s.key} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) 42px minmax(70px,1fr) 46px", gap: 10, alignItems: "center", opacity: s.n < 10 ? 0.55 : 1 }}>
                     <span title={s.label} style={{ font: `600 12.5px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
-                    <button onClick={() => openDrawer(`${d.label}: ${s.label}`, `${s.n} accounts`, base.filter((a) => d.fn(a) === s.key))} style={{ border: "none", background: "none", padding: 0, textAlign: "left", font: `600 12.5px ${G}`, color: "#5b6779", cursor: "pointer" }}>{s.n}</button>
+                    <button onClick={() => openDrawer(`${d.label}: ${s.label}`, `${s.n} accounts`, base.filter((a) => (d.heldKey ? d.heldKey(a, s.key) : d.fn(a) === s.key)))} style={{ border: "none", background: "none", padding: 0, textAlign: "left", font: `600 12.5px ${G}`, color: "#5b6779", cursor: "pointer" }}>{s.n}</button>
                     <Bar w={`${(s.rate / maxR) * 100}%`} color={s.key === worst ? "#dc2626" : s.key === best ? "#16a34a" : "#94a3b8"} />
-                    <button onClick={() => openDrawer(`${d.label}: ${s.label} · restricted`, `${s.restricted} of ${s.n}`, base.filter((a) => d.fn(a) === s.key && a.everRestricted))} style={{ border: "none", background: "none", padding: 0, textAlign: "right", font: `700 13.5px ${G}`, color: rateColor(s.rate), cursor: "pointer" }}>{pct(s.rate, 0)}</button>
+                    <button onClick={() => openDrawer(`${d.label}: ${s.label} · restricted`, `${s.restricted} of ${s.n}`, base.filter((a) => (d.restrictedKey ? d.restrictedKey(a, s.key) : d.fn(a) === s.key && a.everRestricted)))} style={{ border: "none", background: "none", padding: 0, textAlign: "right", font: `700 13.5px ${G}`, color: rateColor(s.rate), cursor: "pointer" }}>{pct(s.rate, 0)}</button>
                   </div>
                 ))}
               </div>
