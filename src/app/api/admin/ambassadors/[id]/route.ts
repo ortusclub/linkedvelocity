@@ -67,6 +67,10 @@ const updateSchema = z.object({
     connections: z.boolean().optional(),
     experiences: z.boolean().optional(),
     education: z.boolean().optional(),
+    // Warm-up engagement checks (Step 4 QC): follow LinkedArmy, like/comment a post, message a new connection.
+    followLinkedarmy: z.boolean().optional(),
+    engagedPost: z.boolean().optional(),
+    thanksMessage: z.boolean().optional(),
     // Pre-onboarding security handover check (Step 5), stored alongside the QC checks.
     sessionsOut: z.boolean().optional(),
     noRememberedPw: z.boolean().optional(),
