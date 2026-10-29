@@ -1,4 +1,4 @@
-import { existingApplicationAccount, establishedDuplicate } from "@/lib/application-duplicates";
+import { existingApplicationAccount, establishedDuplicate, openDuplicateApplication } from "@/lib/application-duplicates";
 import { NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { meetingToken } from "@/lib/meeting-token";
@@ -75,6 +75,16 @@ export async function POST(req: Request) {
       // the existing app was returned WITH a meetingToken, which let an already-onboarded owner
       // re-book the onboarding call just by re-submitting the form. Tell them to contact the team.
       return NextResponse.json({ duplicate: true, alreadyRegistered: true, error: "This account is already registered with LinkedVelocity. If you need to make a change, contact the team instead of submitting a new application." }, { status: 200 });
+    }
+
+    // A still-open application for the same LinkedIn profile (any email / submitter / time),
+    // or the same URL-less lead re-submitting — a repeat, not a new signup. Hand back the
+    // original so the applicant still moves on to the booking step and the team gets neither a
+    // second row nor a duplicate lead email. (The narrow same-submitter 10-min guard above only
+    // catches an instant double-tap; this catches the minutes-apart, different-email repeats.)
+    const openDup = await openDuplicateApplication(data.email, linkedinUrl);
+    if (openDup) {
+      return NextResponse.json({ application: openDup, meetingToken: meetingToken(openDup.id), assessment: null, duplicate: true }, { status: 200 });
     }
 
     const duplicateNote = await existingApplicationAccount(data.email, linkedinUrl);
