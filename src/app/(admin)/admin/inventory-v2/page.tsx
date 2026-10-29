@@ -309,6 +309,11 @@ export default function InventoryV2Page() {
   const [ver, setVer] = useState("all"), [conn, setConn] = useState("all"), [supply, setSupply] = useState("all"), [age, setAge] = useState("all");
   const [sn, setSn] = useState("all"), [ind, setInd] = useState("all");
   const [sort, setSort] = useState("upd");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  // Default direction per sort key (name reads better A→Z; the rest default to high→low / newest).
+  const defaultDir = (k: string): "asc" | "desc" => (k === "name" ? "asc" : "desc");
+  // Click a column header: same key toggles direction, a new key switches and resets to its default.
+  const sortBy = (k: string) => { if (sort === k) setDir((d) => (d === "desc" ? "asc" : "desc")); else { setSort(k); setDir(defaultDir(k)); } };
   const [poc, setPoc] = useState("all");
   const [needs, setNeeds] = useState("all");
   const [matOnly, setMatOnly] = useState(false);
@@ -599,18 +604,23 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   const sorted = useMemo(() => {
     const arr = [...filtered];
     const fresh = (() => {
-      if (sort === "upd") return sortAccountsByLastUpdated(arr, "newest");
-      if (sort === "price") return arr.sort((x, y) => priceOf(y) - priceOf(x));
-      if (sort === "conn") return arr.sort((x, y) => y.connectionCount - x.connectionCount);
-      if (sort === "age") return arr.sort((x, y) => (y.accountAgeMonths || 0) - (x.accountAgeMonths || 0));
-      if (sort === "name") return arr.sort((x, y) => (x.linkedinName || "").localeCompare(y.linkedinName || ""));
-      return arr;
+      if (sort === "upd") return sortAccountsByLastUpdated(arr, dir === "asc" ? "oldest" : "newest");
+      // All other keys: build an ascending order, then reverse for descending.
+      const asc =
+        sort === "price" ? arr.sort((x, y) => priceOf(x) - priceOf(y))
+        : sort === "conn" ? arr.sort((x, y) => x.connectionCount - y.connectionCount)
+        : sort === "age" ? arr.sort((x, y) => (x.accountAgeMonths || 0) - (y.accountAgeMonths || 0))
+        : sort === "checked" ? arr.sort((x, y) => new Date(x.healthCheckedAt || 0).getTime() - new Date(y.healthCheckedAt || 0).getTime())
+        : sort === "name" ? arr.sort((x, y) => (x.linkedinName || "").localeCompare(y.linkedinName || ""))
+        : null;
+      if (!asc) return arr;
+      return dir === "desc" ? asc.reverse() : asc;
     })();
-    const key = sort + "|" + arr.map((a) => a.id).sort().join(",");
+    const key = sort + "|" + dir + "|" + arr.map((a) => a.id).sort().join(",");
     if (orderRef.current.key !== key) orderRef.current = { key, ids: fresh.map((a) => a.id) };
     const pos = new Map(orderRef.current.ids.map((id, i) => [id, i]));
     return [...arr].sort((x, y) => (pos.get(x.id) ?? Number.MAX_SAFE_INTEGER) - (pos.get(y.id) ?? Number.MAX_SAFE_INTEGER));
-  }, [filtered, sort]);
+  }, [filtered, sort, dir]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, Account[]>();
@@ -649,6 +659,10 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
 
   const inp: React.CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", borderRadius: 10, padding: "9px 10px", font: `600 13px ${F}`, color: INK, outline: "none" };
   const headCols = "minmax(0,2.2fr) 78px 64px minmax(0,1.3fr) 104px minmax(0,1.2fr) 100px 92px 52px 56px 16px";
+  // Clickable column header: click to sort by it, click again to flip direction. Arrow shows the active one.
+  const SortH = ({ k, l }: { k: string; l: string }) => (
+    <button onClick={() => sortBy(k)} title="Sort by this column" style={{ display: "inline-flex", alignItems: "center", gap: 3, border: "none", background: "none", padding: 0, font: "inherit", letterSpacing: "inherit", textTransform: "inherit", color: sort === k ? INK : "inherit", cursor: "pointer", textAlign: "left" }}>{l}{sort === k && <span style={{ fontSize: 8 }}>{dir === "desc" ? "▼" : "▲"}</span>}</button>
+  );
 
   if (loading) return <div style={{ padding: 28, font: `500 14px ${F}`, color: SUB, background: BG, minHeight: "100vh" }}>Loading inventory…</div>;
 
@@ -772,7 +786,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
               <option value="all">Any flag</option>
               {ATTN_OPTS.map((o) => { const n = attnCounts[o.key] || 0; return <option key={o.key} value={o.key} disabled={n === 0}>{o.label}{n ? ` (${n})` : ""}</option>; })}
             </select>
-            <select value={sort} onChange={(e) => setSort(e.target.value)} style={inp}><option value="upd">Last updated</option><option value="price">Price, high → low</option><option value="conn">Connections, most first</option><option value="age">Age, oldest first</option><option value="name">Name A–Z</option></select>
+            <select value={sort} onChange={(e) => { setSort(e.target.value); setDir(defaultDir(e.target.value)); }} style={inp}><option value="upd">Last updated</option><option value="checked">Last checked</option><option value="price">Price, high → low</option><option value="conn">Connections, most first</option><option value="age">Age, oldest first</option><option value="name">Name A–Z</option></select>
             {(() => { const n = accounts.filter((a) => a.maturingStartedAt).length; return <button onClick={() => setMatOnly((v) => !v)} title="Show only accounts currently maturing" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(matOnly ? { borderColor: "#f59e0b", background: "#fff7ed", color: "#c2410c", fontWeight: 700 } : {}) }}>🔥 Maturing{n ? ` (${n})` : ""}</button>; })()}
             {(() => { const n = accounts.filter((a) => a.maturingStalledAt || a.maturingStartFailedAt).length; return n ? <button onClick={() => setStalledOnly((v) => !v)} title="Show only accounts whose maturing needs attention — a campaign that isn't sending (login/identity review) or that couldn't start at all (e.g. can't log in)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(stalledOnly ? { borderColor: "#ca8a04", background: "#fef9c3", color: "#854d0e", fontWeight: 700 } : {}) }}>⚠ Stalled ({n})</button> : null; })()}
             {(() => { const n = accounts.filter((a) => a.inventoryPool === "campaign").length; return n ? <button onClick={() => setArmyOnly((v) => !v)} title="Show only the LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(armyOnly ? { borderColor: "#0e7490", background: "#ecfeff", color: "#0e7490", fontWeight: 700 } : {}) }}>⚑ LinkedArmy ({n})</button> : null; })()}
@@ -805,7 +819,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
         <div style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 14, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.04)" }}>
           <div style={{ minWidth: 1360 }}>
             <div style={{ display: "grid", gridTemplateColumns: headCols, gap: 12, alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${LINE2}`, background: "#fafbfc", font: `700 10.5px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: MUT }}>
-              <span>Account</span><span>Conn.</span><span>Age</span><span>Flags</span><span>Price</span><span>Renter / status</span><span>LV PoC</span><span>{checkMode ? "Health" : "Checked"}</span><span>Rent</span><span></span><span></span>
+              <SortH k="name" l="Account" /><SortH k="conn" l="Conn." /><SortH k="age" l="Age" /><span>Flags</span><SortH k="price" l="Price" /><span>Renter / status</span><span>LV PoC</span>{checkMode ? <span>Health</span> : <SortH k="checked" l="Checked" />}<span>Rent</span><span></span><span></span>
             </div>
             {grouped.length === 0 && <div style={{ padding: 40, textAlign: "center", font: `500 13.5px ${F}`, color: MUT }}>No accounts match.</div>}
             {grouped.map((g) => {
