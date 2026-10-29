@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
       permanentlyRestricted: false,
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360): the renter is using the account, so it must not fire its own
       // connection requests. Shadow rentals keep status "available", so they'd slip
@@ -199,15 +199,23 @@ export async function POST(req: NextRequest) {
       atLevel4(a),
   );
 
-  // PRIORITY: pipeline/onboarding accounts are on a 7-day clock; inventory is open-ended.
-  // So pipeline always goes first, and within each group the longest-waiting (oldest)
-  // account leads — a time-bound onboarding account never waits behind an inventory one.
-  const PIPELINE_STATUS = new Set(["under_construction", "construction_immature", "under_review"]);
-  const isPipeline = (a: { status: string }) => PIPELINE_STATUS.has(a.status);
+  // PRIORITY: the cloud engine can only run ESTABLISHED profiles. under_construction /
+  // construction_immature accounts are still being built (logged out, or the GoLogin
+  // profile is open locally), so a VM picks up their campaign, can't run it, and stops
+  // it on contact — confirmed Oct-29 2026 (Marife/Angelica/Princess all cancelled
+  // immediately). Putting those first (the old pipeline-first rule) just burned the
+  // per-owner launch slots and starved the inventory that CAN mature. So: inventory
+  // first, and within it the LOWEST-connection accounts lead (they need maturing most,
+  // per the <100-conn priority); still-in-construction accounts go LAST, only attempted
+  // when nothing runnable is waiting. They still get built via the manual warm-up flow.
+  const CONSTRUCTION_STATUS = new Set(["under_construction", "construction_immature"]);
+  const inConstruction = (a: { status: string }) => CONSTRUCTION_STATUS.has(a.status);
   const ordered = [...candidates].sort((a, b) => {
-    const pa = isPipeline(a) ? 0 : 1, pb = isPipeline(b) ? 0 : 1;
-    if (pa !== pb) return pa - pb;
-    return a.createdAt.getTime() - b.createdAt.getTime();
+    const ca = inConstruction(a) ? 1 : 0, cb = inConstruction(b) ? 1 : 0;
+    if (ca !== cb) return ca - cb;                                   // established inventory before construction
+    const na = a.connectionCount ?? 1e9, nb = b.connectionCount ?? 1e9;
+    if (na !== nb) return na - nb;                                   // fewest connections first (<100 need it most)
+    return a.createdAt.getTime() - b.createdAt.getTime();            // then longest-waiting
   });
 
   let started = 0;
@@ -250,7 +258,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, pipeline: ordered.filter(isPipeline).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: candidates.length, construction: ordered.filter(inConstruction).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, candidates.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
