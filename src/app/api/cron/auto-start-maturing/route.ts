@@ -199,20 +199,23 @@ export async function POST(req: NextRequest) {
       atLevel4(a),
   );
 
-  // PRIORITY: the cloud engine can only run ESTABLISHED profiles. under_construction /
-  // construction_immature accounts are still being built (logged out, or the GoLogin
-  // profile is open locally), so a VM picks up their campaign, can't run it, and stops
-  // it on contact — confirmed Oct-29 2026 (Marife/Angelica/Princess all cancelled
-  // immediately). Putting those first (the old pipeline-first rule) just burned the
-  // per-owner launch slots and starved the inventory that CAN mature. So: inventory
-  // first, and within it the LOWEST-connection accounts lead (they need maturing most,
-  // per the <100-conn priority); still-in-construction accounts go LAST, only attempted
-  // when nothing runnable is waiting. They still get built via the manual warm-up flow.
+  // PRIORITY by what the cloud VM can actually run (measured Oct-29 2026 — live vs
+  // cancelled campaigns per account status): `available` accounts run reliably (10 live
+  // / 11 ended) because reaching `available` requires the rental-ready checklist, which
+  // includes a confirmed independent login the cloud can reuse. `unavailable` (3/14) and
+  // `under_construction` (1/12) accounts are usually logged out or have the GoLogin
+  // profile open locally, so a VM picks up their campaign, can't run it, and cancels it
+  // on contact. Feeding those into the (effectively ~1/tick) per-owner launch slots just
+  // starves the accounts that CAN mature. So rank: available → other inventory →
+  // construction LAST; within a tier the LOWEST-connection account leads (needs maturing
+  // most, per the <100-conn priority), then the longest-waiting. The non-available
+  // accounts still get built through the manual warm-up flow, not here.
   const CONSTRUCTION_STATUS = new Set(["under_construction", "construction_immature"]);
   const inConstruction = (a: { status: string }) => CONSTRUCTION_STATUS.has(a.status);
+  const statusRank = (s: string) => (s === "available" ? 0 : inConstruction({ status: s }) ? 2 : 1);
   const ordered = [...candidates].sort((a, b) => {
-    const ca = inConstruction(a) ? 1 : 0, cb = inConstruction(b) ? 1 : 0;
-    if (ca !== cb) return ca - cb;                                   // established inventory before construction
+    const ra = statusRank(a.status), rb = statusRank(b.status);
+    if (ra !== rb) return ra - rb;                                   // available first, construction last
     const na = a.connectionCount ?? 1e9, nb = b.connectionCount ?? 1e9;
     if (na !== nb) return na - nb;                                   // fewest connections first (<100 need it most)
     return a.createdAt.getTime() - b.createdAt.getTime();            // then longest-waiting
