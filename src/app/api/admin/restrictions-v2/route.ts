@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { buildCase, deriveCase, buildWorkflow, matchApp, notesSaysPerma, parseStoredCase, type CaseAccount } from "@/lib/recovery-case";
+import { buildCase, deriveCase, buildWorkflow, matchApp, notesSaysPerma, parseStoredCase, PHASE, type CaseAccount } from "@/lib/recovery-case";
 import { mailTypeLabel } from "@/lib/account-mail";
 import type { RestrictionEvent } from "@/lib/restriction";
 
@@ -201,10 +201,22 @@ export async function GET(req: Request) {
         : clearedToday ? [{ kind: "today" as const, label: "✓ Done today", tip: "You acted on this today — back tomorrow if still open" }, ...d.flags]
         : d.flags;
 
+      // Phase chip: raw account.status collapses the lifecycle to "unavailable"/"retired" the moment
+      // an account is restricted or its rental is replaced, so a restricted-but-onboarded account
+      // shows "P4 · unavailable". Restriction is orthogonal to lifecycle, so prefer the real signals:
+      // an active/pending rental → Rented; a restricted live account (status "unavailable") → Onboarded.
+      // Genuinely terminal accounts (retired or written off as lost) keep their phase, so a dead
+      // account with a lingering active rental doesn't read as Rented.
+      const retiredOrLost = a.status === "retired" || !!d.lostOutcome;
+      const phase = retiredOrLost ? d.phase
+        : renterByAccount.has(a.id) ? PHASE.rented
+        : a.status === "unavailable" ? PHASE.available
+        : d.phase;
+
       return {
         lastTouchAt: lastTouch ? lastTouch[0] : null, lastTouchLabel: lastTouch ? lastTouch[1] : "",
         id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
-        linkedinUrl: a.linkedinUrl, poc: pocResolved, referrerName: referrerNameFor(app?.referredBy), phase: d.phase,
+        linkedinUrl: a.linkedinUrl, poc: pocResolved, referrerName: referrerNameFor(app?.referredBy), phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags, chain: d.chain,
