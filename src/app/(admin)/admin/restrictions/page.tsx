@@ -391,11 +391,11 @@ export default function RestrictionAnalysisPage() {
                 </div>
                 {d.note && <span style={{ font: `500 12px ${F}`, color: "#92400e", background: "#fffbeb", borderRadius: 9, padding: "8px 10px", lineHeight: 1.45 }}>{d.note}</span>}
                 {shown.map((s) => (
-                  <div key={s.key} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) 42px minmax(70px,1fr) 46px", gap: 10, alignItems: "center", opacity: s.n < 10 ? 0.55 : 1 }}>
+                  <div key={s.key} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) 42px minmax(60px,1fr) 84px", gap: 10, alignItems: "center", opacity: s.n < 10 ? 0.55 : 1 }}>
                     <span title={s.label} style={{ font: `600 12.5px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
                     <button onClick={() => openDrawer(`${d.label}: ${s.label}`, `${s.n} accounts`, base.filter((a) => (d.heldKey ? d.heldKey(a, s.key) : d.fn(a) === s.key)))} style={{ border: "none", background: "none", padding: 0, textAlign: "left", font: `600 12.5px ${G}`, color: "#5b6779", cursor: "pointer" }}>{s.n}</button>
                     <Bar w={`${(s.rate / maxR) * 100}%`} color={s.key === worst ? "#dc2626" : s.key === best ? "#16a34a" : "#94a3b8"} />
-                    <button onClick={() => openDrawer(`${d.label}: ${s.label} · restricted`, `${s.restricted} of ${s.n}`, base.filter((a) => (d.restrictedKey ? d.restrictedKey(a, s.key) : d.fn(a) === s.key && a.everRestricted)))} style={{ border: "none", background: "none", padding: 0, textAlign: "right", font: `700 13.5px ${G}`, color: rateColor(s.rate), cursor: "pointer" }}>{pct(s.rate, 0)}</button>
+                    <button onClick={() => openDrawer(`${d.label}: ${s.label} · restricted`, `${s.restricted} of ${s.n}`, base.filter((a) => (d.restrictedKey ? d.restrictedKey(a, s.key) : d.fn(a) === s.key && a.everRestricted)))} style={{ border: "none", background: "none", padding: 0, textAlign: "right", font: `700 13.5px ${G}`, color: rateColor(s.rate), cursor: "pointer", whiteSpace: "nowrap" }}><span style={{ color: "#8a93a3", font: `600 11.5px ${F}` }}>{s.restricted} · </span>{pct(s.rate, 0)}</button>
                   </div>
                 ))}
               </div>
