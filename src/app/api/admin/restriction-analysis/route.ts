@@ -42,15 +42,17 @@ export async function GET() {
           accountAgeMonths: true, loginEmail: true, workEmail: true, proxyHost: true, proxyLocation: true,
         },
       }),
-      prisma.rental.findMany({ select: { linkedinAccountId: true, accessGrantedAt: true, accessRevokedAt: true, user: { select: { company: true, fullName: true, email: true } } } }),
+      prisma.rental.findMany({ select: { linkedinAccountId: true, startDate: true, accessGrantedAt: true, accessRevokedAt: true, user: { select: { company: true, fullName: true, email: true } } } }),
       prisma.accountMailEvent.findMany({ where: { type: { in: ["id_verification", "appeal_update", "recovery_appeal", "appeal_intake", "restriction"] } }, select: { linkedinAccountId: true, type: true, subject: true, bodyText: true } }),
     ]);
 
     // Renters per account (canonical-ish labels), and a rented-ever flag. We also keep each named
-    // renter's ACCESS WINDOW ([access granted, access revoked ?? now]) so a restriction can be
-    // attributed to whoever actually held the account when it fired — "restricted while rented" —
-    // rather than to anyone who ever touched it. A rental with no accessGrantedAt (never opened /
-    // still pending) gets no window, so a restriction before the renter opened it never counts.
+    // renter's ALLOCATION WINDOW ([access granted ?? rental start, access revoked ?? now]) so a
+    // restriction is attributed to whoever held the account when it fired — "restricted while
+    // rented" — not to anyone who ever touched it. We start from accessGrantedAt when we have it,
+    // else the rental start date: a pending-access account is STILL allocated to that renter, and a
+    // restriction then is on their watch, so it must count (many recovered / in-pipeline accounts
+    // never got a formal accessGrantedAt). A restriction before the rental started never counts.
     const rentersByAccount = new Map<string, Set<string>>();
     const rentalWindows = new Map<string, { label: string; start: number; end: number }[]>();
     const alias: Record<string, string> = { "lydia@profilepartner.net": "ProfilePartner", "info@ortus.solutions": "Ortus", "info@apexstrategy.io": "Apex" };
@@ -63,8 +65,9 @@ export async function GET() {
       const label = alias[mailA] || r.user?.company || r.user?.fullName || "Renter";
       const set = rentersByAccount.get(r.linkedinAccountId) || new Set(); set.add(label); rentersByAccount.set(r.linkedinAccountId, set);
       rentersByAccount.set(r.linkedinAccountId, set);
-      if (r.accessGrantedAt) {
-        const start = r.accessGrantedAt.getTime();
+      const startRaw = r.accessGrantedAt ?? r.startDate;
+      if (startRaw) {
+        const start = startRaw.getTime();
         const end = r.accessRevokedAt ? r.accessRevokedAt.getTime() : now;
         const arr = rentalWindows.get(r.linkedinAccountId) || [];
         arr.push({ label, start, end });
