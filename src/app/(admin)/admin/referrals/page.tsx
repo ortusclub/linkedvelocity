@@ -717,7 +717,7 @@ export default function AdminReferralsPage() {
           // referrers") only when more than one kind is present in the current view.
           const showGroupHeaders = new Set(shown.map((x) => x.pool)).size > 1;
           const firstOfGroup = i === 0 || shown[i - 1].pool !== r.pool;
-          const { ref, pays, commissionPaid, outstanding } = refInfo(r.name, r.readyOwed);
+          const { ref, pays, commissionPaid } = refInfo(r.name, r.readyOwed);
           const rid = ref?.id || null;
           const open = expandedRef.has(r.name) || (!!focusRefId && rid === focusRefId);
           const busy = ref ? pBusy === ref.id : false;
@@ -763,6 +763,12 @@ export default function AdminReferralsPage() {
             return c;
           });
           const readyNames = converted.filter((c) => c.tone === "ready").map((c) => c.name);
+          // OWED is the sum of the people still shown as "Ready to pay" here — not
+          // (total owed − total ever paid). That older netting double-counts money
+          // paid for referrals who have since left the roster (so their payment stays
+          // in "paid" but their earned amount is gone), which silently masked newly
+          // onboarded people who are genuinely still owed.
+          const outstanding = converted.reduce((sum, c) => sum + (c.tone === "ready" ? c.fee : 0), 0);
           const countedConverted = converted.filter((c) => c.counts).length;
           const notCounted = converted.length - countedConverted;
           return (
@@ -804,7 +810,7 @@ export default function AdminReferralsPage() {
                 <div style={{ padding: "2px 22px 20px 63px", display: "flex", flexDirection: "column", gap: 16 }}>
                   {/* commission + payout summary */}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
-                    <div><div style={label}>Ready to pay</div><div style={{ font: `700 16px ${F_GRO}`, color: outstanding > 0 ? "var(--green)" : "var(--muted2)", fontVariantNumeric: "tabular-nums" }}>{money(outstanding)} <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)" }}>· {Math.round(outstanding / rate)} onboarded</span></div></div>
+                    <div><div style={label}>Ready to pay</div><div style={{ font: `700 16px ${F_GRO}`, color: outstanding > 0 ? "var(--green)" : "var(--muted2)", fontVariantNumeric: "tabular-nums" }}>{money(outstanding)} <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)" }}>· {readyNames.length} onboarded</span></div></div>
                     <div><div style={label}>In hold</div><div style={{ font: `700 16px ${F_GRO}`, color: "var(--muted2)", fontVariantNumeric: "tabular-nums" }}>{money(r.heldOwed)} <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2)" }}>· {Math.round(r.heldOwed / rate)} verifying</span></div></div>
                     <div><div style={label}>Paid (commission)</div><div style={{ font: `700 16px ${F_GRO}`, color: "var(--text2)", fontVariantNumeric: "tabular-nums" }}>{money(commissionPaid)}</div></div>
                     <div style={{ flex: 1 }} />
