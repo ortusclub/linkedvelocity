@@ -239,7 +239,10 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return run.filter((r) => {
-      if (card && !inCard(r, card)) return false;
+      if (card) { if (!inCard(r, card)) return false; }
+      // Default view hides the can't-send rows (on hold / no details / not on Wise) —
+      // they live under the "Can't send" card instead of cluttering the pay run.
+      else if (["hold", "needs_details", "manual"].includes(r.state)) return false;
       if (!needle) return true;
       return [r.payeeName, r.payeeSub, r.description, r.method, r.referredBy].some((v) => v?.toLowerCase().includes(needle));
     });
