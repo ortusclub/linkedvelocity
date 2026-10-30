@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { publicInventorySlice } from "@/lib/public-inventory";
+import { tierPricing } from "@/lib/account-pricing";
 import { maskName } from "@/lib/mask";
 import { blogFontVars } from "@/lib/blog-fonts";
 
@@ -31,8 +32,9 @@ async function getCatalogueSchema() {
         industry: true,
         location: true,
         connectionCount: true,
+        accountAgeMonths: true,
         hasSalesNav: true,
-        monthlyPrice: true,
+        linkedinVerified: true,
         profilePhotoUrl: true,
       },
       orderBy: { connectionCount: "desc" },
@@ -49,7 +51,7 @@ async function getCatalogueSchema() {
       numberOfItems: accounts.length,
       itemListElement: accounts.map((a, index) => {
         const displayName = maskName(a.linkedinName);
-        const price = Number(a.monthlyPrice);
+        const price = tierPricing(a.connectionCount, a.accountAgeMonths, a.hasSalesNav, a.linkedinVerified).monthly;
         const descParts: string[] = [];
         if (a.connectionCount > 0) descParts.push(`${a.connectionCount.toLocaleString()}+ connections`);
         if (a.industry) descParts.push(a.industry);
