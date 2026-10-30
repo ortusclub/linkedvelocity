@@ -12,7 +12,7 @@ import { CardDetail, AccountOnlyCard } from "@/components/admin/pipeline-panel";
 import {
   type Row, type Status, type Turn, F_SANS, F_GRO, labelCss, inputCss,
   applicationType, effectiveType, effectiveTypeKey, APPLICATION_TYPES, levelOf, levelKey, LEVEL_CHIP, LEVEL_GROUPS,
-  healthOf, HEALTH_OPTIONS, isRestricted, turnOf,
+  healthOf, HEALTH_OPTIONS, isRestricted, turnOf, referralInvite,
   cfgOf, monthlyAmt, fmtDate, ageDays, initialsOf, lastTouchActivity,
 } from "@/lib/pipeline-model";
 
@@ -647,6 +647,9 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
   const lt = lastTouchActivity(r);
   const lastTouch = lt ? ageDays(lt) : null;
   const restricted = isRestricted(r);
+  // On onboarded rows, flag when the referral-program invite hasn't gone out on every channel
+  // we can reach them on (email + mobile). pending is empty once all available channels are sent.
+  const refInv = lvl === 5 && !r.accountOnly ? referralInvite(r) : null;
   return (
     <div style={{ borderBottom: "1px solid var(--divider,#f0f2f5)", background: open ? "var(--band,#fafbfc)" : "var(--card,#fff)" }}>
       <div onClick={onToggle} style={{ display: "grid", gridTemplateColumns: "32px minmax(0,2fr) 104px 96px 70px 60px 112px minmax(0,1.5fr) 118px 84px 22px", gap: 12, alignItems: "center", padding: "9px 16px", cursor: "pointer", boxShadow: `inset 3px 0 0 ${t.chaseDue ? "var(--st-cancel-fg,#c0392b)" : t.turn === "us" && !h ? "var(--warn-badge-text,#f59e0b)" : "transparent"}` }}>
@@ -662,6 +665,7 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
             {r.linkedinVerified && <span style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--blue-chip-bg,#e8f0fe)", color: "var(--blue-chip-text,#1a56db)" }}>✓</span>}
             {lvl >= 4 && r.accountId && !r.linkedinJoinedAt && <span title="Account history (Level 4) not filled — open this row and record the account's 'Joined LinkedIn' month + current connections." style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)", border: "1px dashed var(--warn-badge-text,#b7791f)" }}>⚠ History</span>}
             {isLikelyTestEmail(r.email) && <span style={{ flex: "none", font: `700 9px ${F_SANS}`, padding: "2px 6px", borderRadius: 5, background: "var(--test-bg,#fde68a)", color: "var(--test-fg,#92400e)" }}>TEST</span>}
+            {refInv && refInv.pending.length > 0 && <span title={`Referral program invite not sent yet via ${refInv.pending.join(" + ")}. Open this row → Referral program to send.`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--purple-chip-bg,#efe7fd)", color: "var(--purple-chip-text,#6b3fd4)", border: "1px dashed var(--purple-chip-text,#6b3fd4)" }}>⚑ Refer: {refInv.pending.map((p) => (p === "email" ? "✉" : "📱")).join(" ")}</span>}
           </div>
           <div style={{ font: `500 12px ${F_SANS}`, color: "var(--muted2,#9aa0a6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.loginEmail || r.email}{r.contactNumber ? ` · ${r.contactNumber}` : ""}</div>
         </div>

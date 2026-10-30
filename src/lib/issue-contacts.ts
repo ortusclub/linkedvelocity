@@ -22,13 +22,23 @@ export function contactLink(channel: keyof IssueContact, handle: string | null |
   return /^\+[1-9]\d{7,14}$/.test(phone) ? `https://t.me/${phone}?text=${encodeURIComponent(message)}` : null;
 }
 
+// Build the contactable channels for an ambassador from their saved contact number/handle.
+// A t.me / @username handle resolves to Telegram only. A phone number is normalised (local PH
+// 09xxxxxxxxx → +63) and then offered on WhatsApp, Telegram AND Viber, so the team can reach
+// them on whichever app they use — the recorded `channel` is a hint, not a restriction (gating
+// on it used to hide every mobile button for plain 09… numbers). Email always passes through.
 export function ambassadorIssueContact(email: string | null, phone: string | null, channel: string | null, location?: string | null): IssueContact {
-  const raw = phone || "";
-  const method = `${channel || ""} ${raw}`.toLowerCase();
-  let viber = /viber/.test(method) ? raw.replace(/^viber:\s*/i, "").trim() : null;
-  if (viber && /philippines|\bPH\b|manila/i.test(location || "") && /^09\d{9}$/.test(viber)) viber = "+63" + viber.slice(1);
-  return { email, viber, whatsapp: /telegram|viber/.test(method) && !/whatsapp/.test(method) ? null : raw,
-    telegram: /telegram|t\.me\/|@/.test(method) ? raw : null };
+  const raw = `${channel || ""} ${phone || ""}`.trim();
+  if (!phone?.trim()) return { email, whatsapp: null, telegram: null, viber: null };
+  // A Telegram username / t.me link is not a phone — Telegram only.
+  if (/(?:t\.me\/|@)[a-z][a-z0-9_]{3,31}/i.test(raw)) return { email, whatsapp: null, telegram: phone, viber: null };
+  // Otherwise treat it as a phone number and normalise to international form.
+  let digits = phone.replace(/\D/g, "");
+  const isPH = /philippines|\bPH\b|manila/i.test(location || "");
+  if (digits.startsWith("0") && (isPH || /^0?9\d{9}$/.test(digits))) digits = "63" + digits.slice(1);
+  if (digits.length < 8 || digits.length > 15 || digits.startsWith("0")) return { email, whatsapp: null, telegram: null, viber: null };
+  const intl = "+" + digits;
+  return { email, whatsapp: intl, telegram: intl, viber: intl };
 }
 
 // Direct "message them now" links for a raw contact number/handle, across all the apps, so the

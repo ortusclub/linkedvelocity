@@ -58,19 +58,25 @@ export function PipelineReferralInvite({ id, ambassadorName, referrerName, ambas
       {preview.channel === "email" && <input aria-label="Email subject" style={button} value={preview.subject} onChange={e => setPreview({ ...preview, subject: e.target.value })} />}
       <textarea aria-label="Invite message" style={{ ...button, color: "var(--fg,#111)", width: "100%", boxSizing: "border-box" }} rows={10} value={preview.text} onChange={e => setPreview({ ...preview, text: e.target.value })} />
       {preview.channel !== "email" && <small>Opens the chat for you to review and send. Viber copies the message so you can paste it.</small>}
-      <div style={{ display: "flex", gap: 8 }}><button style={button} disabled={busy} onClick={() => setPreview(null)}>Cancel</button><button style={button} disabled={busy || !preview.text.trim() || !preview.subject.trim()} onClick={async () => {
+      <div style={{ display: "flex", gap: 8 }}><button style={button} disabled={busy} onClick={() => setPreview(null)}>Cancel</button><button style={button} disabled={busy || !preview.text.trim() || (preview.channel === "email" && !preview.subject.trim())} onClick={async () => {
         setBusy(true); setResult("");
         try {
+          const signature = JSON.stringify(preview);
+          if (signature !== request.current.signature) request.current = { signature, id: crypto.randomUUID() };
           if (preview.channel === "email") {
-            const signature = JSON.stringify(preview);
-            if (signature !== request.current.signature) request.current = { signature, id: crypto.randomUUID() };
-            const response = await fetch(`/api/admin/ambassadors/${id}/referral-invite`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipient: preview.recipient, subject: preview.subject, text: preview.text, requestId: request.current.id }) });
+            const response = await fetch(`/api/admin/ambassadors/${id}/referral-invite`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipient: preview.recipient, channel: "email", subject: preview.subject, text: preview.text, requestId: request.current.id }) });
             const data = await response.json(); if (!response.ok) throw new Error(data.error);
             setResult(`Email sent to ${data.to}.`); onSent();
           } else {
             const href = contactLink(preview.channel, (preview.recipient === "ambassador" ? ambassador : referrer)?.[preview.channel], preview.text);
             if (preview.channel === "viber") await navigator.clipboard.writeText(preview.text);
             if (href) window.open(href, "_blank", "noopener,noreferrer");
+            // Log that we invited them on this channel so the "not yet invited" flag clears.
+            try {
+              await fetch(`/api/admin/ambassadors/${id}/referral-invite`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipient: preview.recipient, channel: preview.channel, text: preview.text, requestId: request.current.id }) });
+              onSent();
+            } catch { /* the chat still opened; the flag just won't clear */ }
+            setResult(`Opened ${preview.channel} — logged as sent.`);
           }
           setPreview(null);
         } catch (e) { setResult(e instanceof Error ? e.message : "Could not prepare the message."); } finally { setBusy(false); }
