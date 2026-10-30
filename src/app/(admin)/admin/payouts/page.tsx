@@ -187,12 +187,12 @@ function PayRun({ rows, wiseEnabled }: { rows: Row[]; wiseEnabled: boolean }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {groups.map((g) => (
           <div key={g.k} style={{ background: "var(--card,#fff)", border: "1px solid var(--border,#e3e6ec)", borderRadius: 14, overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "var(--band,#fafbfc)", borderBottom: "1px solid var(--border,#eef0f4)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", background: "var(--band,#fafbfc)", borderBottom: "1px solid var(--border,#eef0f4)" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: g.dot }} />
               <span style={{ font: `700 13.5px ${F_SANS}`, color: "var(--fg,#111)" }}>{g.label}</span>
               <span style={{ font: `700 11.5px ${F_GRO}`, color: "var(--muted,#5b6779)", background: "var(--card,#e9ecf1)", borderRadius: 999, padding: "1px 8px" }}>{g.rows.length}</span>
               <span style={{ font: `500 12px ${F_SANS}`, color: "var(--muted,#8a93a3)" }}>{g.sent} sent · {g.ready} ready</span>
-              <span style={{ marginLeft: "auto", font: `700 14px ${F_GRO}`, color: "var(--fg,#111)" }}>{money(g.total)}</span>
+              <span style={{ marginLeft: "auto", font: `700 13.5px ${F_GRO}`, color: "var(--fg,#111)" }}>{money(g.total)}</span>
             </div>
             {g.rows.map((r) => <RunRow key={r.id} r={r} wiseEnabled={wiseEnabled} selected={sel.has(r.id)} onToggle={() => toggle(r.id)} />)}
           </div>
@@ -205,7 +205,7 @@ function PayRun({ rows, wiseEnabled }: { rows: Row[]; wiseEnabled: boolean }) {
 
 function RunRow({ r, wiseEnabled, selected, onToggle }: { r: Row; wiseEnabled: boolean; selected: boolean; onToggle: () => void }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "26px minmax(0,1.1fr) minmax(0,1.4fr) 100px 150px 250px", gap: 12, alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--border,#f0f1f4)" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1.1fr) minmax(0,1.3fr) 90px 140px 240px", gap: 12, alignItems: "center", padding: "11px 16px", borderTop: "1px solid var(--border,#f0f1f4)" }}>
       <div>
         {r.state === "ready" && <button onClick={onToggle} aria-label="select" style={{ width: 16, height: 16, borderRadius: 4, cursor: "pointer", border: `1.5px solid ${selected ? "var(--st-active-fg,#12a150)" : "var(--border,#c7ccd6)"}`, background: selected ? "var(--st-active-fg,#12a150)" : "var(--card,#fff)", color: "#fff", font: "800 10px/1 sans-serif", padding: 0, display: "grid", placeItems: "center" }}>{selected ? "✓" : ""}</button>}
       </div>
@@ -219,7 +219,7 @@ function RunRow({ r, wiseEnabled, selected, onToggle }: { r: Row; wiseEnabled: b
         <div style={{ font: `600 13px ${F_SANS}`, color: "var(--fg,#111)" }}>{r.method || "—"}</div>
         <div style={{ font: `500 12px ${F_GRO}`, color: "var(--muted,#8a93a3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.masked || ""}</div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><WiseCell r={r} wiseEnabled={wiseEnabled} /></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0, overflow: "hidden" }}><WiseCell r={r} wiseEnabled={wiseEnabled} /></div>
     </div>
   );
 }
@@ -246,7 +246,10 @@ function WiseCell({ r, wiseEnabled }: { r: Row; wiseEnabled: boolean }) {
     case "manual":
       return <><Pill bg="var(--blue-chip-bg,#eaf1ff)" fg="var(--blue-chip-text,#2b5fd0)">Not on Wise</Pill><a href="/admin/payouts-ii" style={link}>Pay manually →</a></>;
     case "hold":
-      return <Pill bg="var(--warn-badge-bg,#fef3e2)" fg="var(--warn-badge-text,#b7791f)" title={r.holdReason || undefined}>{r.holdReason ? `On hold · ${r.holdReason}` : "On hold"}</Pill>;
+      return <>
+        <Pill bg="var(--warn-badge-bg,#fef3e2)" fg="var(--warn-badge-text,#b7791f)">On hold</Pill>
+        {r.holdReason && <span title={r.holdReason} style={{ font: `500 12px ${F_SANS}`, color: "var(--muted,#8a93a3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "0 1 auto" }}>{r.holdReason}</span>}
+      </>;
     default:
       return <Pill bg="var(--neutral-chip-bg,#eef0f3)" fg="var(--neutral-chip-text,#5b6779)">Due {fmtDate(r.dueDate)}</Pill>;
   }
