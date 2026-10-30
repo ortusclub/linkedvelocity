@@ -4,6 +4,7 @@
 // Keep behaviour in lock-step with the live page; this is pure logic only.
 import type { CSSProperties } from "react";
 import { currencyConfigFor } from "@/lib/referral-currency";
+import { ambassadorIssueContact, contactLink } from "@/lib/issue-contacts";
 import { isApplicationReceived } from "@/lib/pipeline-received";
 import { ONBOARDING_ISSUES } from "@/lib/onboarding-issue-message";
 import type { ProfileBuild } from "@/lib/profile-generator";
@@ -22,7 +23,7 @@ export const F_GRO = "var(--font-grotesk),system-ui,sans-serif";
 export type Status = "pending" | "reviewing" | "approved" | "rejected" | "onboarding" | "onboarded" | "unreachable" | "contacted" | "on_hold";
 export type Stage = "initial" | "processing" | "accepted" | "onboarded" | "unreachable" | "rejected";
 export type Mode = "stage" | "action" | "live";
-export type Touch = { ch: string; text: string; by?: string; at: string; bookingKey?: string; scheduledAt?: string; cancelled?: boolean };
+export type Touch = { id?: string; ch: string; text: string; by?: string; at: string; bookingKey?: string; scheduledAt?: string; cancelled?: boolean };
 export type Payout = {
   paidAt: string; amount: number; kind?: "setup" | "monthly"; method?: string | null;
   proofUrl?: string | null; note?: string | null; accountId?: string | null; by?: string;
@@ -146,6 +147,30 @@ export const levelOf = (r: Row): 0 | 0.5 | 1 | 2 | 3 | 4 | 5 => {
   return n as 0 | 1 | 2 | 3 | 4 | 5;
 };
 export const levelKey = (r: Row): number => levelOf(r);
+
+// Referral-program invite status for an onboarded ambassador: which channels we can reach them
+// on, and whether the "earn on the side" referral invite has actually been sent on each.
+// A referral send (email or mobile) is logged in outreachLog with id "referral:<uuid>"
+// (see /api/admin/ambassadors/[id]/referral-invite); older entries are matched by text too.
+// `pending` lists only the AVAILABLE channels still un-sent, so an ambassador with no mobile
+// number doesn't flag forever — once every channel we can use has gone out, pending is empty.
+export const referralInvite = (r: Row): { hasEmail: boolean; hasMobile: boolean; emailSent: boolean; mobileSent: boolean; pending: ("email" | "mobile")[] } => {
+  const c = ambassadorIssueContact(r.email, r.contactNumber, r.contactChannel, r.location);
+  const hasEmail = !!contactLink("email", c.email, "");
+  const hasMobile = (["whatsapp", "telegram", "viber"] as const).some((ch) => !!contactLink(ch, c[ch], ""));
+  let emailSent = false, mobileSent = false;
+  for (const e of r.outreachLog || []) {
+    // Only invites to the AMBASSADOR count here (the panel can also nudge the referrer, which
+    // logs on this same row); referral entries read "Referral invite to ambassador …".
+    if (!(e.text || "").startsWith("Referral invite to ambassador")) continue;
+    if (e.ch === "email") emailSent = true;
+    else if (e.ch === "whatsapp" || e.ch === "telegram" || e.ch === "viber") mobileSent = true;
+  }
+  const pending: ("email" | "mobile")[] = [];
+  if (hasEmail && !emailSent) pending.push("email");
+  if (hasMobile && !mobileSent) pending.push("mobile");
+  return { hasEmail, hasMobile, emailSent, mobileSent, pending };
+};
 
 // Effective application Type. Uses the recorded tier (diyTier, written by the self-service
 // wizard / apply form) when present; otherwise derives it from how far onboarding actually
