@@ -26,9 +26,10 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = await prisma.linkedInAccount.findMany({
-    // Campaign-pool accounts are our own LinkedArmy outreach personas — run by hand, never
-    // by the maturing/warm-up engine. Keep them out of the engine feed entirely.
-    where: { status: { not: "removed" }, linkedinUrl: { not: null }, inventoryPool: { not: "campaign" } },
+    // Campaign-pool accounts (our LinkedArmy outreach personas) ARE included so the Outreach
+    // app can pick them as senders for hand-run campaigns. They stay out of auto-start warming
+    // (see the auto-start-maturing cron) and out of the public catalogue — only manual outreach.
+    where: { status: { not: "removed" }, linkedinUrl: { not: null } },
     select: {
       gologinProfileId: true,
       loginEmail: true,
