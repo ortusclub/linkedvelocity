@@ -124,6 +124,24 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
   );
 }
 
+// Wise connectivity indicator — confirms the full-access token authenticates.
+function WiseBadge() {
+  const [s, setS] = useState<{ connected: boolean; name?: string | null; reason?: string; message?: string } | null>(null);
+  useEffect(() => {
+    let a = true;
+    fetch("/api/admin/payouts/wise/status").then((r) => r.json()).then((d) => { if (a) setS(d); }).catch(() => { if (a) setS({ connected: false, reason: "error" }); });
+    return () => { a = false; };
+  }, []);
+  if (!s) return null;
+  const p = s.connected ? PILLS.green : PILLS.neutral;
+  const label = s.connected ? `Wise connected${s.name ? ` · ${s.name}` : ""}` : `Wise not connected${s.reason === "no_token" ? " · add token" : s.reason ? ` · ${s.reason}` : ""}`;
+  return (
+    <span title={s.message || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 7, font: `600 12px ${SANS}`, color: p.fg, background: p.bg, borderRadius: 999, padding: "5px 11px", whiteSpace: "nowrap" }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: p.dot }} />{label}
+    </span>
+  );
+}
+
 // ── page ────────────────────────────────────────────────────────────────
 export default function PayoutsPage() {
   const [data, setData] = useState<Feed | null>(null);
@@ -170,9 +188,12 @@ export default function PayoutsPage() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 4, background: "#e3e6ec", borderRadius: 999, padding: 3, alignSelf: "flex-start" }}>
-        {tabBtn("run", "This pay run", runCount)}
-        {tabBtn("all", "All payees", data?.payees.length)}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, background: "#e3e6ec", borderRadius: 999, padding: 3 }}>
+          {tabBtn("run", "This pay run", runCount)}
+          {tabBtn("all", "All payees", data?.payees.length)}
+        </div>
+        <WiseBadge />
       </div>
 
       {err && <div style={{ padding: 16, borderRadius: 12, background: PILLS.red.bg, color: PILLS.red.fg, font: `600 13px ${SANS}` }}>Couldn’t load payouts: {err}</div>}
