@@ -99,15 +99,20 @@ export function Note({ label, children }: { label: string; children: ReactNode }
 }
 
 // White rounded section card with an uppercase grey label (the Pipeline v2 card look).
-function PanelCard({ title, right, children, tone }: { title: string; right?: ReactNode; children: ReactNode; tone?: "notes" }) {
+function PanelCard({ title, right, children, tone, collapsible, defaultCollapsed }: { title: string; right?: ReactNode; children: ReactNode; tone?: "notes"; collapsible?: boolean; defaultCollapsed?: boolean }) {
   const notes = tone === "notes";
+  const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
+  const shut = collapsible && collapsed;
   return (
     <div style={{ background: notes ? "var(--warn-badge-bg,#fffdf5)" : "var(--card,#fff)", border: `1px solid ${notes ? "var(--warn-badge-border,#f1e3b5)" : "var(--card-border,#e3e3e6)"}`, borderRadius: 14, padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
-        <span style={{ ...labelCss, color: notes ? "var(--warn-badge-text,#a16207)" : "var(--label,#7c8597)" }}>{title}</span>
+      <div onClick={collapsible ? () => setCollapsed((c) => !c) : undefined} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: shut ? 0 : 12, cursor: collapsible ? "pointer" : "default" }}>
+        <span style={{ ...labelCss, color: notes ? "var(--warn-badge-text,#a16207)" : "var(--label,#7c8597)", display: "flex", alignItems: "center", gap: 6 }}>
+          {collapsible && <span style={{ display: "inline-block", font: `700 12px ${F_SANS}`, color: "var(--muted2,#9aa0a6)", transform: collapsed ? "none" : "rotate(90deg)", transition: "transform .15s" }}>›</span>}
+          {title}
+        </span>
         {right}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{children}</div>
+      {!shut && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{children}</div>}
     </div>
   );
 }
@@ -798,7 +803,10 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
           </PanelCard>
 
           {r.accountId && (
-            <PanelCard title="Profile build (Level 4)">
+            // Once the built profile has been saved to inventory there's nothing left to do here,
+            // so collapse it by default to keep the detail view short (still expandable).
+            <PanelCard title="Profile build (Level 4)" collapsible defaultCollapsed={!!r.profileBuild?.appliedAt}
+              right={r.profileBuild?.appliedAt ? <span style={{ font: `700 11px ${F_SANS}`, color: "var(--st-active-fg,#188038)", whiteSpace: "nowrap" }}>✓ Saved {fmtDate(r.profileBuild.appliedAt)}</span> : undefined}>
               <ProfileBuildCard r={r} busy={busy} onGenerate={generateProfile} onApply={applyProfile} />
             </PanelCard>
           )}
