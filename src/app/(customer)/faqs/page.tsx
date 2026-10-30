@@ -65,7 +65,7 @@ const FAQ_GROUPS_LA: FaqGroup[] = [
     items: [
       { q: "What is LinkedArmy?", a: "A marketplace where growth teams hire verified LinkedIn Operators for outreach — and professionals earn by becoming an operator with an account they no longer actively use. Every operator is a consenting real person; we handle secure access, warm-up, and support." },
       { q: "How does hiring work?", a: "Browse the catalogue, hire an operator monthly, and you're running outreach from an established profile in minutes, with no warm-up period. We handle secure access and ongoing support behind the scenes." },
-      { q: "What can I run from an operator's profile?", a: "You can run your usual LinkedIn outreach from the operator's profile, including the browser-based tools most growth teams already use. Sales Navigator is available on operators that include it. We recommend keeping activity within safe limits (roughly 100–200 actions a week), and we'll share recommended ranges to guide you." },
+      { q: "What can I run from an operator's profile?", a: "You can run your usual LinkedIn outreach from the operator's profile, including the browser-based tools most growth teams already use. We recommend keeping activity within safe limits (roughly 100–200 actions a week), and we'll share recommended ranges to guide you." },
       { q: "How soon can I start after hiring?", a: "Typically within minutes. After a quick one-time setup, you're connected to your operator and can start outreach straight away." },
       { q: "Which regions are the operators based in?", a: "We have operators across the US, UK, Canada, Australia and other regions. Browse the catalogue to filter by location, or tell us your target market and we'll match you to the best fit." },
       { q: "Can I hire more than one operator?", a: "Yes — hire as many as you need. Each is billed separately, and teams running higher volume often work with several operators at once." },
@@ -86,7 +86,7 @@ const FAQ_GROUPS_LA: FaqGroup[] = [
     color: "#946011",
     items: [
       { q: "How am I charged, and can I cancel?", a: "A flat monthly fee per operator, paid by card (Stripe) or USDC. No contracts — cancel anytime and keep access through the end of your current billing period." },
-      { q: "What does an operator cost?", a: "Pricing depends on the operator's seniority, connections, and whether Sales Navigator is included. Most fall between $45 and $110 per month, with Sales Navigator available as a +$70/mo add-on, and you'll see the exact price before you commit." },
+      { q: "What does an operator cost?", a: "Pricing depends on the operator's seniority, connections, and account age. Most fall between $45 and $110 per month, and you'll see the exact price before you commit." },
       { q: "Can I set up auto-renew?", a: "Yes. You can switch on monthly auto-renew so your engagement continues without interruption, and turn it off anytime." },
       { q: "What payment methods do you accept?", a: "Card via Stripe, or USDC (on Base). You'll choose at checkout." },
       { q: "Is there a setup fee or minimum term?", a: "No setup fee and no minimum term — you pay a flat monthly fee per operator and can cancel anytime." },
