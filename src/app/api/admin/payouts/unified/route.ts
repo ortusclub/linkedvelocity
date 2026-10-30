@@ -31,7 +31,11 @@ export async function GET() {
     const readyOut = ready.map(({ details, ...r }) => ({ ...r, masked: maskDetail(details) }));
     const payeesOut = payees.map(({ details, ...p }) => ({ ...p, masked: maskDetail(details) }));
 
-    return NextResponse.json({ ready: readyOut, payees: payeesOut });
+    // Whether live Wise sending is switched on (full-access token present). Until then the
+    // console renders the Send buttons but keeps them inert.
+    const wiseEnabled = !!process.env.WISE_API_TOKEN_FULL;
+
+    return NextResponse.json({ ready: readyOut, payees: payeesOut, wiseEnabled });
   } catch (error) {
     if (error instanceof Error && (error.message === "Forbidden" || error.message === "Unauthorized")) {
       return NextResponse.json({ error: error.message }, { status: 403 });
