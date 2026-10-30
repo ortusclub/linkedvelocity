@@ -120,21 +120,23 @@ export default async function HowItWorksPage() {
         </div>
       </section>
 
-      {/* AMBASSADOR CROSS-LINK */}
+      {/* AMBASSADOR CROSS-LINK — hidden on LinkedArmy (no public operator recruitment for now) */}
+      {!isArmy && (
       <section style={{ background: "#F6F5F1", padding: "56px 24px 72px" }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 28, flexWrap: "wrap", background: "#fff", border: "1px solid #E6E8EC", borderRadius: 16, padding: "24px 28px", boxShadow: "0 1px 3px rgba(16,24,40,0.04)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <span style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 11, background: "#E4F6EC", color: "#067A45", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700 }}>$</span>
               <div>
-                <div style={{ font: `600 16px ${POP}`, color: "#0B1220" }}>{isArmy ? "Have a strong LinkedIn presence?" : "Have an account instead of needing one?"}</div>
-                <div style={{ fontSize: 14, color: "#5A6473", marginTop: 2 }}>{isArmy ? "Become an operator and earn $10–500/month — you keep full ownership of your profile." : "Professionals earn $10–500/month sharing a dormant profile — you keep full ownership."}</div>
+                <div style={{ font: `600 16px ${POP}`, color: "#0B1220" }}>Have an account instead of needing one?</div>
+                <div style={{ fontSize: 14, color: "#5A6473", marginTop: 2 }}>Professionals earn $10–500/month sharing a dormant profile — you keep full ownership.</div>
               </div>
             </div>
             <Link href="/become-ambassador" style={{ flexShrink: 0, color: "#00A150", fontWeight: 600, fontSize: 14.5, textDecoration: "none" }}>See how earning works →</Link>
           </div>
         </div>
       </section>
+      )}
     </div>
   );
 }
