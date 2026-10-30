@@ -41,26 +41,35 @@ async function wiseGet(path: string, params: Record<string, string | number | un
 }
 
 interface WiseProfile { id?: number; type?: string; businessName?: string; fullName?: string; details?: { name?: string } }
+const profileName = (p: WiseProfile | undefined) => p?.businessName ?? p?.details?.name ?? p?.fullName ?? null;
+const isBusinessType = (p: WiseProfile | undefined) => (p?.type ?? "").toLowerCase() === "business";
 
+export interface WiseProfileLite { id: number | null; type: string | null; name: string | null }
 export interface WiseStatus {
   connected: boolean;
   profileId: number | null;
   name: string | null;
   type: string | null;
-  profiles: number;
+  isBusiness: boolean;         // whether the chosen (payout) profile is the business one
+  profiles: WiseProfileLite[]; // every profile this token can access, for diagnosis
 }
 
-// Confirm the full-access token authenticates and resolve the business profile.
+// Confirm the full-access token authenticates and resolve the profile payouts will send
+// from. Prefers WISE_PROFILE_ID, then a business profile, then the first one.
 export async function wiseStatus(): Promise<WiseStatus> {
   const rows = await wiseGet("profiles");
   if (!Array.isArray(rows)) throw new WiseError("unexpected", "Unexpected Wise profiles response.");
   const profiles = rows as WiseProfile[];
-  const biz = profiles.find((p) => p.type === "business") ?? profiles[0];
+  const wantId = process.env.WISE_PROFILE_ID ? Number(process.env.WISE_PROFILE_ID) : null;
+  const chosen = (wantId ? profiles.find((p) => p.id === wantId) : undefined)
+    ?? profiles.find(isBusinessType)
+    ?? profiles[0];
   return {
     connected: true,
-    profileId: biz?.id ?? null,
-    name: biz?.businessName ?? biz?.details?.name ?? biz?.fullName ?? null,
-    type: biz?.type ?? null,
-    profiles: profiles.length,
+    profileId: chosen?.id ?? null,
+    name: profileName(chosen),
+    type: chosen?.type ?? null,
+    isBusiness: isBusinessType(chosen),
+    profiles: profiles.map((p) => ({ id: p.id ?? null, type: p.type ?? null, name: profileName(p) })),
   };
 }
