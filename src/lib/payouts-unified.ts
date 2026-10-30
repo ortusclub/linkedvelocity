@@ -1,29 +1,32 @@
 import { prisma } from "@/lib/prisma";
 import { computePaymentsDue, type DueItem, type ReferralDue } from "@/lib/payment-schedule";
-import type { Currency } from "@/lib/referral-currency";
+import { currencyConfig, currencyConfigFor, type Currency } from "@/lib/referral-currency";
 
 // Unified payouts layer — ONE normalized view over the two payout stores that today
 // live apart: referral commissions (the `payouts` table) and ambassador setup+monthly
 // fees (`ambassador_applications.monthly_payouts` JSONB). It is the backend keystone for
-// the merged /admin/payouts console: the "Pay run" tab reads `ready`, the "Directory" tab
-// reads `payees`.
+// the merged /admin/payouts console: "This pay run" reads `ready`, "All payees" reads `payees`.
 //
 // The owed/ready computation is NOT reimplemented here — it delegates to
 // computePaymentsDue() (the same engine the Owners view and the weekly digest use) so the
 // three surfaces can never disagree about who is owed what. This layer adds: a single row
-// shape across all three kinds, per-payee grouping, Wise reachability (rail), and the
-// merged payment history.
+// shape across all three kinds, this-cycle PAID rows (so the run shows what's already been
+// sent and the SENT card has data), per-payee grouping, Wise reachability, and merged history.
 
 export type PayoutKind = "referral" | "setup" | "monthly";
 
-// State on the PAY-RUN side, before any Wise send begins. The live send lifecycle
-// (preparing/reviewing/sent/…) is layered on top at runtime from the payout's wise_* columns.
+// State on the PAY-RUN side. The live Wise send lifecycle (preparing/reviewing/sent/…) is
+// layered on top at runtime once the send routes + wise_* columns exist; "paid" here means
+// already settled this cycle (receipt attached).
 export type ReadyState =
   | "ready"          // due now, payable via Wise
   | "upcoming"       // earned but not yet at its due date
   | "hold"           // manually held / account restricted — out of the due list
   | "needs_details"  // no payment method/details on file (can't build a recipient)
-  | "manual";        // has a method Wise can't reach (PayPal/UPI/…) — pay by hand
+  | "manual"         // method Wise can't reach (PayPal/UPI/…) — pay by hand
+  | "paid";          // already paid this cycle
+
+type Entry = { paidAt?: string; amount?: number; kind?: string; by?: string | null; proofUrl?: string | null; notified?: boolean; notifiedAt?: string | null; acknowledged?: boolean; acknowledgedAt?: string | null };
 
 export interface UnifiedReadyPayout {
   id: string;                 // stable row id, unique within a pay run
@@ -42,6 +45,10 @@ export interface UnifiedReadyPayout {
   overdue: boolean;
   state: ReadyState;
   holdReason: string | null;
+  receipt: string | null;     // paid rows: Wise receipt / proof URL
+  paidAt: string | null;
+  confirmed: boolean;         // payee acknowledged / confirmed receipt
+  sentViaWise: boolean;       // paid and the receipt is a wise.com link
 }
 
 export interface UnifiedPayment {
@@ -94,13 +101,14 @@ export function railFor(method: string | null | undefined): "wallet" | "bank" | 
   return null;
 }
 
-// State for a ready/owed row from its method + due-ness. `blocked`/held rows come in
-// pre-flagged by the caller; this only decides reachability vs date.
+// State for a ready/owed row from its method + due-ness. Held rows come in pre-flagged.
 function readyStateFor(method: string | null, details: string | null, overdue: boolean, dueNow: boolean): ReadyState {
   if (!method && !details) return "needs_details";
   if (railFor(method) === null) return "manual";
   return dueNow || overdue ? "ready" : "upcoming";
 }
+
+const isWiseReceipt = (url: string | null | undefined) => !!url && /wise\.com/i.test(url);
 
 export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayouts> {
   const due = await computePaymentsDue(horizonDays);
@@ -118,6 +126,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     }),
   ]);
   const refBySlug = new Map(referrers.map((r) => [r.slug.toLowerCase(), r]));
+  const refById = new Map(referrers.map((r) => [r.id, r]));
   const refNameBySlug = new Map(referrers.map((r) => [r.slug.toLowerCase(), r.name || r.paymentName || r.slug]));
   // Prefer an onboarded application when an email signed up more than once.
   const appByEmail = new Map<string, (typeof apps)[number]>();
@@ -131,38 +140,25 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
 
   const ready: UnifiedReadyPayout[] = [];
 
-  // ── Referral commissions ──────────────────────────────────────────────
+  // ── Owed: referral commissions ────────────────────────────────────────
   const pushReferral = (r: ReferralDue, held: boolean) => {
     const ref = r.referrerSlug ? refBySlug.get(r.referrerSlug.toLowerCase()) : undefined;
     const method = ref?.paymentMethod || null;
     const details = ref?.paymentDetails || null;
     const overdue = !held && r.status === "ready" && new Date(r.dueDate).getTime() < Date.now();
-    const state: ReadyState = held
-      ? "hold"
-      : readyStateFor(method, details, false, r.status === "ready");
+    const state: ReadyState = held ? "hold" : readyStateFor(method, details, false, r.status === "ready");
     ready.push({
-      id: `ref:${r.applicationId}`,
-      kind: "referral",
-      payeeKey: `ref:${(r.referrerSlug || r.referrerName).toLowerCase()}`,
-      payeeName: r.referrerName,
-      payeeSub: r.referrerSlug,
-      referredBy: null,
-      description: r.person,
-      amount: r.amount,
-      currency: r.currency,
-      method,
-      details,
-      rail: railFor(method),
-      dueDate: r.dueDate,
-      overdue,
-      state,
-      holdReason: r.holdReason ?? null,
+      id: `ref:${r.applicationId}`, kind: "referral",
+      payeeKey: `ref:${(r.referrerSlug || r.referrerName).toLowerCase()}`, payeeName: r.referrerName, payeeSub: r.referrerSlug,
+      referredBy: null, description: r.person, amount: r.amount, currency: r.currency,
+      method, details, rail: railFor(method), dueDate: r.dueDate, overdue, state, holdReason: r.holdReason ?? null,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
     });
   };
   for (const r of due.referralsDue) pushReferral(r, false);
   for (const r of due.referralsHeld) pushReferral(r, true);
 
-  // ── Ambassador setup + monthly (due now, overdue, and upcoming) ───────
+  // ── Owed: ambassador setup + monthly (due now, overdue, upcoming) ─────
   const pushAmb = (d: DueItem, dueNow: boolean) => {
     const app = appByEmail.get(d.email.toLowerCase());
     const held = !!d.blocked;
@@ -170,22 +166,12 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const details = d.details;
     const state: ReadyState = held ? "hold" : readyStateFor(method, details, d.overdue, dueNow);
     ready.push({
-      id: `${d.kind}:${d.email}:${d.dueDate.slice(0, 10)}`,
-      kind: d.kind,
-      payeeKey: `amb:${d.email.toLowerCase()}`,
-      payeeName: d.name,
-      payeeSub: d.email,
+      id: `${d.kind}:${d.email}:${d.dueDate.slice(0, 10)}`, kind: d.kind,
+      payeeKey: `amb:${d.email.toLowerCase()}`, payeeName: d.name, payeeSub: d.email,
       referredBy: app?.referredBy ? refNameBySlug.get(app.referredBy.trim().toLowerCase()) || app.referredBy.trim() : null,
-      description: d.kind === "setup" ? "Setup fee" : "Monthly",
-      amount: d.amount,
-      currency: d.currency,
-      method,
-      details,
-      rail: railFor(method),
-      dueDate: d.dueDate,
-      overdue: d.overdue,
-      state,
-      holdReason: held ? d.blocked : null,
+      description: d.kind === "setup" ? "Setup fee" : "Monthly", amount: d.amount, currency: d.currency,
+      method, details, rail: railFor(method), dueDate: d.dueDate, overdue: d.overdue, state, holdReason: held ? d.blocked : null,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
     });
   };
   for (const d of due.setup) pushAmb(d, true);
@@ -197,10 +183,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) {
-      p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), totalPaid: 0, lastPaidAt: null, history: [] };
-      payeeMap.set(key, p);
-    }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), totalPaid: 0, lastPaidAt: null, history: [] }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -208,32 +191,22 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     return p;
   };
 
-  // Referral commission payments (paid rows in the payouts table).
   const commPayouts = await prisma.payout.findMany({
     where: { type: "commission", paidAt: { not: null } },
     select: { referrerId: true, amount: true, paidAt: true, description: true, paidBy: true, reference: true, confirmedAt: true, notifiedAt: true },
   });
-  const refById = new Map(referrers.map((r) => [r.id, r]));
   for (const p of commPayouts) {
     const r = refById.get(p.referrerId);
     const key = `ref:${(r?.slug || p.referrerId).toLowerCase()}`;
     const payee = ensurePayee(key, r?.name || r?.paymentName || p.referrerId, r?.slug || null, "referral", r?.paymentMethod || null, r?.paymentDetails || null, null);
     const amt = Number(p.amount) || 0;
     payee.history.push({
-      date: p.paidAt ? (p.paidAt as Date).toISOString() : null,
-      amount: amt,
-      kind: "referral",
-      label: p.description ? `Referral · ${p.description}` : "Referral",
-      by: p.paidBy || null,
-      receipt: p.reference || null,
-      notified: !!p.notifiedAt,
-      acknowledged: !!p.confirmedAt,
+      date: p.paidAt ? (p.paidAt as Date).toISOString() : null, amount: amt, kind: "referral",
+      label: p.description ? `Referral · ${p.description}` : "Referral", by: p.paidBy || null,
+      receipt: p.reference || null, notified: !!p.notifiedAt, acknowledged: !!p.confirmedAt,
     });
     payee.totalPaid += amt;
   }
-
-  // Ambassador setup + monthly payments (JSONB ledger per owner application).
-  type Entry = { paidAt?: string; amount?: number; kind?: string; by?: string | null; proofUrl?: string | null; notified?: boolean; acknowledged?: boolean };
   for (const a of apps) {
     const entries = Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as Entry[]) : [];
     if (entries.length === 0) continue;
@@ -243,17 +216,44 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       const kind: PayoutKind = e.kind === "setup" ? "setup" : "monthly";
       const payee = ensurePayee(key, a.fullName || a.email, a.email, kind, ambMethod(a), a.paymentDetails || null, referredBy);
       const amt = Number(e.amount) || 0;
-      payee.history.push({
-        date: e.paidAt || null,
-        amount: amt,
-        kind,
-        label: kind === "setup" ? "Setup fee" : "Monthly",
-        by: e.by || null,
-        receipt: e.proofUrl || null,
-        notified: !!e.notified,
-        acknowledged: !!e.acknowledged,
-      });
+      payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
+    }
+  }
+
+  // ── This-cycle PAID rows (current calendar month) → shown in the pay run ──
+  const nowD = new Date();
+  const cycle = (iso: string | null | undefined) => { if (!iso) return null; const d = new Date(iso); return `${d.getFullYear()}-${d.getMonth()}`; };
+  const thisCycle = `${nowD.getFullYear()}-${nowD.getMonth()}`;
+
+  for (const p of commPayouts) {
+    const iso = p.paidAt ? (p.paidAt as Date).toISOString() : null;
+    if (cycle(iso) !== thisCycle) continue;
+    const r = refById.get(p.referrerId);
+    const method = r?.paymentMethod || null;
+    ready.push({
+      id: `paid-ref:${p.referrerId}:${iso}`, kind: "referral",
+      payeeKey: `ref:${(r?.slug || p.referrerId).toLowerCase()}`, payeeName: r?.name || r?.paymentName || p.referrerId, payeeSub: r?.slug || null,
+      referredBy: null, description: p.description || "Referral", amount: Number(p.amount) || 0, currency: currencyConfig(r?.slug || "").currency,
+      method, details: r?.paymentDetails || null, rail: railFor(method), dueDate: iso as string, overdue: false, state: "paid", holdReason: null,
+      receipt: p.reference || null, paidAt: iso, confirmed: !!p.confirmedAt, sentViaWise: isWiseReceipt(p.reference),
+    });
+  }
+  for (const a of apps) {
+    const entries = Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as Entry[]) : [];
+    const cur = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
+    const referredBy = a.referredBy ? refNameBySlug.get(a.referredBy.trim().toLowerCase()) || a.referredBy.trim() : null;
+    const method = ambMethod(a);
+    for (const e of entries) {
+      if (cycle(e.paidAt) !== thisCycle) continue;
+      const kind: PayoutKind = e.kind === "setup" ? "setup" : "monthly";
+      ready.push({
+        id: `paid-${kind}:${a.email}:${e.paidAt}`, kind,
+        payeeKey: `amb:${a.email.toLowerCase()}`, payeeName: a.fullName || a.email, payeeSub: a.email,
+        referredBy, description: kind === "setup" ? "Setup fee" : "Monthly", amount: Number(e.amount) || 0, currency: cur,
+        method, details: a.paymentDetails || null, rail: railFor(method), dueDate: e.paidAt as string, overdue: false, state: "paid", holdReason: null,
+        receipt: e.proofUrl || null, paidAt: e.paidAt || null, confirmed: !!e.acknowledged, sentViaWise: isWiseReceipt(e.proofUrl),
+      });
     }
   }
 
