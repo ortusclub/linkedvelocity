@@ -33,12 +33,23 @@ interface User { id: string; role: string; }
 
 const shortName = (n: string) => { const p = n.replace(/\s*\(.*\)\s*$/, "").trim().split(/\s+/).filter(Boolean); return p.length < 2 ? (p[0] || "") : `${p[0]} ${p[p.length - 1][0].toUpperCase()}.`; };
 
-const STEPS = [
+const stepsFor = (isArmy: boolean) => isArmy ? [
+  { n: "1", title: "Hire the operator", body: "Subscribe monthly — access is set up instantly. No passwords to manage, no setup." },
+  { n: "2", title: "Open it in your secure browser", body: "The operator's profile is established and already logged in, ready to use right away." },
+  { n: "3", title: "Run your outreach", body: "Send connection requests and messages from an established, real profile. The owner's name and photo stay as-is. Cancel anytime." },
+] : [
   { n: "1", title: "Rent the account", body: "Subscribe monthly — access is set up instantly. No passwords to manage, no setup." },
   { n: "2", title: "Open it in the GoLogin browser", body: "The account is pre-warmed and already logged in, ready to use right away." },
   { n: "3", title: "Run your outreach", body: "Send connection requests and messages from an established, real profile. The owner's name and photo stay as-is. Cancel anytime." },
 ];
-const PERKS = [
+const perksFor = (isArmy: boolean) => isArmy ? [
+  { title: "Secure browser session", body: "The profile is shared straight to your secure browser environment." },
+  { title: "Dedicated proxy", body: "A dedicated proxy assigned to this operator for a consistent session." },
+  { title: "Pre-authenticated", body: "LinkedIn session already logged in and ready to use." },
+  { title: "Works anywhere", body: "Access from any device." },
+  { title: "Cancel anytime", body: "No lock-in — cancel your subscription whenever you want." },
+  { title: "Email reminders", body: "Renewal notifications so you're always in control." },
+] : [
   { title: "Opens in GoLogin", body: "Browser profile shared straight to your own GoLogin account." },
   { title: "Dedicated proxy", body: "A dedicated proxy assigned to this account for a consistent session." },
   { title: "Pre-authenticated", body: "LinkedIn session already logged in and ready to use." },
@@ -77,6 +88,10 @@ export default function AccountDetailPage() {
   }, [params.id]);
 
   const isAdmin = user?.role === "admin";
+  const isArmy = typeof window !== "undefined" && window.location.hostname.includes("linkedarmy");
+  const noun = isArmy ? "operator" : "account";
+  const verb = isArmy ? "Hire" : "Rent";
+  const brandName = isArmy ? "LinkedArmy" : "LinkedVelocity";
 
   const handleOpenBrowser = async () => {
     if (!account?.gologinProfileId) return;
@@ -107,10 +122,12 @@ export default function AccountDetailPage() {
   };
 
   if (loading) return <div style={{ maxWidth: 1180, margin: "0 auto", padding: "48px 40px" }}><div style={{ height: 420, borderRadius: 18, background: "#EAECEF", animation: "pulse 1.5s ease-in-out infinite" }} /><style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style></div>;
-  if (!account) return <div style={{ maxWidth: 1180, margin: "0 auto", padding: "80px 40px", textAlign: "center" }}><h1 style={{ font: `700 24px ${POP}` }}>Account not found</h1></div>;
+  if (!account) return <div style={{ maxWidth: 1180, margin: "0 auto", padding: "80px 40px", textAlign: "center" }}><h1 style={{ font: `700 24px ${POP}` }}>{isArmy ? "Operator not found" : "Account not found"}</h1></div>;
 
   const price = typeof account.monthlyPrice === "string" ? parseFloat(account.monthlyPrice) : account.monthlyPrice;
   const name = shortName(account.linkedinName);
+  const STEPS = stepsFor(isArmy);
+  const PERKS = perksFor(isArmy);
   const rentable = account.status === "available";
   const salesNavEligible = rentable && !account.hasSalesNav;
   const displayPrice = isShadow ? SHADOW_MONTHLY_PRICE : price + (addSalesNav && salesNavEligible ? SALES_NAV_MONTHLY : 0);
@@ -131,7 +148,7 @@ export default function AccountDetailPage() {
 
       {/* breadcrumb */}
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 40px 0" }}>
-        <div style={{ fontSize: 13.5, color: "#8A93A2" }}><Link href="/catalogue" style={{ color: "#0A66C2", textDecoration: "none" }}>Browse Accounts</Link>{toIndustryBucket(account.industry) ? ` · ${toIndustryBucket(account.industry)}` : ""} · {name}</div>
+        <div style={{ fontSize: 13.5, color: "#8A93A2" }}><Link href="/catalogue" style={{ color: "#0A66C2", textDecoration: "none" }}>{isArmy ? "Browse Operators" : "Browse Accounts"}</Link>{toIndustryBucket(account.industry) ? ` · ${toIndustryBucket(account.industry)}` : ""} · {name}</div>
       </div>
 
       <div className="ac-grid">
@@ -175,7 +192,7 @@ export default function AccountDetailPage() {
 
           {/* how renting works */}
           <div style={{ background: "#fff", border: "1px solid #E6E8EC", borderRadius: 18, padding: "26px 28px", boxShadow: "0 4px 14px rgba(16,24,40,0.05)" }}>
-            <div style={{ font: `600 18px ${POP}`, color: "#0B1220", marginBottom: 20 }}>How renting this account works</div>
+            <div style={{ font: `600 18px ${POP}`, color: "#0B1220", marginBottom: 20 }}>{isArmy ? "How hiring this operator works" : "How renting this account works"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               {STEPS.map((s) => (
                 <div key={s.n} style={{ display: "flex", gap: 15, alignItems: "flex-start" }}>
@@ -205,11 +222,11 @@ export default function AccountDetailPage() {
           <div style={{ background: "#fff", border: "1px solid #E6E8EC", borderRadius: 20, padding: 26, boxShadow: "0 16px 44px rgba(16,24,40,0.12), 0 2px 6px rgba(16,24,40,0.05)" }}>
             {isAdmin ? (
               browserOpen ? (
-                <div style={{ borderRadius: 12, background: "#E4F6EC", border: "1px solid #CDEBD9", padding: 16, fontSize: 14, color: "#067A45" }}>Browser is open — the LinkedVelocity window should be visible on your screen.</div>
+                <div style={{ borderRadius: 12, background: "#E4F6EC", border: "1px solid #CDEBD9", padding: 16, fontSize: 14, color: "#067A45" }}>Browser is open — the {brandName} window should be visible on your screen.</div>
               ) : account.gologinProfileId ? (
                 <Button size="lg" variant="outline" onClick={handleOpenBrowser} loading={actionLoading} className="w-full">Open Browser Session</Button>
               ) : (
-                <div style={{ textAlign: "center" }}><p style={{ font: `800 32px ${POP}`, color: "#0B1220" }}>{formatCurrency(price)}<span style={{ fontSize: 16, color: "#8A93A2", fontWeight: 500 }}>/mo</span></p><p style={{ marginTop: 8, fontSize: 12, color: "#96A0AD" }}>Admin preview — renters see a Rent button here.</p></div>
+                <div style={{ textAlign: "center" }}><p style={{ font: `800 32px ${POP}`, color: "#0B1220" }}>{formatCurrency(price)}<span style={{ fontSize: 16, color: "#8A93A2", fontWeight: 500 }}>/mo</span></p><p style={{ marginTop: 8, fontSize: 12, color: "#96A0AD" }}>Admin preview — renters see a {verb} button here.</p></div>
               )
             ) : (
               <>
@@ -221,14 +238,14 @@ export default function AccountDetailPage() {
 
 
                 {rentable ? (
-                  <button onClick={handleRent} disabled={actionLoading} className="ac-cta" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#0A66C2", color: "#fff", fontSize: 16, fontWeight: 600, border: "none", borderRadius: 12, padding: 15, marginTop: 20, cursor: "pointer", boxShadow: "0 12px 28px rgba(10,102,194,0.28)" }}>{actionLoading ? "Processing…" : "Rent this account →"}</button>
+                  <button onClick={handleRent} disabled={actionLoading} className="ac-cta" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#0A66C2", color: "#fff", fontSize: 16, fontWeight: 600, border: "none", borderRadius: 12, padding: 15, marginTop: 20, cursor: "pointer", boxShadow: "0 12px 28px rgba(10,102,194,0.28)" }}>{actionLoading ? "Processing…" : `${verb} this ${noun} →`}</button>
                 ) : (
                   <div style={{ width: "100%", textAlign: "center", background: "#F2F4F7", color: "#96A0AD", fontSize: 15, fontWeight: 600, borderRadius: 12, padding: 15, marginTop: 20 }}>Currently unavailable</div>
                 )}
 
                 <div style={{ height: 1, background: "#EEF0F3", margin: "20px 0" }} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                  {["Instant access after payment", "Cancel anytime — no lock-in", "Secure managed access via GoLogin"].map((t) => (
+                  {["Instant access after payment", "Cancel anytime — no lock-in", isArmy ? "Secure managed access" : "Secure managed access via GoLogin"].map((t) => (
                     <div key={t} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, color: "#37424F" }}><span style={{ color: "#00A150", fontWeight: 700 }}>✓</span>{t}</div>
                   ))}
                 </div>
@@ -238,7 +255,7 @@ export default function AccountDetailPage() {
 
           {/* account details */}
           <div style={{ background: "#fff", border: "1px solid #E6E8EC", borderRadius: 18, padding: "22px 24px", boxShadow: "0 4px 14px rgba(16,24,40,0.05)" }}>
-            <div style={{ font: `500 11px ${MONO}`, letterSpacing: "0.14em", textTransform: "uppercase", color: "#8A93A2", marginBottom: 16 }}>Account details</div>
+            <div style={{ font: `500 11px ${MONO}`, letterSpacing: "0.14em", textTransform: "uppercase", color: "#8A93A2", marginBottom: 16 }}>{isArmy ? "Operator details" : "Account details"}</div>
             {[
               ["Connections", formatNumber(account.connectionCount), undefined],
               ...(ageLabel ? [["Account age", ageLabel, undefined] as const] : []),
@@ -256,7 +273,7 @@ export default function AccountDetailPage() {
 
           <div style={{ display: "flex", alignItems: "flex-start", gap: 11, background: "#F2F7FF", border: "1px solid #DCE9FB", borderRadius: 14, padding: "15px 18px" }}>
             <span style={{ flexShrink: 0, color: "#0A66C2" }}>💬</span>
-            <div style={{ fontSize: 13, lineHeight: 1.55, color: "#37424F" }}>Questions about this account? <a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer" style={{ color: "#0A66C2", fontWeight: 600, textDecoration: "none" }}>Chat with us →</a></div>
+            <div style={{ fontSize: 13, lineHeight: 1.55, color: "#37424F" }}>{isArmy ? "Questions about this operator? " : "Questions about this account? "}<a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer" style={{ color: "#0A66C2", fontWeight: 600, textDecoration: "none" }}>Chat with us →</a></div>
           </div>
         </div>
       </div>
@@ -267,11 +284,11 @@ export default function AccountDetailPage() {
             <div style={{ width: 56, height: 56, borderRadius: 16, background: "#FFF4E5", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FF6B00" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
             </div>
-            <h2 style={{ font: `700 22px ${POP}`, color: "#0B1220", letterSpacing: "-0.02em", marginBottom: 8 }}>Top up to rent this account</h2>
-            <p style={{ fontSize: 14, color: "#536471", lineHeight: 1.55, marginBottom: 20 }}>You need to deposit money to rent this account. Top up your balance and you&apos;ll be back here in seconds.</p>
+            <h2 style={{ font: `700 22px ${POP}`, color: "#0B1220", letterSpacing: "-0.02em", marginBottom: 8 }}>{isArmy ? "Top up to hire this operator" : "Top up to rent this account"}</h2>
+            <p style={{ fontSize: 14, color: "#536471", lineHeight: 1.55, marginBottom: 20 }}>{isArmy ? "You need to deposit money to hire this operator. Top up your balance and you'll be back here in seconds." : "You need to deposit money to rent this account. Top up your balance and you'll be back here in seconds."}</p>
             <div style={{ background: "#F8F8F5", borderRadius: 12, padding: "14px 16px", marginBottom: 24, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: "#536471" }}>Your balance</span><span style={{ fontWeight: 700, color: "#0F1419" }}>${insufficientInfo.balance.toFixed(2)}</span></div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: "#536471" }}>Rental price</span><span style={{ fontWeight: 700, color: "#0F1419" }}>${insufficientInfo.price.toFixed(2)}/mo</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: "#536471" }}>{isArmy ? "Monthly price" : "Rental price"}</span><span style={{ fontWeight: 700, color: "#0F1419" }}>${insufficientInfo.price.toFixed(2)}/mo</span></div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, paddingTop: 8, borderTop: "1px solid #E8E6E1" }}><span style={{ color: "#991B1B", fontWeight: 600 }}>Amount needed</span><span style={{ fontWeight: 800, color: "#991B1B" }}>${(insufficientInfo.price - insufficientInfo.balance).toFixed(2)}</span></div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
