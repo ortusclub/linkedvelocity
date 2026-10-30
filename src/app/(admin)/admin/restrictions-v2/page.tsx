@@ -551,7 +551,10 @@ export default function RestrictionsV2Page() {
   };
   const ql = q.trim().toLowerCase();
   const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.referrerName, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
-  const matchPhase = (r: Row) => phaseF === "all" || r.status === phaseF;
+  // Filter/count by the DERIVED phase (rental/lifecycle, #659), not raw account.status — otherwise a
+  // restricted-but-rented account (status "unavailable") shows a P1 badge yet lands in no chip, and the
+  // P1+P2+P3 counts don't sum to All. phaseF holds the pr as a string ("1".."4").
+  const matchPhase = (r: Row) => phaseF === "all" || String(r.phase.pr) === phaseF;
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
   const matchRef = (r: Row) => refF === "all" || (refF === "none" ? !r.referrerName : r.referrerName === refF);
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
@@ -590,9 +593,10 @@ export default function RestrictionsV2Page() {
   // Phase + PoC filter chips, counted within the current primary filter (like the mockup).
   const inFilter = all.filter(pick[filter] || pick.all);
   const phaseOpts: Array<{ key: string; label: string; pr: string; n: number }> = [
-    { key: "all", label: "All", pr: "" }, { key: "rented", label: "Rented", pr: "P1" },
-    { key: "available", label: "Onboarded", pr: "P2" }, { key: "under_construction", label: "Under construction", pr: "P3" },
-  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || r.status === o.key).length }));
+    { key: "all", label: "All", pr: "" }, { key: "1", label: "Rented", pr: "P1" },
+    { key: "2", label: "Onboarded", pr: "P2" }, { key: "3", label: "Under construction", pr: "P3" },
+    { key: "4", label: "Other", pr: "P4" },
+  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || String(r.phase.pr) === o.key).length }));
   const pocNames = [...new Set(all.map((r) => r.poc).filter(Boolean))].sort();
   const pocChips: Array<{ key: string; label: string; n: number }> = [
     { key: "all", label: "Everyone" }, ...pocNames.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
@@ -667,7 +671,13 @@ export default function RestrictionsV2Page() {
             {!list.length && <div style={{ padding: "28px 18px", font: `500 13.5px ${F_SANS}`, color: "#8a93a3" }}>Nothing here.</div>}
             {list.map((r) => {
               const isOpen = !!open[r.id];
-              const st = ST[r.status] || [r.status, "#f1f5f9", "#475569"];
+              // Badge shows the DERIVED phase (label + pr), consistent with the phase chips, so a
+              // restricted rented account reads "P1 · Rented" not "P1 · unavailable". Color keys off pr.
+              const st: [string, string, string] = [
+                r.phase.label,
+                r.phase.pr === 1 ? "#eff6ff" : r.phase.pr === 2 ? "#f4fbf7" : "#f1f5f9",
+                r.phase.pr === 1 ? "#1d4ed8" : r.phase.pr === 2 ? "#0f7a3d" : r.phase.pr === 3 ? "#475569" : "#9aa3b2",
+              ];
               const days = r.restrictedMs / 86400e3;
               return (
                 <div key={r.id} id={`case-${r.id}`} style={focusId === r.id ? { outline: "2px solid #2563eb", outlineOffset: -2, borderRadius: 10 } : undefined}>
