@@ -84,28 +84,28 @@ export interface UnifiedPayouts {
 // Wise PHP reachability by payment method. Wallets pay out directly; PH banks pay via
 // account number. Anything else (PayPal, UPI, "Bank transfer (Wise)", unknown) is left
 // as manual so the console never auto-prepares a recipient we haven't verified.
-const WALLETS = new Set([
-  "gcash", "maya", "paymaya", "grabpay", "shopeepay", "starpay",
-  "bayad", "bayad wallet", "tayocash", "juancash",
-]);
-const BANKS = new Set([
-  "maribank", "gotyme", "gotyme bank", "bpi", "unionbank", "union bank", "bdo",
-  "seabank", "landbank", "metrobank", "pnb", "rcbc", "chinabank", "china bank",
-  "eastwest", "security bank", "psbank", "dbp",
-]);
+// Matched as substrings, because real method strings carry extra words
+// ("BDO Unibank", "BPI bank transfer", "Bank transfer (Wise)", "Indian Overseas Bank").
+const WALLET_KW = ["gcash", "maya", "paymaya", "grabpay", "shopeepay", "starpay", "bayad", "tayocash", "juancash"];
+const BANK_KW = ["maribank", "gotyme", "bpi", "bdo", "unionbank", "union bank", "seabank", "landbank",
+  "metrobank", "pnb", "rcbc", "chinabank", "china bank", "eastwest", "security bank", "psbank", "dbp",
+  "cimb", "overseas bank", "iob"];
 export function railFor(method: string | null | undefined): "wallet" | "bank" | null {
   if (!method) return null;
   const m = method.trim().toLowerCase();
-  if (WALLETS.has(m)) return "wallet";
-  if (BANKS.has(m)) return "bank";
+  if (WALLET_KW.some((k) => m.includes(k))) return "wallet";
+  if (m.includes("paypal") || m.includes("upi")) return null; // not a PH rail Wise reaches
+  if (BANK_KW.some((k) => m.includes(k)) || m.includes("bank")) return "bank";
   return null;
 }
 
-// State for a ready/owed row from its method + due-ness. Held rows come in pre-flagged.
+// State for a ready/owed row. Due-ness FIRST: anything not yet due is "upcoming" regardless
+// of method, so a paid/next-cycle payout can't leak into the pay run mislabeled manual.
 function readyStateFor(method: string | null, details: string | null, overdue: boolean, dueNow: boolean): ReadyState {
+  if (!dueNow && !overdue) return "upcoming";
   if (!method && !details) return "needs_details";
   if (railFor(method) === null) return "manual";
-  return dueNow || overdue ? "ready" : "upcoming";
+  return "ready";
 }
 
 const isWiseReceipt = (url: string | null | undefined) => !!url && /wise\.com/i.test(url);
