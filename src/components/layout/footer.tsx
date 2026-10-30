@@ -55,29 +55,31 @@ export function Footer({ brand }: { brand: Brand }) {
           <p className="lv-foot-tag">{brand.term.footerBlurb}</p>
           <a href={telegramUrl} target="_blank" rel="noopener noreferrer" className="lv-foot-chat">💬 Chat with us on Telegram</a>
         </div>
-        <div className="lv-foot-cols">
-          <div className="lv-foot-col">
-            <b>Product</b>
-            <Link href="/catalogue">Browse profiles</Link>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/how-it-works">How it works</Link>
-            <Link href="/blog">Blog</Link>
-            <Link href="/faqs">FAQs</Link>
+        {brand.id !== "linkedarmy" && (
+          <div className="lv-foot-cols">
+            <div className="lv-foot-col">
+              <b>Product</b>
+              <Link href="/catalogue">Browse profiles</Link>
+              <Link href="/pricing">Pricing</Link>
+              <Link href="/how-it-works">How it works</Link>
+              <Link href="/blog">Blog</Link>
+              <Link href="/faqs">FAQs</Link>
+            </div>
+            <div className="lv-foot-col">
+              <b>For ambassadors</b>
+              <Link href="/become-ambassador">Earn with your account</Link>
+              <Link href="/become-ambassador">How payouts work</Link>
+              <Link href="/ambassador-guide">What to expect</Link>
+              <Link href="/ambassador-terms">Ambassador terms</Link>
+            </div>
+            <div className="lv-foot-col">
+              <b>Company</b>
+              <a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer">Book a meeting</a>
+              <a href={telegramUrl} target="_blank" rel="noopener noreferrer">Contact</a>
+              <a href="#">About</a>
+            </div>
           </div>
-          <div className="lv-foot-col">
-            <b>For ambassadors</b>
-            <Link href="/become-ambassador">Earn with your account</Link>
-            <Link href="/become-ambassador">How payouts work</Link>
-            <Link href="/ambassador-guide">What to expect</Link>
-            <Link href="/ambassador-terms">Ambassador terms</Link>
-          </div>
-          <div className="lv-foot-col">
-            <b>Company</b>
-            <a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer">Book a meeting</a>
-            <a href={telegramUrl} target="_blank" rel="noopener noreferrer">Contact</a>
-            <a href="#">About</a>
-          </div>
-        </div>
+        )}
       </div>
       <div className="lv-foot-bottom">
         <span>© 2026 {brand.name}. All rights reserved.</span>

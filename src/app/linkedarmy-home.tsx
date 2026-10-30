@@ -164,8 +164,8 @@ export function LinkedArmyHome({ roster }: { roster: ArmyRosterCard[] }) {
       <section id="pricing" style={{ borderBottom: "2px solid var(--ink)" }}>
         <div className="wrap" style={{ paddingTop: "clamp(44px,6vw,76px)", paddingBottom: 28, display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="ey" style={{ color: "var(--accent-700)" }}>pricing</div>
-          <h2 style={{ fontSize: "clamp(38px,5.5vw,76px)", fontWeight: 800 }}>two ways to work.</h2>
-          <p style={{ margin: 0, fontSize: 16, color: "var(--n800)", maxWidth: 580 }}>Run the outreach yourself from an established profile, or have our team run it for you and book the calls. Same operators, your choice of hands-on or hands-off.</p>
+          <h2 style={{ fontSize: "clamp(38px,5.5vw,76px)", fontWeight: 800 }}>simple pricing.</h2>
+          <p style={{ margin: 0, fontSize: 16, color: "var(--n800)", maxWidth: 580 }}>Hire an established operator and run outreach from a profile LinkedIn already trusts. Flat monthly fee per operator, scale up or down anytime.</p>
         </div>
         <div className="cells" style={{ borderTop: "2px solid var(--ink)", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))" }}>
           <div className="cell" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -173,12 +173,6 @@ export function LinkedArmyHome({ roster }: { roster: ArmyRosterCard[] }) {
             <p style={{ margin: 0, fontSize: 15, color: "var(--n800)", lineHeight: 1.55 }}>Hire the operator and run your own campaigns. Go live in a secure environment in minutes, use your own targeting and tools.</p>
             <div style={{ fontFamily: "var(--disp)", fontSize: 42, fontWeight: 900 }}>from $45<span style={{ fontSize: 14, fontWeight: 700, display: "block" }}>per operator / month</span></div>
             <Link href="/catalogue" className="btn" style={{ marginTop: "auto" }}><span>browse operators</span><span>→</span></Link>
-          </div>
-          <div className="cell" style={{ display: "flex", flexDirection: "column", gap: 16, background: "var(--hl)", boxShadow: "inset 0 6px 0 var(--lime)", borderRight: "none" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}><span style={{ fontFamily: "var(--disp)", fontSize: 34, fontWeight: 800, textTransform: "lowercase" }}>managed</span><span className="ey">we run it</span></div>
-            <p style={{ margin: 0, fontSize: 15, color: "var(--n800)", lineHeight: 1.55 }}>We build the list, write the sequences, run several operators, and book qualified calls into your calendar. You approve the plan, we fill the pipeline. No setup fee.</p>
-            <div style={{ fontFamily: "var(--disp)", fontSize: 42, fontWeight: 900 }}>from $900<span style={{ fontSize: 14, fontWeight: 700, display: "block" }}>per month · ~10 qualified calls, scoped on a call</span></div>
-            <a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer" className="btn" style={{ marginTop: "auto" }}><span>book a call</span><span>→</span></a>
           </div>
         </div>
         <div className="wrap" style={{ paddingTop: 34, paddingBottom: 12 }}>

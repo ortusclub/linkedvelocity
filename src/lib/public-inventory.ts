@@ -75,6 +75,9 @@ export async function publicInventorySlice(): Promise<PublicSlice> {
     prisma.linkedInAccount.findMany({
       where: {
         inventoryPool: { notIn: SEGREGATED_POOLS },
+        // [SHOWCASE] dummies are no longer shown as "Rented" social proof anywhere public
+        // (catalogue + homepage roster) — real rented inventory carries the proof now.
+        NOT: { notes: { contains: "[SHOWCASE]" } },
         OR: [{ status: { in: ["rented", "trial"] } }, { id: { in: [...shadowIds] } }],
       },
       orderBy: order,

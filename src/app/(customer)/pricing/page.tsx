@@ -16,7 +16,6 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 const POP = "var(--font-poppins)", INT = "var(--font-inter)", MONO = "var(--font-jbmono)";
-const CALENDAR_URL = "https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ1he_qAS5s8faJzrAIjTJi8KIX9xvPhGbC4Ipn38lPTLzkfSuoyMIiqUrB0viY2jpXr_W_zLSdq";
 
 type Tier = {
   eyebrow: string; eyebrowBg: string; eyebrowFg: string; name: string; topColor: string; dots: string[];
@@ -156,19 +155,6 @@ export default async function PricingPage() {
         </div>
       </div>
 
-      {/* managed option (LinkedArmy only) — the tiers above are "run it yourself", this is "we run it" */}
-      {isArmy && (
-        <div className="pp2-wrap" style={{ maxWidth: 1160, margin: "40px auto 0", padding: "0 40px" }}>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(150deg,#0A66C2 0%,#0D1B2A 100%)", borderRadius: 20, padding: "32px 34px", color: "#fff" }}>
-            <div style={{ maxWidth: 580, minWidth: 260 }}>
-              <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9DC2F0" }}>Option 2 · we run it</span>
-              <h2 style={{ fontFamily: POP, fontWeight: 700, fontSize: "clamp(24px,3vw,32px)", letterSpacing: "-0.02em", margin: "10px 0 10px" }}>Prefer we run the outreach?</h2>
-              <p style={{ fontSize: 15.5, lineHeight: 1.6, color: "#C8D6EA", margin: 0 }}>The tiers above are for running it yourself. With managed outreach our team builds the list, writes the sequences, runs several operators, and books qualified calls into your calendar. From $900/month for roughly 10 qualified calls, no setup fee, exact scope set on a quick call.</p>
-            </div>
-            <a href={CALENDAR_URL} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 9, background: "#fff", color: "#0B1220", fontSize: 16, fontWeight: 600, padding: "15px 26px", borderRadius: 12, textDecoration: "none" }}>Book a call →</a>
-          </div>
-        </div>
-      )}
 
       {/* what sets price */}
       <div className="pp2-wrap" style={{ maxWidth: 1160, margin: "40px auto 0", padding: "0 40px" }}>
