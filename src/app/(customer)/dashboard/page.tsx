@@ -763,6 +763,7 @@ function DashboardContent() {
   const vqs = (u: string) => (viewAsId ? u + (u.includes("?") ? "&" : "?") + `view_as=${encodeURIComponent(viewAsId)}` : u);
   const [viewAsInfo, setViewAsInfo] = useState<{ name: string; email: string } | null>(null);
   const [meetingSubmissionId, setMeetingSubmissionId] = useState<string | null>(null);
+  const isArmy = typeof window !== "undefined" && window.location.hostname.includes("linkedarmy");
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [openCredsId, setOpenCredsId] = useState<string | null>(null);
   const [openLinkId, setOpenLinkId] = useState<string | null>(null);
@@ -1158,7 +1159,7 @@ function DashboardContent() {
                 className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-                Browse accounts
+                {isArmy ? "Browse operators" : "Browse accounts"}
               </Link>
               <a
                 href="/guide"
@@ -1185,7 +1186,7 @@ function DashboardContent() {
               Payment issue on {paymentIssueRentals.length === 1 ? "1 account" : `${paymentIssueRentals.length} accounts`}
             </p>
             <p style={{ margin: "3px 0 0", fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: "#7f1d1d" }}>
-              {paymentIssueRentals.length === 1 ? "This rental couldn't renew." : "These rentals couldn't renew."} Add funds{paymentIssueTotal > 0 ? ` (about $${paymentIssueTotal}/mo needed)` : ""} or save a card{paymentIssueDueDate ? ` before ${formatDate(paymentIssueDueDate)}` : ""}, or they&apos;ll be returned to LinkedVelocity.
+              {paymentIssueRentals.length === 1 ? "This rental couldn't renew." : "These rentals couldn't renew."} Add funds{paymentIssueTotal > 0 ? ` (about $${paymentIssueTotal}/mo needed)` : ""} or save a card{paymentIssueDueDate ? ` before ${formatDate(paymentIssueDueDate)}` : ""}, or they&apos;ll be returned to {isArmy ? "LinkedArmy" : "LinkedVelocity"}.
             </p>
           </div>
           <button
@@ -1397,8 +1398,8 @@ function DashboardContent() {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
             <div style={{ width: 5, alignSelf: "stretch", minHeight: 40, borderRadius: 4, background: "#12a150", flex: "none" }} />
             <div style={{ minWidth: 0, flex: 1 }}>
-              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 22, letterSpacing: "-.01em", color: "#0f7a3d", lineHeight: 1.2 }}>Accounts I&apos;m Renting Out</h2>
-              <p style={{ margin: "3px 0 0", fontWeight: 500, fontSize: 13.5, lineHeight: 1.45, color: V.muted }}>Your LinkedIn accounts shared on LinkedVelocity — you earn every month.</p>
+              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 22, letterSpacing: "-.01em", color: "#0f7a3d", lineHeight: 1.2 }}>{isArmy ? "Profiles I Share" : "Accounts I'm Renting Out"}</h2>
+              <p style={{ margin: "3px 0 0", fontWeight: 500, fontSize: 13.5, lineHeight: 1.45, color: V.muted }}>{isArmy ? "Your LinkedIn profiles shared on LinkedArmy — you earn every month." : "Your LinkedIn accounts shared on LinkedVelocity — you earn every month."}</p>
             </div>
             <a href="/onboarding" title="Choose from three account setup options" style={{ flex: "none", border: "1px solid #bfe6cf", background: "#fff", color: "#0f7a3d", borderRadius: 9, padding: "8px 14px", fontWeight: 700, fontSize: 13, textDecoration: "none", whiteSpace: "nowrap" }}>+ Share an account</a>
           </div>
@@ -1592,8 +1593,8 @@ function DashboardContent() {
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
           <div style={{ width: 5, alignSelf: "stretch", minHeight: 40, borderRadius: 4, background: "#0b4fa8", flex: "none" }} />
           <div style={{ minWidth: 0, flex: 1 }}>
-            <h2 style={{ margin: 0, fontWeight: 800, fontSize: 22, letterSpacing: "-.01em", color: "#0b4fa8", lineHeight: 1.2 }}>Accounts I&apos;m Renting</h2>
-            <p style={{ margin: "3px 0 0", fontWeight: 500, fontSize: 13.5, lineHeight: 1.45, color: V.muted }}>Accounts you&apos;re renting from other members — open them in GoLogin. <Link href="/account-guide-v2" style={{ color: V.blue, fontWeight: 700, textDecoration: "none" }}>Account guide →</Link></p>
+            <h2 style={{ margin: 0, fontWeight: 800, fontSize: 22, letterSpacing: "-.01em", color: "#0b4fa8", lineHeight: 1.2 }}>{isArmy ? "My Operators" : "Accounts I'm Renting"}</h2>
+            <p style={{ margin: "3px 0 0", fontWeight: 500, fontSize: 13.5, lineHeight: 1.45, color: V.muted }}>{isArmy ? "Operators you're working with — open them in GoLogin." : "Accounts you're renting from other members — open them in GoLogin."} <Link href="/account-guide-v2" style={{ color: V.blue, fontWeight: 700, textDecoration: "none" }}>Account guide →</Link></p>
           </div>
           <span style={{ fontWeight: 600, fontSize: 13, color: V.faint, whiteSpace: "nowrap", marginTop: 2 }}>{currentRentals.length} {currentRentals.length === 1 ? "account" : "accounts"}</span>
         </div>
@@ -1607,7 +1608,7 @@ function DashboardContent() {
 
         {currentRentals.length === 0 ? (
           <div style={{ background: "#fff", border: "1px dashed #d5dbe5", borderRadius: 14, padding: 22, textAlign: "center", fontWeight: 500, fontSize: 13.5, color: V.muted }}>
-            You&apos;re not renting any accounts yet. <Link href="/catalogue" style={{ color: V.blue, fontWeight: 600 }}>Browse accounts to rent →</Link>
+            {isArmy ? "You haven't hired any operators yet. " : "You're not renting any accounts yet. "}<Link href="/catalogue" style={{ color: V.blue, fontWeight: 600 }}>{isArmy ? "Browse operators →" : "Browse accounts to rent →"}</Link>
           </div>
         ) : (
           <div style={{ background: "#fff", border: `1px solid ${V.border}`, borderRadius: 14, overflowX: "auto" }}>
@@ -1818,7 +1819,7 @@ function DashboardContent() {
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "9px 11px", background: "#eef3ff", borderRadius: 9 }}>
                           <span aria-hidden style={{ fontSize: 13, lineHeight: 1.3 }}>✓</span>
-                          <span style={{ fontWeight: 500, fontSize: 12, lineHeight: 1.45, color: "#3b4657" }}>That&apos;s it — the profile appears under &quot;Shared with me&quot; in GoLogin and this row flips to <strong>Active</strong> on its own. Prefer a different GoLogin email? Email <span style={{ fontWeight: 700 }}>info@linkedvelocity.com</span> and we&apos;ll point your access there.</span>
+                          <span style={{ fontWeight: 500, fontSize: 12, lineHeight: 1.45, color: "#3b4657" }}>That&apos;s it — the profile appears under &quot;Shared with me&quot; in GoLogin and this row flips to <strong>Active</strong> on its own. Prefer a different GoLogin email? Email <span style={{ fontWeight: 700 }}>{isArmy ? "info@linkedarmy.com" : "info@linkedvelocity.com"}</span> and we&apos;ll point your access there.</span>
                         </div>
                       </div>
                     )}
