@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/crypto-creds";
 import { isCompanyEmail } from "@/lib/company";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
+import { monthlyRentalPrice } from "@/lib/account-pricing";
 
 // CSV export of the inventory, for Google Sheets to auto-pull via
 // =IMPORTDATA("https://linkedvelocity.com/api/admin/accounts/export?key=XXXX").
@@ -106,9 +107,10 @@ export async function GET(req: NextRequest) {
     const rental = a.rentals[0];
     const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/)?.[1]?.replace(/\.$/, "") || "";
     const profileEmail = (a.notes || "").match(/Profile email:\s*(\S+@\S+?\.\S+?)[\s.]/)?.[1];
+    // Rented: the locked rate. Otherwise price live from the current grid, never the stored value.
     const price = rental?.lockedPrice != null && Number(rental.lockedPrice) > 0
       ? Number(rental.lockedPrice)
-      : Number(a.monthlyPrice || 0);
+      : monthlyRentalPrice(a);
     const payout = Number(a.ambassadorPayment || 0);
     // Owner: showcase/demo accounts => "Dummy"; our own Ortus accounts => "ORTUS";
     // otherwise the ambassador who supplied it.

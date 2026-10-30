@@ -1,5 +1,6 @@
 import { currencyConfigFor } from "@/lib/referral-currency";
 import { prisma } from "@/lib/prisma";
+import { monthlyRentalPrice } from "@/lib/account-pricing";
 
 // ── Single source of truth for the Account Owners view ──
 // Both the admin page (/api/admin/owners) and the Google-Sheets CSV export
@@ -62,7 +63,10 @@ const ACCOUNT_SELECT = {
   linkedinName: true,
   status: true,
   linkedinUrl: true,
-  monthlyPrice: true,
+  connectionCount: true,
+  accountAgeMonths: true,
+  hasSalesNav: true,
+  linkedinVerified: true,
   ambassadorPayment: true,
   loginEmail: true,
   personalEmail: true,
@@ -74,7 +78,8 @@ const ACCOUNT_SELECT = {
 
 function toAccount(a: {
   id: string; linkedinName: string; status: string; linkedinUrl: string | null;
-  monthlyPrice: unknown; ambassadorPayment: unknown;
+  connectionCount: number; accountAgeMonths: number | null; hasSalesNav: boolean; linkedinVerified: boolean;
+  ambassadorPayment: unknown;
   loginEmail: string | null; personalEmail: string | null; accountPassword: string | null; twoFactor: string | null; workEmail: string | null;
   restrictedAt: Date | null;
 }): OwnerAccount {
@@ -83,7 +88,8 @@ function toAccount(a: {
     linkedinName: a.linkedinName,
     status: a.status,
     linkedinUrl: a.linkedinUrl,
-    monthlyPrice: a.monthlyPrice,
+    // Live grid price (connections × age × verified), not the stored snapshot — stays current.
+    monthlyPrice: monthlyRentalPrice(a),
     ambassadorPayment: a.ambassadorPayment,
     loginEmail: a.loginEmail,
     personalEmail: a.personalEmail,

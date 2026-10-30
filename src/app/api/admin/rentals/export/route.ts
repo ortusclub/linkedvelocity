@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { paymentStatus, accessStatus } from "@/lib/rental-tracker";
+import { monthlyRentalPrice } from "@/lib/account-pricing";
 
 // CSV export of the renter tracker, for Google Sheets to auto-pull via
 // =IMPORTDATA("https://linkedvelocity.com/api/admin/rentals/export?key=XXXX").
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
   const rentals = await prisma.rental.findMany({
     include: {
       user: { select: { id: true, fullName: true, email: true, contactNumber: true, company: true, industry: true } },
-      linkedinAccount: { select: { linkedinName: true, linkedinUrl: true, connectionCount: true, monthlyPrice: true } },
+      linkedinAccount: { select: { linkedinName: true, linkedinUrl: true, connectionCount: true, accountAgeMonths: true, hasSalesNav: true, linkedinVerified: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest) {
     // Amount = the grandfathered locked price if set, otherwise the account's list price.
     const amt = r.lockedPrice != null && Number(r.lockedPrice) > 0
       ? Number(r.lockedPrice)
-      : Number(r.linkedinAccount.monthlyPrice || 0);
+      : monthlyRentalPrice(r.linkedinAccount);
     return [
       r.linkedinAccount.linkedinName,
       r.linkedinAccount.linkedinUrl || "",

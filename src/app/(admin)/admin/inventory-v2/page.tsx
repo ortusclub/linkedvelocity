@@ -215,10 +215,12 @@ const SHADOW_NAMES: Record<string, string> = { "info@ortus.solutions": "Ortus", 
 const shadowName = (email: string | null): string => (email ? (SHADOW_NAMES[email.trim().toLowerCase()] || email.split("@")[0]) : "");
 
 const priceOf = (a: Account): number => {
+  // Rented accounts bill at the rate locked when the rental started. Everything else is priced
+  // live from the current grid (connections × age × verified) on every render, so the price never
+  // goes stale as connections grow, the account ages past a band, or the verified flag changes.
+  // (The stored monthly_price column is no longer read for display — it can't track age.)
   const locked = a.rentals[0]?.lockedPrice;
   if (locked != null && Number(locked) > 0) return Number(locked);
-  const mp = Number(a.monthlyPrice);
-  if (mp > 0) return mp;
   return tierPricing(a.connectionCount, a.accountAgeMonths, a.hasSalesNav, a.linkedinVerified).monthly;
 };
 
