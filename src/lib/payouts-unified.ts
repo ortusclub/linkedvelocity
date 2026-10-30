@@ -71,6 +71,12 @@ export interface UnifiedPayee {
   method: string | null;
   details: string | null;
   rail: "wallet" | "bank" | null;
+  email: string | null;
+  phone: string | null;
+  holder: string | null;      // account-holder name on the payout method
+  accounts: number;           // accounts this ambassador supplies (0 for pure referrers)
+  nextDue: string | null;     // next monthly due date (ISO)
+  note: string | null;        // hold / restriction reason, if any
   totalPaid: number;
   lastPaidAt: string | null;
   history: UnifiedPayment[];  // newest first
@@ -116,15 +122,24 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   // Payment method/details per payee, fetched once so referral and ambassador rows can
   // both show a masked destination and a Wise rail. Referrers key by slug; ambassadors by email.
   const [referrers, apps] = await Promise.all([
-    prisma.referrer.findMany({ select: { id: true, slug: true, name: true, paymentName: true, paymentMethod: true, paymentDetails: true } }),
+    prisma.referrer.findMany({ select: { id: true, slug: true, name: true, paymentName: true, paymentMethod: true, paymentDetails: true, email: true } }),
     prisma.ambassadorApplication.findMany({
       select: {
         id: true, email: true, fullName: true, referredBy: true, payoutCurrency: true,
         paymentMethod: true, paymentDetails: true, payoutName: true, paypalEmail: true, wiseEmail: true,
-        monthlyPayouts: true, onboardedAt: true, status: true,
+        monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true,
       },
     }),
   ]);
+
+  // Next monthly due date per ambassador email (for the detail card).
+  const nextDueByEmail = new Map<string, string>();
+  for (const d of [...due.monthly, ...due.upcoming]) {
+    if (d.kind !== "monthly") continue;
+    const k = d.email.toLowerCase();
+    const cur = nextDueByEmail.get(k);
+    if (!cur || d.dueDate < cur) nextDueByEmail.set(k, d.dueDate);
+  }
   const refBySlug = new Map(referrers.map((r) => [r.slug.toLowerCase(), r]));
   const refById = new Map(referrers.map((r) => [r.id, r]));
   const refNameBySlug = new Map(referrers.map((r) => [r.slug.toLowerCase(), r.name || r.paymentName || r.slug]));
@@ -183,7 +198,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), totalPaid: 0, lastPaidAt: null, history: [] }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [] }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -199,6 +214,8 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const r = refById.get(p.referrerId);
     const key = `ref:${(r?.slug || p.referrerId).toLowerCase()}`;
     const payee = ensurePayee(key, r?.name || r?.paymentName || p.referrerId, r?.slug || null, "referral", r?.paymentMethod || null, r?.paymentDetails || null, null);
+    if (!payee.email && r?.email) payee.email = r.email;
+    if (!payee.holder && r?.paymentName) payee.holder = r.paymentName;
     const amt = Number(p.amount) || 0;
     payee.history.push({
       date: p.paidAt ? (p.paidAt as Date).toISOString() : null, amount: amt, kind: "referral",
@@ -215,6 +232,10 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     for (const e of entries) {
       const kind: PayoutKind = e.kind === "setup" ? "setup" : "monthly";
       const payee = ensurePayee(key, a.fullName || a.email, a.email, kind, ambMethod(a), a.paymentDetails || null, referredBy);
+      if (!payee.email) payee.email = a.email;
+      if (!payee.phone && a.contactNumber) payee.phone = a.contactNumber;
+      if (!payee.holder && a.payoutName) payee.holder = a.payoutName;
+      if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
