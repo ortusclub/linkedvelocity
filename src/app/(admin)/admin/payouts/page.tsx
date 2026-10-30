@@ -126,15 +126,19 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
 
 // Wise connectivity indicator — confirms the full-access token authenticates.
 function WiseBadge() {
-  const [s, setS] = useState<{ connected: boolean; name?: string | null; reason?: string; message?: string } | null>(null);
+  const [s, setS] = useState<{ connected: boolean; name?: string | null; isBusiness?: boolean; reason?: string; message?: string } | null>(null);
   useEffect(() => {
     let a = true;
     fetch("/api/admin/payouts/wise/status").then((r) => r.json()).then((d) => { if (a) setS(d); }).catch(() => { if (a) setS({ connected: false, reason: "error" }); });
     return () => { a = false; };
   }, []);
   if (!s) return null;
-  const p = s.connected ? PILLS.green : PILLS.neutral;
-  const label = s.connected ? `Wise connected${s.name ? ` · ${s.name}` : ""}` : `Wise not connected${s.reason === "no_token" ? " · add token" : s.reason ? ` · ${s.reason}` : ""}`;
+  const p = !s.connected ? PILLS.neutral : s.isBusiness ? PILLS.green : PILLS.amber;
+  const label = !s.connected
+    ? `Wise not connected${s.reason === "no_token" ? " · add token" : s.reason ? ` · ${s.reason}` : ""}`
+    : s.isBusiness
+      ? `Wise connected · ${s.name}`
+      : `Wise: ${s.name || "personal"} — not the business profile`;
   return (
     <span title={s.message || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 7, font: `600 12px ${SANS}`, color: p.fg, background: p.bg, borderRadius: 999, padding: "5px 11px", whiteSpace: "nowrap" }}>
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: p.dot }} />{label}
@@ -239,7 +243,7 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
 
   const run = useMemo(() => rows.filter((r) => r.state !== "upcoming"), [rows]);
   const inCard = (r: Row, c: RunCard) => {
-    if (c === "owed") return ["ready", "manual", "needs_details", "hold"].includes(r.state);
+    if (c === "owed") return ["ready", "manual", "needs_details"].includes(r.state); // held payouts aren't owed this cycle — they're under Can't send
     if (c === "ready") return r.state === "ready";
     if (c === "sent") return r.state === "paid" && r.sentViaWise;
     if (c === "failed") return false;
