@@ -38,6 +38,7 @@ const sections = [
     { href: "/admin/referrals", label: "Referrals" },
     { href: "/admin/referral-outreach", label: "Outreach" },
     { href: "/admin/payouts-ii", label: "Payouts" },
+    { href: "/admin/payouts", label: "Payouts v2" },
     { href: "/admin/inventory-v2", label: "Inventory" },
     { href: "/admin/profile-maturing", label: "Profile Maturing" },
     { href: "/admin/restrictions", label: "Restrictions" },
