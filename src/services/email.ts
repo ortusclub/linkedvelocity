@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { type Currency, CURRENCY_CONFIG, formatMoney } from "@/lib/referral-currency";
+import { monthlyDueDate } from "@/lib/payment-schedule";
 
 let _resend: Resend | null = null;
 function getResend(): Resend {
@@ -739,12 +740,12 @@ export async function sendShadowYieldEmail(email: string, accountName: string, d
 
 // Monthly ₱500 starts the FIRST FULL MONTH after the setup fee is paid, on a 15th
 // cut-off: setup paid 1st–15th → next month; paid 16th–end → the month after.
-// Computed in Manila time so the cut-off matches the team's wall clock.
+// Delegates to monthlyDueDate so the date is the first WORKING day of that month — rolled
+// past weekends AND Philippine public holidays — matching what we actually pay and the
+// Ambassador terms (never a Saturday, Sunday, or holiday the team is off).
 export function firstMonthlyPayoutLabel(setupPaidAt: Date): string {
-  const manila = new Date(setupPaidAt.getTime() + 8 * 3600 * 1000);
-  const day = manila.getUTCDate();
-  const start = new Date(Date.UTC(manila.getUTCFullYear(), manila.getUTCMonth() + (day <= 15 ? 1 : 2), 1));
-  return start.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const due = monthlyDueDate(setupPaidAt, 0) ?? setupPaidAt;
+  return due.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 }
 
 const receiptBlock = (receiptUrl: string) => `
@@ -763,7 +764,7 @@ export async function sendSetupFeePaidEmail(email: string, fullName: string, amo
       <p style="font-size:16px;margin:0 0 16px;">Hi ${firstName},</p>
       <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 16px;">Good news — we've just sent your <strong>${formatMoney(amount, currency)} setup fee</strong> via Wise. ✅</p>
       ${receiptBlock(receiptUrl)}
-      <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 16px;">Your <strong>${formatMoney(cfg.monthlyAmount, currency)} monthly payout</strong> will start from your first full month — that's <strong>${firstMonthlyPayoutLabel(setupPaidAt)}</strong>, and then the first of each month after, for as long as the account stays active.</p>
+      <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 16px;">Your <strong>${formatMoney(cfg.monthlyAmount, currency)} monthly payout</strong> will start from your first full month — that's <strong>${firstMonthlyPayoutLabel(setupPaidAt)}</strong>, and then the first working day of each month after (we move it off weekends and holidays), for as long as the account stays active.</p>
       <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 16px;">Also — if you know anyone else who'd like to join, please send them our way! You'll earn <strong>up to ${formatMoney(cfg.referralTiers.computer.verified, currency)} referral fee</strong> for each one that comes on board — the exact amount depends on how they're onboarded. Ideally people who can get their account verified like yours (with a passport for the blue checkmark) — those accounts are much more stable and easier to work with. Just reply here if you'd like more info and we'll walk you through it! 🙌</p>
       <p style="font-size:15px;color:#374151;line-height:1.6;margin:0;">Thanks so much for partnering with us! And a small reminder — please try not to log into the account yourself so it stays nice and stable on our end. Let us know if you have any questions! 🙏</p>
     `),
@@ -928,7 +929,7 @@ export async function sendAmbassadorWelcomeEmail(
 
       <h3>What Happens Next</h3>
       <ul>
-        <li><strong>Monthly payments of $${monthlyAmount}</strong> will be sent to your bank account on the 1st of each month while your account is active.</li>
+        <li><strong>Monthly payments of $${monthlyAmount}</strong> will be sent to your bank account on the first working day of each month (we move it off weekends and holidays) while your account is active.</li>
         <li><strong>Keep your LinkedIn session active.</strong> If your account gets logged out, we'll contact you to re-authenticate. Payments are paused until access is restored.</li>
         <li><strong>Cancel anytime</strong> with 30 days notice.</li>
       </ul>
