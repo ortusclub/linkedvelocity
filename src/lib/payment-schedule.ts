@@ -12,13 +12,80 @@ import { type Currency, currencyConfig, currencyConfigFor } from "@/lib/referral
 export const SETUP_FEE = 1000;       // one-time ₱ setup fee (PH default)
 const DAY = 24 * 60 * 60 * 1000;
 
-// Roll a date forward to the next business day (Mon–Fri) when it lands on a weekend,
-// so a payment is never scheduled for a Saturday or Sunday.
+// Philippine nationwide non-working days (regular holidays + special non-working days)
+// when the LinkedVelocity team is NOT operating, so a payment is never scheduled on one.
+// Dates are the Manila calendar day, YYYY-MM-DD. The Ambassador terms promise the monthly
+// fee moves to "the first working day where the 1st falls on a weekend or public holiday",
+// and this set is what makes that true in code.
+//
+// UPDATE ANNUALLY from the official Presidential proclamation (add the next year before it
+// starts). Movable feasts (Holy Week, Eid, Chinese New Year) change each year — only the
+// confirmed dates are listed. In practice only early-month holidays shift a 1st-of-month
+// payout, but the full nationwide list is kept so every working-day calculation agrees.
+const PH_HOLIDAYS = new Set<string>([
+  // 2026 — Proclamation No. 1006 (regular holidays + special non-working days)
+  "2026-01-01", // New Year's Day
+  "2026-02-17", // Chinese New Year (special non-working)
+  "2026-03-20", // Eid'l Fitr (regular; date approximate until moon-sighting)
+  "2026-04-02", // Maundy Thursday
+  "2026-04-03", // Good Friday
+  "2026-04-04", // Black Saturday (special non-working)
+  "2026-04-09", // Araw ng Kagitingan
+  "2026-05-01", // Labor Day
+  "2026-05-27", // Eid'l Adha (regular; date approximate)
+  "2026-06-12", // Independence Day
+  "2026-08-21", // Ninoy Aquino Day (special non-working)
+  "2026-08-31", // National Heroes Day
+  "2026-11-01", // All Saints' Day (special non-working)
+  "2026-11-02", // All Souls' Day (special non-working)
+  "2026-11-30", // Bonifacio Day
+  "2026-12-08", // Immaculate Conception (special non-working)
+  "2026-12-24", // Christmas Eve (special non-working)
+  "2026-12-25", // Christmas Day
+  "2026-12-30", // Rizal Day
+  "2026-12-31", // Last Day of the Year (special non-working)
+  // 2027 — fixed-date nationwide holidays only (movable feasts/Eid to be added from the
+  // 2027 proclamation; the ones below are what shift a 1st-of-month payout).
+  "2027-01-01", // New Year's Day
+  "2027-02-06", // Chinese New Year (special non-working)
+  "2027-04-09", // Araw ng Kagitingan
+  "2027-05-01", // Labor Day
+  "2027-06-12", // Independence Day
+  "2027-08-21", // Ninoy Aquino Day (special non-working)
+  "2027-08-30", // National Heroes Day (last Mon of August)
+  "2027-11-01", // All Saints' Day (special non-working)
+  "2027-11-02", // All Souls' Day (special non-working)
+  "2027-11-30", // Bonifacio Day
+  "2027-12-08", // Immaculate Conception (special non-working)
+  "2027-12-24", // Christmas Eve (special non-working)
+  "2027-12-25", // Christmas Day
+  "2027-12-30", // Rizal Day
+  "2027-12-31", // Last Day of the Year (special non-working)
+]);
+
+// The Manila calendar day of a Date, as YYYY-MM-DD. Payment dates are built at noon UTC
+// from Manila-shifted components (see monthlyDueDate), so the +8h shift keeps the date on
+// the intended Manila day for the holiday lookup.
+function manilaYMD(d: Date): string {
+  const m = new Date(d.getTime() + 8 * 3600 * 1000);
+  return `${m.getUTCFullYear()}-${String(m.getUTCMonth() + 1).padStart(2, "0")}-${String(m.getUTCDate()).padStart(2, "0")}`;
+}
+
+export function isPhHoliday(d: Date): boolean {
+  return PH_HOLIDAYS.has(manilaYMD(d));
+}
+
+// Roll a date forward to the next working day when it lands on a weekend (Sat/Sun) OR a
+// Philippine public holiday, so a payment is never scheduled for a day the team is off.
+// Advances one Manila day at a time (handles a holiday landing right after a weekend, e.g.
+// the 1st on a Sunday followed by a Monday holiday → Tuesday). Capped so it always returns.
 export function nextBusinessDay(d: Date): Date {
   const r = new Date(d);
-  const day = r.getDay(); // 0 = Sun, 6 = Sat
-  if (day === 6) r.setDate(r.getDate() + 2);
-  else if (day === 0) r.setDate(r.getDate() + 1);
+  for (let i = 0; i < 31; i++) {
+    const day = new Date(r.getTime() + 8 * 3600 * 1000).getUTCDay(); // Manila weekday; 0=Sun, 6=Sat
+    if (day !== 0 && day !== 6 && !PH_HOLIDAYS.has(manilaYMD(r))) return r;
+    r.setUTCDate(r.getUTCDate() + 1);
+  }
   return r;
 }
 
