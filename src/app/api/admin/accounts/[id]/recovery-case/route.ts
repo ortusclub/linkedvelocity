@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto-creds";
 import { restrictionUpdate, type RestrictionEvent } from "@/lib/restriction";
 import { parseStoredCase, LOST_LABEL, matchApp, type Step, type StoredCase } from "@/lib/recovery-case";
+import { onboardingMailRequest } from "@/services/onboarding-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,14 @@ export const dynamic = "force-dynamic";
 // reset / GoLogin), so hand-back is where we credit the full restriction→handback window. Relist
 // (→ available) and hand-back close the case for good, archiving its steps into the restriction log.
 const schema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional(), at: z.string().max(40).optional() }),
+  z.object({ action: z.literal("add_step"), kind: z.enum(["email", "qr", "id", "form", "li", "note", "gl", "pw", "relist", "handback"]), outcome: z.enum(["ok", "fail", "pending"]), note: z.string().max(500).optional(), password: z.string().max(200).optional(), at: z.string().max(40).optional(),
+    // Hand-back only: when notifyRenter is set, email the renter the (admin-reviewed, possibly
+    // edited) back-online notice after the case closes. emailSubject/emailBody carry the exact text
+    // the admin previewed, so we send what they saw — never an auto-generated body behind their back.
+    notifyRenter: z.boolean().optional(), emailSubject: z.string().max(300).optional(), emailBody: z.string().max(6000).optional() }),
+  // Read-only: compute the deferred downtime credit + draft the renter notice so the admin can
+  // preview (and edit) it BEFORE committing the hand-back. Mutates nothing, sends nothing.
+  z.object({ action: z.literal("handback_preview") }),
   z.object({ action: z.literal("toggle_step"), kind: z.enum(["gl", "pw"]), password: z.string().max(200).optional(), noReset: z.boolean().optional() }),
   z.object({ action: z.literal("set_reason"), reason: z.string().max(200) }),
   z.object({ action: z.literal("set_poc"), poc: z.string().max(80) }),
@@ -99,6 +107,39 @@ async function closeFinal(id: string, stored: StoredCase, relist: boolean) {
   });
 }
 
+// The renter + deferred downtime credit for a hand-back, computed WITHOUT mutating — used to
+// preview the renter notice before anything is committed or sent. Shadow rentals have no real
+// renter to notify, so they're excluded (canSend ends up false).
+async function handbackContext(id: string) {
+  const acct = await prisma.linkedInAccount.findUnique({ where: { id }, select: { linkedinName: true, restrictionLog: true } });
+  const log = (Array.isArray(acct?.restrictionLog) ? acct!.restrictionLog : []) as RestrictionEvent[];
+  const start = [...log].reverse().find((e) => e.event === "restricted");
+  const downtimeMs = start ? Math.max(0, Date.now() - Date.parse(start.at)) : 0;
+  const creditedDays = downtimeMs > 0 ? Math.round(downtimeMs / 86400000) : 0;
+  const rental = await prisma.rental.findFirst({
+    where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] }, isShadow: false },
+    select: { currentPeriodEnd: true, user: { select: { email: true, fullName: true } } },
+  });
+  const newPeriodEnd = rental?.currentPeriodEnd ? new Date(new Date(rental.currentPeriodEnd).getTime() + downtimeMs) : null;
+  return { accountName: acct?.linkedinName || "your LinkedIn account", creditedDays, newPeriodEnd, renter: rental?.user ?? null };
+}
+
+// The renter-facing "account is back" notice that seeds the editable preview. House tone: lead with
+// the outcome, no hype opener, no em-dashes. The admin edits it before sending; we only ever send
+// the text they confirmed.
+function handbackEmail(o: { renterName: string | null; accountName: string; creditedDays: number; newPeriodEnd: Date | null }) {
+  const first = (o.renterName || "").trim().split(/\s+/)[0] || "there";
+  const when = o.newPeriodEnd ? o.newPeriodEnd.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" }) : null;
+  const lines = [
+    `Hi ${first},`,
+    ``,
+    `${o.accountName} is back online and ready to use again. The restriction has been cleared and the account is handed back to you.`,
+  ];
+  if (o.creditedDays > 0) lines.push(``, `We've added ${o.creditedDays} day${o.creditedDays === 1 ? "" : "s"} to your rental to cover the downtime${when ? `, so your current period now runs through ${when}` : ""}.`);
+  lines.push(``, `If anything looks off when you log back in, let me know and I'll sort it out.`, ``, `Best,`, `LinkedVelocity`);
+  return { subject: `${o.accountName} is back online`, text: lines.join("\n") };
+}
+
 const setPassword = (id: string, password: string) => prisma.linkedInAccount.update({ where: { id }, data: { accountPassword: encryptSecret(password.trim()) } });
 const persistCase = (id: string, stored: StoredCase) => prisma.linkedInAccount.update({ where: { id }, data: { recoveryCase: asJson(stored) } });
 
@@ -113,6 +154,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!acct) return NextResponse.json({ error: "Account not found" }, { status: 404 });
     const stored = parseStoredCase(acct.recoveryCase);
     stored.steps = stored.steps || [];
+
+    if (input.action === "handback_preview") {
+      const ctx = await handbackContext(id);
+      const email = ctx.renter?.email || "";
+      const canSend = z.string().email().safeParse(email).success;
+      const draft = handbackEmail({ renterName: ctx.renter?.fullName ?? null, accountName: ctx.accountName, creditedDays: ctx.creditedDays, newPeriodEnd: ctx.newPeriodEnd });
+      return NextResponse.json({
+        ok: true, canSend,
+        to: canSend ? email : null,
+        renterName: ctx.renter?.fullName ?? null,
+        accountName: ctx.accountName,
+        creditedDays: ctx.creditedDays,
+        newPeriodEnd: ctx.newPeriodEnd ? ctx.newPeriodEnd.toISOString() : null,
+        subject: draft.subject, body: draft.text,
+        ...(canSend ? {} : { reason: ctx.renter ? "no valid renter email on file" : "no active renter to notify" }),
+      });
+    }
 
     if (input.action === "set_reason") {
       stored.reason = input.reason.trim() || undefined;
@@ -241,7 +299,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const step: Step = { k: input.kind, o: input.outcome, at: stepAt, ...(input.outcome === "fail" && trimmed ? { err: trimmed } : trimmed ? { note: trimmed } : {}) };
 
     if (input.kind === "relist") { stored.steps.push(step); await closeFinal(id, stored, true); return NextResponse.json({ ok: true, relisted: true }); }
-    if (input.kind === "handback") { stored.steps.push(step); await closeFinal(id, stored, false); return NextResponse.json({ ok: true, handedBack: true }); }
+    if (input.kind === "handback") {
+      stored.steps.push(step);
+      // Capture the renter to notify BEFORE closing (the same non-shadow active rental the preview
+      // used). notifyRenter is only set after the admin reviewed the preview and chose to send.
+      let recipient = "";
+      if (input.notifyRenter) {
+        const rental = await prisma.rental.findFirst({ where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] }, isShadow: false }, select: { user: { select: { email: true } } } });
+        const email = rental?.user?.email || "";
+        if (z.string().email().safeParse(email).success) recipient = email;
+      }
+      await closeFinal(id, stored, false);
+      // The hand-back (close + credit) is already committed; a failed email must NOT roll it back or
+      // surface as a hard error, so the send is best-effort and reported via emailed/emailError.
+      let emailed: string | null = null, emailError: string | null = null;
+      if (recipient && input.emailSubject?.trim() && input.emailBody?.trim()) {
+        try {
+          await onboardingMailRequest("/emails", {
+            from: process.env.RESEND_FROM_EMAIL || "LinkedVelocity <info@linkedvelocity.com>",
+            reply_to: process.env.ADMIN_NOTIFICATION_EMAIL || "info@linkedvelocity.com",
+            to: [recipient], subject: input.emailSubject.trim(), text: input.emailBody,
+          }, `handback-${id}-${now.getTime()}`);
+          emailed = recipient;
+          const acc2 = await prisma.linkedInAccount.findUnique({ where: { id }, select: { notes: true } });
+          const noteLine = `[${now.toISOString()}] Emailed renter (${recipient}): account handed back, back-online notice sent.`;
+          await prisma.linkedInAccount.update({ where: { id }, data: { notes: acc2?.notes ? `${acc2.notes}\n${noteLine}` : noteLine } });
+        } catch (sendErr) { emailError = sendErr instanceof Error ? sendErr.message : "Email send failed"; }
+      }
+      return NextResponse.json({ ok: true, handedBack: true, emailed, ...(emailError ? { emailError } : {}) });
+    }
 
     stored.steps.push(step);
     if (input.kind === "pw" && input.password?.trim()) await setPassword(id, input.password);
