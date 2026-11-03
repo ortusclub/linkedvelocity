@@ -44,7 +44,7 @@ interface Row {
   method: string | null; rail: "wallet" | "bank" | null; dueDate: string; overdue: boolean;
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
-  paused: Pause | null; flagged: boolean;
+  paused: Pause | null; flagged: boolean; secured?: boolean;
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
@@ -605,7 +605,12 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{payee?.workEmail || r.payeeSub}</div>
           {payee && <PayeePills payee={payee} />}
         </div>
-        <div title={r.description} style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.description}</div>
+        <div style={{ minWidth: 0 }}>
+          <div title={r.description} style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.description}</div>
+          {r.kind === "setup" && r.secured !== undefined && (r.secured
+            ? <span title="Step 5 security lockdown complete in the pipeline" style={{ ...smallPill(PILLS.green.bg, PILLS.green.fg), marginTop: 3 }}>✓ Secured</span>
+            : <span title="Step 5 security checklist (signed out of other sessions · password not remembered · phone removed) isn't complete in the pipeline — safe to pay only once the account is locked down" style={{ ...smallPill(PILLS.amber.bg, PILLS.amber.fg), marginTop: 3, display: "inline-block" }}>⚠ Not locked down</span>)}
+        </div>
         <div style={{ font: `700 15px ${GRO}`, color: C.ink, textAlign: "right" }}>{money(r.amount, r.currency)}</div>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: `600 13px ${SANS}`, color: C.ink }}>{r.method || "—"}</div>

@@ -132,6 +132,11 @@ export interface DueItem {
   dueDate: string; // ISO
   overdue: boolean;
   blocked: string | null; // login issue reason — due but can't be paid until resolved
+  // Setup fees only: whether the pipeline Step-5 security lockdown is complete (signed out
+  // of other sessions, no device remembers the password, phone removed, and — for a
+  // referrer-driven "computer" onboarding — GoLogin access removed). Does NOT gate payment;
+  // it's surfaced so the console can flag a fee that's "ready" but not yet locked down.
+  secured?: boolean;
 }
 export interface ReferralPerson { name: string; url: string | null; dueDate: string; }
 export interface MarketerDue { name: string; count: number; dueCount: number; amount: number; currency: Currency; dueDate: string | null; people: ReferralPerson[]; }
@@ -196,7 +201,7 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
       accountFreshness: true, paidAt: true, monthlyPayouts: true,
       paymentMethod: true, paymentDetails: true, referredBy: true, referralSource: true, payoutCurrency: true, verifiedAt: true,
       createdAt: true, diyTier: true, status: true, accountIssue: true, onboardingMethod: true, onboardingVerified: true,
-      referralHoldReason: true,
+      referralHoldReason: true, qcChecks: true,
     },
   });
 
@@ -251,7 +256,13 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
       // owed fee still appears rather than dropping out of the digest.
       const due = setupFeeReadyDate(a.verifiedAt) || (a.onboardedAt ? new Date(a.onboardedAt) : null);
       if (due) {
-        const item: DueItem = { ...base, kind: "setup", amount: cfg.setupAmount, dueDate: due.toISOString(), overdue: due < startOfToday };
+        // Step-5 security lockdown complete? (mirrors the pipeline's `allSec`: sessionsOut +
+        // noRememberedPw + phoneRemoved always, plus gologinRemoved for "computer" onboardings.)
+        // Surfaced as a flag only — it does not gate payment.
+        const qc = (a.qcChecks && typeof a.qcChecks === "object" ? a.qcChecks as Record<string, unknown> : {});
+        const secNeeded = ["sessionsOut", "noRememberedPw", "phoneRemoved", ...(a.onboardingMethod === "computer" ? ["gologinRemoved"] : [])];
+        const secured = secNeeded.every((k) => !!qc[k]);
+        const item: DueItem = { ...base, kind: "setup", amount: cfg.setupAmount, dueDate: due.toISOString(), overdue: due < startOfToday, secured };
         if (due.getTime() <= now) setup.push(item);
         else if (due.getTime() <= horizonEnd) upcoming.push(item);
       }
