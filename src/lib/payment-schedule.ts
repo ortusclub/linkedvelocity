@@ -201,8 +201,11 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
   });
 
   // Live inventory → which onboarded owners actually have an account, and their ₱/mo.
+  // Exclude accounts that have EXITED (exitReason set — returned to owner / access lost): the
+  // owner no longer supplies a profile, so nothing is owed, even though the row lingers as
+  // status=unavailable until cleaned up.
   const accounts = await prisma.linkedInAccount.findMany({
-    where: { status: { notIn: ["removed", "retired", "under_review"] } },
+    where: { status: { notIn: ["removed", "retired", "under_review"] }, exitReason: null },
     select: { linkedinUrl: true, ambassadorPayment: true, notes: true, restrictedAt: true },
   });
   const urlToEmail = new Map<string, string>();

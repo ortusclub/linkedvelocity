@@ -231,9 +231,10 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
         monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true,
       },
     }),
-    // Live accounts for login-health flags (restricted / recovered / 2FA reset).
+    // Live accounts for the check-before-paying flags — exited accounts (exitReason set) are
+    // no longer ours, so they don't drive flags either.
     prisma.linkedInAccount.findMany({
-      where: { status: { notIn: ["removed", "retired", "under_review"] } },
+      where: { status: { notIn: ["removed", "retired", "under_review"] }, exitReason: null },
       select: { id: true, linkedinUrl: true, notes: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
     }),
   ]);
