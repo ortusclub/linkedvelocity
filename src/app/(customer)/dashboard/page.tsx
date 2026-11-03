@@ -645,6 +645,60 @@ function ProfileChangesModal({ rental, onClose, onSent }: { rental: Rental; onCl
   );
 }
 
+// Renter Dashboard v3 "Something wrong? Report it". The renter picks what's happening; the parent
+// routes a healthy-account "won't load" into the proxy-fix swap, and everything else into
+// POST /api/rentals/[id]/report (logs it + emails the team). Presentational only.
+const PR_OPTS: { k: string; l: string; d: string }[] = [
+  { k: "logged_out", l: "Logged out of LinkedIn", d: "LinkedIn signed you out in GoLogin." },
+  { k: "verification", l: "Asking for a code or ID check", d: "LinkedIn wants a verification code, email check or ID." },
+  { k: "wont_load", l: "LinkedIn won't load", d: "Pages time out, show a connection error, or act up in GoLogin." },
+  { k: "other", l: "Something else", d: "Describe it below." },
+];
+
+function ProblemReportModal({ rental, busy, onClose, onSubmit }: { rental: Rental; busy: boolean; onClose: () => void; onSubmit: (category: string, note: string) => void }) {
+  const acctName = rental.linkedinAccount.linkedinName;
+  const [cat, setCat] = useState<string>("");
+  const [note, setNote] = useState("");
+  const canSend = !!cat && !busy;
+  return (
+    <div onClick={onClose} className={jakarta.className} style={{ position: "fixed", inset: 0, background: "rgba(11,18,32,.45)", display: "grid", placeItems: "center", padding: 20, zIndex: 50, color: V.text }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 60px rgba(11,18,32,.25)" }}>
+        {/* Header */}
+        <div style={{ padding: "20px 22px 14px", display: "flex", flexDirection: "column", gap: 6, borderBottom: `1px solid ${V.line}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 800, fontSize: 19 }}>Report a problem · {acctName}</span>
+            <button onClick={onClose} style={{ marginLeft: "auto", border: "none", background: "none", fontWeight: 500, fontSize: 22, color: V.faint, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+          <span style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: V.muted }}>Tell us what&apos;s happening and the team will pick it up. Please don&apos;t try to sign in again yourself.</span>
+        </div>
+        {/* Options */}
+        <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {PR_OPTS.map((o) => {
+            const on = cat === o.k;
+            return (
+              <div key={o.k} onClick={() => setCat(o.k)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${on ? V.blue : "#e6e9ee"}`, background: on ? "#f4f7ff" : "#fff" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13.5 }}>{o.l}</span>
+                  <span style={{ fontWeight: 500, fontSize: 12, lineHeight: 1.4, color: V.muted }}>{o.d}</span>
+                </div>
+                <span style={{ flex: "none", width: 18, height: 18, borderRadius: "50%", border: `2px solid ${on ? V.blue : "#c3c9d3"}`, display: "grid", placeItems: "center" }}>
+                  {on && <span style={{ width: 8, height: 8, borderRadius: "50%", background: V.blue }} />}
+                </span>
+              </div>
+            );
+          })}
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything else we should know? (optional)" rows={2} maxLength={1000} style={{ marginTop: 4, border: "1px solid #d5dbe5", borderRadius: 9, padding: "9px 11px", fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: V.text, outline: "none", resize: "vertical", fontFamily: "inherit" }} />
+        </div>
+        {/* Footer */}
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${V.line}`, display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ border: "1px solid #d5dbe5", background: "#fff", color: V.text, borderRadius: 9, padding: "9px 14px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+          <button onClick={() => { if (canSend) onSubmit(cat, note); }} disabled={!canSend} style={{ border: "none", background: canSend ? V.blue : "#a9c0f7", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: canSend ? "pointer" : "default" }}>{busy ? "Sending…" : "Send report"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Rental {
   id: string;
   status: string;
@@ -672,6 +726,8 @@ interface Rental {
   downtimeCreditDays?: number;
   // Open self-serve proxy-fix case: "swapped" (awaiting the renter's confirm) or "escalated".
   proxyFix?: { status: string; ticketRef: string; openedAt?: string } | null;
+  // Open "Something wrong? Report it" problem report — the row shows "Reported" until sorted.
+  problemReport?: { category: string; ticketRef: string; openedAt?: string } | null;
   // Renter-requested profile edits (Renter Dashboard v3) — oldest-planned first.
   profileChanges?: Array<{
     id: string;
@@ -804,6 +860,30 @@ function DashboardContent() {
       .catch(() => {});
   };
   const dismissProxyFix = (rentalId: string) => setProxyFix((p) => { const n = { ...p }; delete n[rentalId]; return n; });
+  // "Something wrong? Report it" (Renter Dashboard v3). A "won't load" on a healthy account goes
+  // through the existing proxy-fix swap (auto-swap + confirm); everything else logs a report + emails
+  // the team, and the row shows "Reported · we're on it" until it's sorted. reportedLocal mirrors
+  // the just-sent state optimistically until the next /api/rentals refresh surfaces problemReport.
+  const [problemRental, setProblemRental] = useState<Rental | null>(null);
+  const [prBusy, setPrBusy] = useState(false);
+  const [reportedLocal, setReportedLocal] = useState<Record<string, boolean>>({});
+  const submitProblem = (category: string, note: string) => {
+    if (viewAs || !problemRental) return;
+    const rental = problemRental;
+    const acct = rental.linkedinAccount;
+    const ready = canShowRentalShareLink(rental) && !!acct.gologinShareLink;
+    // A plain proxy/loading problem on a healthy account: use the self-serve swap (best fix).
+    if (category === "wont_load" && !acct.restrictedAt && !rental.paused && rental.status === "active" && ready) {
+      setProblemRental(null);
+      reportProxy(rental);
+      return;
+    }
+    setPrBusy(true);
+    fetch(`/api/rentals/${rental.id}/report`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category, note }) })
+      .then((r) => r.json())
+      .then(() => { setReportedLocal((p) => ({ ...p, [rental.id]: true })); setProblemRental(null); setPrBusy(false); showToast("Reported — the team is on it"); refreshRentals(); })
+      .catch(() => { setPrBusy(false); showToast("Couldn't send — try again"); });
+  };
   const [ambassadorAccounts, setAmbassadorAccounts] = useState<AmbassadorAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [usdcBalance, setUsdcBalance] = useState<string>("0");
@@ -1638,7 +1718,10 @@ function DashboardContent() {
                 // Self-serve proxy fix: local override (mid-flow) wins over the persisted case.
                 const pf = proxyFix[rental.id] ?? (rental.proxyFix ? { status: rental.proxyFix.status, ticketRef: rental.proxyFix.ticketRef } : undefined);
                 const pfStatus = pf?.status; // fixing | swapped | done | escalated
-                const canReportProxy = !R && !prep && !rental.paused && rental.status === "active" && ready && !pfStatus;
+                // "Something wrong? Report it" (v3): an open report (from the API or just-sent)
+                // shows the row as reported. canReport (defined below, once pendingSetup is known)
+                // gates the entry point.
+                const reported = !!rental.problemReport || !!reportedLocal[rental.id];
                 // Paid but not live yet: the renter still has to finish GoLogin setup on their
                 // end (install + sign in with the exact email we share to). We keep auto-granting
                 // every ~30 min, so this clears itself once they've signed in — but until then we
@@ -1651,6 +1734,11 @@ function DashboardContent() {
                 // rental never flips to active, so they never got offered the link that just works).
                 const pendingSetup = !R && !prep && !rental.paused && rental.status === "pending_access" && !renterHasGoLogin && !ready;
                 const setupEmail = rental.gologinLoginEmail || "";
+                // "Something wrong? Report it" entry: any live account the renter holds (active,
+                // restricted, or paused) so they can flag a block before we've marked it. Hidden on
+                // prep/pending-setup rows, while a proxy-fix card is up, and once a report is open.
+                const canReport = !prep && !pendingSetup && !pfStatus && !reported
+                  && (rental.status === "active" || rental.status === "payment_failed" || R || !!rental.paused);
                 // Profile-change requests (v3): the pill shows on live rows only (not restricted
                 // / being-prepared / paused). Pending = planned changes still in the future.
                 const canRequestEdit = !R && !prep && !rental.paused && rental.status === "active";
@@ -1724,8 +1812,13 @@ function DashboardContent() {
                         {R && !eligible && !isWaiting && (
                           <div style={{ height: 4, maxWidth: 170, borderRadius: 4, background: "#fde3cc", overflow: "hidden" }}><div style={{ height: "100%", width: `${progress}%`, background: V.orange }} /></div>
                         )}
-                        {canReportProxy && (
-                          <button onClick={() => reportProxy(rental)} disabled={viewAs} title="LinkedIn not loading or acting up in GoLogin? Report the proxy and we'll switch this account to a fresh one." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Proxy not working? Report it</button>
+                        {canReport && (
+                          <button onClick={() => { if (!viewAs) setProblemRental(rental); }} disabled={viewAs} title="Logged out, asked for a code, or LinkedIn won't load? Tell us what's happening and we'll pick it up." style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 0 0 2px", color: V.faint, fontWeight: 600, fontSize: 12, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, textDecoration: "underline", textDecorationColor: "#c3c9d3", textUnderlineOffset: 3 }}>Something wrong? Report it</button>
+                        )}
+                        {reported && (
+                          <span style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600, fontSize: 11.5, color: V.orangeDeep }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: V.orange }} />Reported · we&apos;re on it
+                          </span>
                         )}
                         {canRequestEdit && (
                           <button onClick={() => { if (!viewAs) setProfileChangeRental(rental); }} disabled={viewAs} title="Request edits to this profile — we apply them gradually so LinkedIn doesn't restrict the account." style={{ alignSelf: "flex-start", marginTop: 3, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", border: "none", borderRadius: 999, padding: "3px 10px", fontWeight: 700, fontSize: 11.5, cursor: viewAs ? "not-allowed" : "pointer", opacity: viewAs ? 0.5 : 1, background: pillBg, color: pillFg }}>
@@ -1997,6 +2090,15 @@ function DashboardContent() {
           rental={profileChangeRental}
           onClose={() => setProfileChangeRental(null)}
           onSent={(n) => { setProfileChangeRental(null); refreshRentals(); showToast(`Request sent · ${n} change${n === 1 ? "" : "s"} planned`); }}
+        />
+      )}
+
+      {problemRental && (
+        <ProblemReportModal
+          rental={problemRental}
+          busy={prBusy}
+          onClose={() => { if (!prBusy) setProblemRental(null); }}
+          onSubmit={submitProblem}
         />
       )}
 

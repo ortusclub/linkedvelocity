@@ -45,6 +45,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // and (only if the caller opted in) notify the account owner + referrer.
     let notify: Awaited<ReturnType<typeof notifyRestrictionOwnerReferrer>> | null = null;
     if (restrict && !account.restrictedAt && updated.restrictedAt) {
+      // A renter may have flagged this account via "Something wrong? Report it" — marking it
+      // restricted means we've picked it up, so close any open reports (the row now shows the
+      // restriction flow instead of "Reported").
+      await prisma.problemReport.updateMany({
+        where: { linkedinAccountId: id, status: "open" },
+        data: { status: "resolved", resolvedAt: new Date() },
+      });
       const renters = await prisma.rental.findMany({
         where: { linkedinAccountId: id, isShadow: false, status: { in: ["active", "pending_access", "payment_failed"] } },
         select: { userId: true },
