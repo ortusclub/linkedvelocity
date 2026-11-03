@@ -99,6 +99,7 @@ export interface UnifiedPayee {
   holder: string | null;      // account-holder name on the payout method
   accounts: number;           // accounts this ambassador supplies (0 for pure referrers)
   linkedinUrls: string[];     // the LinkedIn account URL(s) this ambassador supplies
+  workEmail: string | null;   // the account's work/recovery email (shown on the row sub-line)
   nextDue: string | null;     // next monthly due date (ISO)
   note: string | null;        // hold / restriction reason, if any
   totalPaid: number;
@@ -144,7 +145,7 @@ const isWiseReceipt = (url: string | null | undefined) => !!url && /wise\.com/i.
 
 const DAY_MS = 86400000;
 
-type HealthAccount = { id: string; linkedinUrl: string | null; notes: string | null; restrictedAt: Date | null; permanentlyRestricted: boolean; twoFactorResetNeeded: boolean; restrictionLog: unknown };
+type HealthAccount = { id: string; linkedinUrl: string | null; notes: string | null; workEmail: string | null; restrictedAt: Date | null; permanentlyRestricted: boolean; twoFactorResetNeeded: boolean; restrictionLog: unknown };
 // Raw (pre-checkedAt) flag signals per owner email: unread account-inbox mail + a recent recovery.
 type RawFlags = { linkedinUrl: string | null; unreadMail: UnreadMail[]; recoveredAt: string | null; recoveryNote: string | null };
 
@@ -152,7 +153,7 @@ type RawFlags = { linkedinUrl: string | null; unreadMail: UnreadMail[]; recovere
 // account-inbox mail in the last 30 days, and a recovery in the last 14 days (with its note).
 // Account→owner mapping mirrors computePaymentsDue (notes "Owner:" / LinkedIn URL). The
 // checkedAt suppression and pause state are applied by the caller from PayoutOverride.
-async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null }[], accounts: HealthAccount[]): Promise<{ raw: Map<string, RawFlags>; urls: Map<string, string[]> }> {
+async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null }[], accounts: HealthAccount[]): Promise<{ raw: Map<string, RawFlags>; urls: Map<string, string[]>; workEmails: Map<string, string> }> {
   const urlToEmail = new Map<string, string>();
   for (const a of apps) {
     if (a.linkedinUrl) { urlToEmail.set(a.linkedinUrl, a.email); urlToEmail.set(a.linkedinUrl.replace(/\/$/, ""), a.email); }
@@ -166,12 +167,14 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
   const accEmail = new Map<string, string>();
   const emailAccounts = new Map<string, HealthAccount[]>();
   const urls = new Map<string, string[]>();   // owner email → LinkedIn account URL(s) they supply
+  const workEmails = new Map<string, string>(); // owner email → the account's work/recovery email
   for (const acc of accounts) {
     const email = ownerOf(acc);
     if (!email) continue;
     accEmail.set(acc.id, email);
     let arr = emailAccounts.get(email); if (!arr) { arr = []; emailAccounts.set(email, arr); } arr.push(acc);
     if (acc.linkedinUrl) { let u = urls.get(email); if (!u) { u = []; urls.set(email, u); } if (!u.includes(acc.linkedinUrl)) u.push(acc.linkedinUrl); }
+    if (acc.workEmail?.trim() && !workEmails.has(email)) workEmails.set(email, acc.workEmail.trim());
   }
   for (const a of apps) {
     const k = a.email.toLowerCase();
@@ -214,7 +217,7 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
     if (unreadMail.length === 0 && !recoveredAt) continue;
     raw.set(email, { linkedinUrl: urls.get(email)?.[0] || null, unreadMail, recoveredAt, recoveryNote });
   }
-  return { raw, urls };
+  return { raw, urls, workEmails };
 }
 
 export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayouts> {
@@ -235,12 +238,12 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     // no longer ours, so they don't drive flags either.
     prisma.linkedInAccount.findMany({
       where: { status: { notIn: ["removed", "retired", "under_review"] }, exitReason: null },
-      select: { id: true, linkedinUrl: true, notes: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
+      select: { id: true, linkedinUrl: true, notes: true, workEmail: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
     }),
   ]);
 
   // "Check before paying" signals per ambassador email + admin overrides (checkedAt / pause).
-  const [{ raw: rawFlagsByEmail, urls: accountUrlsByEmail }, overrideRows] = await Promise.all([
+  const [{ raw: rawFlagsByEmail, urls: accountUrlsByEmail, workEmails: workEmailByEmail }, overrideRows] = await Promise.all([
     buildPayeeFlags(apps, accounts),
     prisma.payoutOverride.findMany(),
   ]);
@@ -342,7 +345,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -382,6 +385,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
       if (!payee.flags) payee.flags = flagsByEmail.get(a.email.toLowerCase()) || null;
       if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
+      if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;

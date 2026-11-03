@@ -49,7 +49,7 @@ interface Payment { date: string | null; amount: number; kind: Kind; label: stri
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
-  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; nextDue: string | null; note: string | null;
+  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; nextDue: string | null; note: string | null;
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
@@ -299,6 +299,7 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
       <Field label="Last payment">{last ? `${money(last.amount)} · ${fmtDate(last.date)}` : "—"}</Field>
       <Field label="Total paid">{money(p.totalPaid)}</Field>
       <Field label="Contact email">{p.email || "—"}</Field>
+      <Field label="Work email">{p.workEmail || "—"}</Field>
       <Field label="Contact number">{p.phone || "—"}</Field>
     </div>
   );
@@ -458,9 +459,10 @@ function PayRun({ rows, wiseEnabled, payeeByKey, actions }: { rows: Row[]; wiseE
       // they live under the "Can't send" card instead of cluttering the pay run.
       else if (["hold", "needs_details", "manual"].includes(r.state)) return false;
       if (!needle) return true;
-      return [r.payeeName, r.payeeSub, r.description, r.method, r.referredBy].some((v) => v?.toLowerCase().includes(needle));
+      const pe = payeeByKey.get(r.payeeKey);
+      return [r.payeeName, r.payeeSub, r.description, r.method, r.referredBy, pe?.workEmail, pe?.email].some((v) => v?.toLowerCase().includes(needle));
     });
-  }, [run, q, card]);
+  }, [run, q, card, payeeByKey]);
 
   const groups = (["referral", "monthly", "setup"] as Kind[]).map((k) => {
     const gr = filtered.filter((r) => r.kind === k);
@@ -557,7 +559,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
             <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeName}</span>
           </div>
-          <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeSub}</div>
+          <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{payee?.workEmail || r.payeeSub}</div>
           {flags && <FlagPills flags={flags} />}
         </div>
         <div title={r.description} style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.description}</div>
@@ -661,7 +663,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
       if (status && status !== "all" && st !== status) return false;
       if (kind !== "all" && !p.kinds.includes(kind)) return false;
       if (!needle) return true;
-      return [p.name, p.sub, p.referredBy, p.method, p.masked, p.email, p.phone, p.holder].some((v) => v?.toLowerCase().includes(needle));
+      return [p.name, p.sub, p.referredBy, p.method, p.masked, p.email, p.workEmail, p.phone, p.holder].some((v) => v?.toLowerCase().includes(needle));
     });
   }, [withStatus, q, kind, status]);
 
@@ -703,7 +705,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                       <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                     </div>
-                    <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sub}</div>
+                    <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.workEmail || p.sub}</div>
                     {p.flags && <FlagPills flags={p.flags} />}
                   </div>
                   <span style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.referredBy || "—"}</span>
