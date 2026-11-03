@@ -227,14 +227,16 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
   // Rental status per owner — an active rental means a renter may be using the account.
   const rentalRows = accEmail.size
     ? await prisma.rental.findMany({
-        where: { linkedinAccountId: { in: [...accEmail.keys()] }, status: { in: ["active", "pending_access"] } },
-        select: { linkedinAccountId: true, createdAt: true, user: { select: { fullName: true, email: true } } },
+        // Real (external) renters only — exclude shadow rentals (e.g. the internal Ortus
+        // placeholder), which would otherwise mislabel the account's renter.
+        where: { linkedinAccountId: { in: [...accEmail.keys()] }, status: { in: ["active", "pending_access"] }, isShadow: false },
+        select: { linkedinAccountId: true, createdAt: true, user: { select: { fullName: true, email: true, company: true } } },
       })
     : [];
   const rentalByAcct = new Map<string, { renter: string; since: string }>();
   for (const r of rentalRows) {
     if (rentalByAcct.has(r.linkedinAccountId)) continue;
-    rentalByAcct.set(r.linkedinAccountId, { renter: r.user?.fullName || r.user?.email || "renter", since: r.createdAt.toISOString() });
+    rentalByAcct.set(r.linkedinAccountId, { renter: r.user?.fullName || r.user?.company || r.user?.email || "renter", since: r.createdAt.toISOString() });
   }
   const rentals = new Map<string, PayeeRental>();
   for (const [email, accs] of emailAccounts) {
