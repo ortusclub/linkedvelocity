@@ -33,19 +33,24 @@ const GROUP_DOT: Record<Kind, string> = { referral: "#7c3aed", monthly: "#12a150
 type Kind = "referral" | "setup" | "monthly";
 type State = "ready" | "upcoming" | "hold" | "needs_details" | "manual" | "paid";
 
+interface Health {
+  level: "danger" | "review"; flags: string[]; restricted: boolean;
+  recoveredAt: string | null; twoFaReset: boolean; mailCount: number; mailLatest: string | null;
+}
 interface Row {
   id: string; kind: Kind; payeeKey: string; payeeName: string; payeeSub: string | null;
   referredBy: string | null; description: string; amount: number; currency: "PHP" | "USD";
   method: string | null; rail: "wallet" | "bank" | null; dueDate: string; overdue: boolean;
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
+  health: Health | null;
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
-  email: string | null; phone: string | null; holder: string | null; accounts: number; nextDue: string | null; note: string | null;
-  totalPaid: number; lastPaidAt: string | null; history: Payment[];
+  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; nextDue: string | null; note: string | null;
+  totalPaid: number; lastPaidAt: string | null; history: Payment[]; health: Health | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
 
@@ -53,11 +58,45 @@ const money = (n: number, c: "PHP" | "USD" = "PHP") =>
   c === "USD" ? `$${(n || 0).toLocaleString()}` : new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(n || 0);
 const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 const KIND_LABEL: Record<Kind, string> = { referral: "Referral", setup: "Setup", monthly: "Monthly" };
+// Short label for a LinkedIn account URL — the /in/<handle> slug, else the bare host/path.
+const liHandle = (url: string) => {
+  const m = url.match(/\/in\/([^/?#]+)/i);
+  return m ? `in/${decodeURIComponent(m[1])}` : url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+};
 
 // ── shared atoms ────────────────────────────────────────────────────────
 function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   const p = PILLS[tone];
   return <span style={{ display: "inline-flex", alignItems: "center", font: `700 11.5px ${SANS}`, padding: "3px 10px", borderRadius: 999, background: p.bg, color: p.fg, whiteSpace: "nowrap" }}>{children}</span>;
+}
+// Compact login-health flag for the pay-run row (red = probably can't log in, amber =
+// recently recovered / unresolved security mail → eyeball before paying). Full flags on hover.
+function HealthDot({ h }: { h: Health }) {
+  const danger = h.level === "danger";
+  const c = danger ? PILLS.red : PILLS.amber;
+  const label = h.restricted ? "Restricted" : h.twoFaReset ? "2FA reset" : "Check login";
+  return (
+    <span title={h.flags.join(" · ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, font: `700 10.5px ${SANS}`, padding: "2px 8px", borderRadius: 999, background: c.bg, color: c.fg, whiteSpace: "nowrap", flexShrink: 0 }}>
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: c.dot }} />{label}
+    </span>
+  );
+}
+// Expanded "Login check" block listing every flag + a one-line prompt to verify login first.
+function HealthPanel({ h }: { h: Health }) {
+  const danger = h.level === "danger";
+  const c = danger ? PILLS.red : PILLS.amber;
+  return (
+    <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: c.bg, border: `1px solid ${c.dot}33` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: c.dot }} />
+        <span style={{ font: `800 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: c.fg }}>Login check</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 7 }}>
+        {h.flags.map((f, i) => <span key={i} style={{ font: `700 11.5px ${SANS}`, padding: "2px 9px", borderRadius: 999, background: C.card, color: c.fg, border: `1px solid ${c.dot}44` }}>{f}</span>)}
+      </div>
+      <span style={{ font: `500 12px ${SANS}`, color: C.muted }}>{danger ? "This account may not be accessible — confirm you can log in before paying." : "Recently recovered or flagged — double-check login works before paying."}</span>
+    </div>
+  );
 }
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -116,6 +155,15 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
       <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
       {nextDue && <Field label="Next payment due">{fmtDate(p.nextDue)}</Field>}
       <Field label="Accounts">{p.accounts > 0 ? String(p.accounts) : "—"}</Field>
+      {p.linkedinUrls.length > 0 && (
+        <Field label={p.linkedinUrls.length > 1 ? `LinkedIn accounts (${p.linkedinUrls.length})` : "LinkedIn account"}>
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {p.linkedinUrls.map((u, i) => (
+              <a key={i} href={u} target="_blank" rel="noreferrer" style={{ color: C.link, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{liHandle(u)} ↗</a>
+            ))}
+          </span>
+        </Field>
+      )}
       <Field label="Last payment">{last ? `${money(last.amount)} · ${fmtDate(last.date)}` : "—"}</Field>
       <Field label="Total paid">{money(p.totalPaid)}</Field>
       <Field label="Contact email">{p.email || "—"}</Field>
@@ -355,6 +403,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           <div style={{ display: "flex", alignItems: "center", gap: 6, font: `700 13.5px ${SANS}`, color: C.ink, minWidth: 0 }}>
             <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeName}</span>
+            {r.health && <HealthDot h={r.health} />}
           </div>
           <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeSub}</div>
         </div>
@@ -369,6 +418,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
       {expanded && (
         <div style={{ margin: "0 16px 16px 56px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
           <InfoGrid p={payee} amount={r.amount} />
+          {(r.health || payee?.health) && <div style={{ padding: "0 14px" }}><HealthPanel h={(r.health || payee?.health)!} /></div>}
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
             <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} />
           </div>
@@ -482,6 +532,7 @@ function AllPayees({ payees, ready }: { payees: Payee[]; ready: Row[] }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 6, font: `700 13.5px ${SANS}`, color: C.ink }}>
                       <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      {p.health && <HealthDot h={p.health} />}
                     </div>
                     <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sub}</div>
                   </div>
@@ -502,6 +553,7 @@ function AllPayees({ payees, ready }: { payees: Payee[]; ready: Row[] }) {
                   <div style={{ margin: "0 16px 16px 34px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
                     {p.note && <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, font: `500 12.5px/1.5 ${SANS}`, background: st === "restricted" ? "#fef2f2" : st === "hold" ? "#fff7ed" : C.inset, color: st === "restricted" ? "#7f1d1d" : st === "hold" ? "#9a3412" : C.ink2 }}>{p.note}</div>}
                     <InfoGrid p={p} nextDue />
+                    {p.health && <div style={{ padding: "0 14px" }}><HealthPanel h={p.health} /></div>}
                     <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
                       <PaymentRecord history={p.history} total={p.totalPaid} />
                     </div>

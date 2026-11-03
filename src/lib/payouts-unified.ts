@@ -28,6 +28,20 @@ export type ReadyState =
 
 type Entry = { paidAt?: string; amount?: number; kind?: string; by?: string | null; proofUrl?: string | null; notified?: boolean; notifiedAt?: string | null; acknowledged?: boolean; acknowledgedAt?: string | null };
 
+// Login-health flags for an ambassador's account(s), so the team can confirm the account
+// can actually be logged into before paying the owner. Surfaced only when there's something
+// to check (null otherwise). "danger" = probably can't log in now (restricted / 2FA reset /
+// danger mail); "review" = recently recovered or an unresolved security email to eyeball.
+export interface LoginHealth {
+  level: "danger" | "review";
+  flags: string[];            // short labels for the row + detail card
+  restricted: boolean;        // open or permanent LinkedIn restriction
+  recoveredAt: string | null; // most recent recovery (ISO) — verify login works
+  twoFaReset: boolean;        // 2FA reset still pending
+  mailCount: number;          // unresolved security mails (severity review/danger)
+  mailLatest: string | null;  // e.g. "New login · Nov 2"
+}
+
 export interface UnifiedReadyPayout {
   id: string;                 // stable row id, unique within a pay run
   kind: PayoutKind;
@@ -49,6 +63,7 @@ export interface UnifiedReadyPayout {
   paidAt: string | null;
   confirmed: boolean;         // payee acknowledged / confirmed receipt
   sentViaWise: boolean;       // paid and the receipt is a wise.com link
+  health: LoginHealth | null; // account login-health flags (ambassador rows only)
 }
 
 export interface UnifiedPayment {
@@ -75,11 +90,13 @@ export interface UnifiedPayee {
   phone: string | null;
   holder: string | null;      // account-holder name on the payout method
   accounts: number;           // accounts this ambassador supplies (0 for pure referrers)
+  linkedinUrls: string[];     // the LinkedIn account URL(s) this ambassador supplies
   nextDue: string | null;     // next monthly due date (ISO)
   note: string | null;        // hold / restriction reason, if any
   totalPaid: number;
   lastPaidAt: string | null;
   history: UnifiedPayment[];  // newest first
+  health: LoginHealth | null; // account login-health flags (ambassadors only)
 }
 
 export interface UnifiedPayouts {
@@ -116,21 +133,125 @@ function readyStateFor(method: string | null, details: string | null, overdue: b
 
 const isWiseReceipt = (url: string | null | undefined) => !!url && /wise\.com/i.test(url);
 
+const DAY_MS = 86400000;
+const fmtShort = (d: string | Date) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Manila" });
+const MAIL_LABEL: Record<string, string> = {
+  new_login: "New login", location_change: "New location", password_changed: "Password changed",
+  email_changed: "Email changed", name_changed: "Name changed", photo_changed: "Photo changed",
+  restriction: "Restriction notice", email_verify: "Email verify",
+};
+const mailLabel = (t: string) => MAIL_LABEL[t] || "Security email";
+
+type HealthAccount = { id: string; linkedinUrl: string | null; notes: string | null; restrictedAt: Date | null; permanentlyRestricted: boolean; twoFactorResetNeeded: boolean; restrictionLog: unknown };
+
+// Fold restriction / recovery / 2FA-reset / unresolved-security-mail signals per ambassador
+// email, so the pay run can flag "check this account logs in before you pay". Only returns an
+// entry when there's something worth checking. Recovery and mail windows are 30 days (a
+// long-stable account needs no nudge). Account→owner mapping mirrors computePaymentsDue.
+async function buildLoginHealth(apps: { email: string; linkedinUrl: string | null }[], accounts: HealthAccount[]): Promise<{ health: Map<string, LoginHealth>; urls: Map<string, string[]> }> {
+  const urlToEmail = new Map<string, string>();
+  for (const a of apps) {
+    if (a.linkedinUrl) { urlToEmail.set(a.linkedinUrl, a.email); urlToEmail.set(a.linkedinUrl.replace(/\/$/, ""), a.email); }
+  }
+  const ownerOf = (acc: HealthAccount): string | null => {
+    const m = (acc.notes || "").match(/Owner:\s*(\S+@\S+)/);
+    if (m) return m[1].replace(/\.$/, "").toLowerCase();
+    if (acc.linkedinUrl) return (urlToEmail.get(acc.linkedinUrl) || urlToEmail.get(acc.linkedinUrl.replace(/\/$/, "")) || "").toLowerCase() || null;
+    return null;
+  };
+  const accEmail = new Map<string, string>();
+  const emailAccounts = new Map<string, HealthAccount[]>();
+  const urls = new Map<string, string[]>();   // owner email → LinkedIn account URL(s) they supply
+  for (const acc of accounts) {
+    const email = ownerOf(acc);
+    if (!email) continue;
+    accEmail.set(acc.id, email);
+    let arr = emailAccounts.get(email); if (!arr) { arr = []; emailAccounts.set(email, arr); } arr.push(acc);
+    if (acc.linkedinUrl) { let u = urls.get(email); if (!u) { u = []; urls.set(email, u); } if (!u.includes(acc.linkedinUrl)) u.push(acc.linkedinUrl); }
+  }
+  // Fall back to the application's own LinkedIn URL for owners with no account-notes match.
+  for (const a of apps) {
+    const k = a.email.toLowerCase();
+    if (a.linkedinUrl && !urls.has(k)) urls.set(k, [a.linkedinUrl]);
+  }
+
+  // Unresolved security mail (needs a look before login) in the last 30 days, newest first.
+  const since = new Date(Date.now() - 30 * DAY_MS);
+  const mails = accEmail.size
+    ? await prisma.accountMailEvent.findMany({
+        where: {
+          linkedinAccountId: { in: [...accEmail.keys()] },
+          severity: { in: ["review", "danger"] },
+          status: { in: ["logged", "needs_review", "incident"] },
+          receivedAt: { gte: since },
+        },
+        select: { linkedinAccountId: true, type: true, severity: true, receivedAt: true },
+        orderBy: { receivedAt: "desc" },
+      })
+    : [];
+  const mailByEmail = new Map<string, { count: number; danger: boolean; type: string; at: Date }>();
+  for (const ev of mails) {
+    const email = accEmail.get(ev.linkedinAccountId); if (!email) continue;
+    const cur = mailByEmail.get(email);
+    if (!cur) mailByEmail.set(email, { count: 1, danger: ev.severity === "danger", type: ev.type, at: ev.receivedAt });
+    else { cur.count++; if (ev.severity === "danger") cur.danger = true; } // desc order → first seen is latest
+  }
+
+  const out = new Map<string, LoginHealth>();
+  for (const [email, accs] of emailAccounts) {
+    let restricted = false, twoFaReset = false;
+    let recoveredAt: string | null = null;
+    for (const acc of accs) {
+      if (acc.restrictedAt || acc.permanentlyRestricted) restricted = true;
+      if (acc.twoFactorResetNeeded) twoFaReset = true;
+      if (!acc.restrictedAt) {
+        const log = Array.isArray(acc.restrictionLog) ? (acc.restrictionLog as Array<{ at?: string; event?: string }>) : [];
+        const lastRec = [...log].reverse().find((e) => e.event === "recovered");
+        // Only flag RECENT recoveries (14d) — a month-stable account logs in fine and needs no nudge.
+        if (lastRec?.at && Date.now() - new Date(lastRec.at).getTime() < 14 * DAY_MS && (!recoveredAt || lastRec.at > recoveredAt)) recoveredAt = lastRec.at;
+      }
+    }
+    const mail = mailByEmail.get(email) || null;
+    const flags: string[] = [];
+    if (restricted) flags.push("Restricted");
+    if (twoFaReset) flags.push("2FA reset needed");
+    if (recoveredAt) flags.push(`Recovered ${fmtShort(recoveredAt)}`);
+    if (mail) flags.push(mailLabel(mail.type));
+    if (flags.length === 0) continue;
+    const level: "danger" | "review" = restricted || twoFaReset || mail?.danger ? "danger" : "review";
+    out.set(email, {
+      level, flags, restricted, recoveredAt, twoFaReset,
+      mailCount: mail?.count || 0, mailLatest: mail ? `${mailLabel(mail.type)} · ${fmtShort(mail.at)}` : null,
+    });
+  }
+  return { health: out, urls };
+}
+
 export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayouts> {
   const due = await computePaymentsDue(horizonDays);
 
   // Payment method/details per payee, fetched once so referral and ambassador rows can
   // both show a masked destination and a Wise rail. Referrers key by slug; ambassadors by email.
-  const [referrers, apps] = await Promise.all([
+  const [referrers, apps, accounts] = await Promise.all([
     prisma.referrer.findMany({ select: { id: true, slug: true, name: true, paymentName: true, paymentMethod: true, paymentDetails: true, email: true } }),
     prisma.ambassadorApplication.findMany({
       select: {
-        id: true, email: true, fullName: true, referredBy: true, payoutCurrency: true,
+        id: true, email: true, fullName: true, referredBy: true, payoutCurrency: true, linkedinUrl: true,
         paymentMethod: true, paymentDetails: true, payoutName: true, paypalEmail: true, wiseEmail: true,
         monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true,
       },
     }),
+    // Live accounts for login-health flags (restricted / recovered / 2FA reset).
+    prisma.linkedInAccount.findMany({
+      where: { status: { notIn: ["removed", "retired", "under_review"] } },
+      select: { id: true, linkedinUrl: true, notes: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
+    }),
   ]);
+
+  // Login-health per ambassador email, so the team can confirm an account is loggable
+  // before paying its owner. Maps each account to its owner (notes "Owner: <email>", else
+  // the application that owns the LinkedIn URL), then folds restriction/recovery/mail signals.
+  const { health: healthByEmail, urls: accountUrlsByEmail } = await buildLoginHealth(apps, accounts);
 
   // Next monthly due date per ambassador email (for the detail card).
   const nextDueByEmail = new Map<string, string>();
@@ -167,7 +288,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       payeeKey: `ref:${(r.referrerSlug || r.referrerName).toLowerCase()}`, payeeName: r.referrerName, payeeSub: r.referrerSlug,
       referredBy: null, description: r.person, amount: r.amount, currency: r.currency,
       method, details, rail: railFor(method), dueDate: r.dueDate, overdue, state, holdReason: r.holdReason ?? null,
-      receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false, health: null,
     });
   };
   for (const r of due.referralsDue) pushReferral(r, false);
@@ -186,7 +307,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       referredBy: app?.referredBy ? refNameBySlug.get(app.referredBy.trim().toLowerCase()) || app.referredBy.trim() : null,
       description: d.kind === "setup" ? "Setup fee" : "Monthly", amount: d.amount, currency: d.currency,
       method, details, rail: railFor(method), dueDate: d.dueDate, overdue: d.overdue, state, holdReason: held ? d.blocked : null,
-      receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false, health: healthByEmail.get(d.email.toLowerCase()) || null,
     });
   };
   for (const d of due.setup) pushAmb(d, true);
@@ -198,7 +319,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [] }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], health: null }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -236,6 +357,8 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       if (!payee.phone && a.contactNumber) payee.phone = a.contactNumber;
       if (!payee.holder && a.payoutName) payee.holder = a.payoutName;
       if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
+      if (!payee.health) payee.health = healthByEmail.get(a.email.toLowerCase()) || null;
+      if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
@@ -257,7 +380,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       payeeKey: `ref:${(r?.slug || p.referrerId).toLowerCase()}`, payeeName: r?.name || r?.paymentName || p.referrerId, payeeSub: r?.slug || null,
       referredBy: null, description: p.description || "Referral", amount: Number(p.amount) || 0, currency: currencyConfig(r?.slug || "").currency,
       method, details: r?.paymentDetails || null, rail: railFor(method), dueDate: iso as string, overdue: false, state: "paid", holdReason: null,
-      receipt: p.reference || null, paidAt: iso, confirmed: !!p.confirmedAt, sentViaWise: isWiseReceipt(p.reference),
+      receipt: p.reference || null, paidAt: iso, confirmed: !!p.confirmedAt, sentViaWise: isWiseReceipt(p.reference), health: null,
     });
   }
   for (const a of apps) {
@@ -273,7 +396,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
         payeeKey: `amb:${a.email.toLowerCase()}`, payeeName: a.fullName || a.email, payeeSub: a.email,
         referredBy, description: kind === "setup" ? "Setup fee" : "Monthly", amount: Number(e.amount) || 0, currency: cur,
         method, details: a.paymentDetails || null, rail: railFor(method), dueDate: e.paidAt as string, overdue: false, state: "paid", holdReason: null,
-        receipt: e.proofUrl || null, paidAt: e.paidAt || null, confirmed: !!e.acknowledged, sentViaWise: isWiseReceipt(e.proofUrl),
+        receipt: e.proofUrl || null, paidAt: e.paidAt || null, confirmed: !!e.acknowledged, sentViaWise: isWiseReceipt(e.proofUrl), health: healthByEmail.get(a.email.toLowerCase()) || null,
       });
     }
   }

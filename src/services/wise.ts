@@ -42,7 +42,13 @@ async function wiseGet(path: string, params: Record<string, string | number | un
 
 interface WiseProfile { id?: number; type?: string; businessName?: string; fullName?: string; details?: { name?: string } }
 const profileName = (p: WiseProfile | undefined) => p?.businessName ?? p?.details?.name ?? p?.fullName ?? null;
-const isBusinessType = (p: WiseProfile | undefined) => (p?.type ?? "").toLowerCase() === "business";
+// A profile is the business one if its type says so, OR it carries a business name — Wise's
+// /profiles can label the business type differently across API versions, but only business
+// profiles have a businessName / details.name (personal profiles carry first+last name).
+const isBusinessType = (p: WiseProfile | undefined) =>
+  (p?.type ?? "").toLowerCase().includes("business") ||
+  !!(p?.businessName && p.businessName.trim()) ||
+  !!(p?.details?.name && p.details.name.trim() && !p?.fullName);
 
 export interface WiseProfileLite { id: number | null; type: string | null; name: string | null }
 export interface WiseStatus {
