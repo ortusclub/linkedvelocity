@@ -103,10 +103,7 @@ export async function POST(req: NextRequest) {
     const blocked =
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
-      a.status === "retired" || a.status === "maintenance" ||
-      // Campaign pool = our own LinkedArmy outreach personas, run by hand. If the engine
-      // ever has a live warm-up/maturing campaign on one, stop it — we don't auto-warm these.
-      a.inventoryPool === "campaign";
+      a.status === "retired" || a.status === "maintenance";
 
     if (blocked) {
       if (entry && entry.ids.length) {
@@ -116,7 +113,6 @@ export async function POST(req: NextRequest) {
         const reason =
           a.status === "rented" || a.rentals.length > 0 ? "account rented"
           : a.restrictedAt || a.permanentlyRestricted ? "account restricted"
-          : a.inventoryPool === "campaign" ? "campaign pool (manual outreach)"
           : `account ${a.status}`;
         await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `Maturing stopped (auto) — ${reason}`, "system").catch(() => {});
         stopped++;
