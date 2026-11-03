@@ -201,9 +201,20 @@ export function buildCase(a: CaseAccount): { reason: string; steps: Step[] } {
   // A hand-logged email/qr step overrides the auto-derived one, so we don't show both.
   const derived = derivedSteps(a).filter((ds) => !((ds.k === "email" || ds.k === "qr") && logged.some((l) => l.k === ds.k)));
   const mail = mailDerivedSteps(a); // captured LinkedIn emails → id/form/li steps, with their real dates
-  const steps = [...derived, ...mail, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  const all = [...derived, ...mail, ...logged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   const log = asLog(a.restrictionLog);
   const lastRestricted = [...log].reverse().find((e) => e.event === "restricted");
+  // EPISODE SCOPING: when an account is restricted AGAIN after a prior recovery, the current case
+  // must reflect only the current episode — otherwise the previous episode's steps (its owner email,
+  // its LinkedIn appeal) bleed in and the case mis-derives (e.g. "chase owner, silent 8d" when it's
+  // actually a fresh restriction that needs a new appeal). So when the account is currently restricted
+  // (openSince) and the log shows a recovery that predates it, drop every step dated before the
+  // current restriction. The raw restriction_log (and the route's restricted→recovered history
+  // pairing) still carry the full history, so prior episodes remain visible — only the ACTIVE case's
+  // steps are scoped. Single-episode and mid-recovery cases keep all steps (no prior recovery to cut).
+  const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
+  const reRestricted = openSince != null && log.some((e) => e.event === "recovered" && Date.parse(e.at) < openSince);
+  const steps = reRestricted ? all.filter((s) => Date.parse(s.at) >= openSince!) : all;
   // Reason falls back to the pipeline issue flag when it carries more than the bare keyword.
   const issue = (a.accountIssue || "").trim();
   const issueReason = issue && !/^(restricted|permanent(ly)?( restricted)?)$/i.test(issue) ? issue : "";
