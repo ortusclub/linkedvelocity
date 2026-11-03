@@ -37,6 +37,7 @@ type State = "ready" | "upcoming" | "hold" | "needs_details" | "manual" | "paid"
 interface UnreadMail { from: string; subject: string; when: string }
 interface Flags { linkedinUrl: string | null; unreadMail: UnreadMail[]; recoveredAt: string | null; recoveryNote: string | null; checkedAt: string | null; flagged: boolean; }
 interface Pause { reason: string; pausedAt: string; note: string; emailed: string[]; }
+interface Rental { renterName: string | null; since: string | null; rentedCount: number; totalCount: number; }
 interface Row {
   id: string; kind: Kind; payeeKey: string; payeeName: string; payeeSub: string | null;
   referredBy: string | null; description: string; amount: number; currency: "PHP" | "USD";
@@ -49,7 +50,7 @@ interface Payment { date: string | null; amount: number; kind: Kind; label: stri
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
-  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; nextDue: string | null; note: string | null;
+  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; rental: Rental | null; nextDue: string | null; note: string | null;
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
@@ -72,15 +73,21 @@ function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   const p = PILLS[tone];
   return <span style={{ display: "inline-flex", alignItems: "center", font: `700 11.5px ${SANS}`, padding: "3px 10px", borderRadius: 999, background: p.bg, color: p.fg, whiteSpace: "nowrap" }}>{children}</span>;
 }
-// Row flag pills, under the payee sub-line: unread account mail + a recent recovery.
-function FlagPills({ flags }: { flags: Flags }) {
-  const n = flags.unreadMail.length;
-  if (!flags.flagged) return null;
-  const pill = (bg: string, fg: string): CSSProperties => ({ font: `700 11px ${SANS}`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", background: bg, color: fg });
+const smallPill = (bg: string, fg: string): CSSProperties => ({ font: `700 11px ${SANS}`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", background: bg, color: fg });
+// Row pills, under the payee sub-line: rental status (account owners, first) + unread account
+// mail + a recent recovery. Nothing renders for a plain referrer with no flags.
+function PayeePills({ payee }: { payee: Payee }) {
+  const r = payee.rental, f = payee.flags;
+  const hasFlags = !!f?.flagged;
+  if (!r && !hasFlags) return null;
+  const n = f?.unreadMail.length || 0;
   return (
     <div style={{ paddingLeft: 18, marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
-      {n > 0 && <span style={pill("#eef3fe", "#1d4ed8")}>✉ {n} new email{n === 1 ? "" : "s"}</span>}
-      {flags.recoveredAt && <span style={pill("#fff7ed", "#c2410c")}>↻ Recovered {fmtShort(flags.recoveredAt)}</span>}
+      {r && (r.rentedCount > 0
+        ? <span style={smallPill("#e7f7ee", "#0f7a3d")}>● Rented · {r.rentedCount} of {r.totalCount}</span>
+        : <span style={smallPill("#f1f3f6", "#5b6779")}>Not rented</span>)}
+      {hasFlags && n > 0 && <span style={smallPill("#eef3fe", "#1d4ed8")}>✉ {n} new email{n === 1 ? "" : "s"}</span>}
+      {hasFlags && f!.recoveredAt && <span style={smallPill("#fff7ed", "#c2410c")}>↻ Recovered {fmtShort(f!.recoveredAt)}</span>}
     </div>
   );
 }
@@ -88,7 +95,7 @@ function FlagPills({ flags }: { flags: Flags }) {
 // "Check before paying" block — first thing in an expanded panel when the payee is flagged.
 // Lists the unread account inbox mail + a recovery note, each with a jump-out link, and a
 // "Mark as checked" button. Once checked (and nothing newer), collapses to a one-line stamp.
-function CheckBlock({ flags, onMarkChecked }: { flags: Flags; onMarkChecked: () => void }) {
+function CheckBlock({ flags, rental, onMarkChecked }: { flags: Flags; rental?: Rental | null; onMarkChecked: () => void }) {
   if (!flags.flagged) {
     if (!flags.checkedAt) return null;
     return (
@@ -124,7 +131,7 @@ function CheckBlock({ flags, onMarkChecked }: { flags: Flags; onMarkChecked: () 
       {flags.recoveredAt && (
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa" }}>
           <span style={{ flex: 1, font: `500 12.5px/1.5 ${SANS}`, color: "#9a3412" }}>
-            <b>↻ Recovered {fmtShort(flags.recoveredAt)}.</b> {flags.recoveryNote ? `${flags.recoveryNote} ` : ""}Check the GoLogin profile opens and is still logged in before paying.
+            <b>↻ Recovered {fmtShort(flags.recoveredAt)}.</b> {flags.recoveryNote ? `${flags.recoveryNote} ` : ""}{rental && rental.rentedCount > 0 ? `It's rented to ${rental.renterName || "a renter"}, so the renter may be using it. ` : ""}Check the GoLogin profile opens and is still logged in before paying.
           </span>
           <a href="https://app.gologin.com/" target="_blank" rel="noopener noreferrer" style={{ font: `700 12px ${SANS}`, color: "#c2410c", whiteSpace: "nowrap" }}>Open GoLogin →</a>
         </div>
@@ -320,6 +327,12 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
       <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
       {nextDue && <Field label="Next payment due">{fmtDate(p.nextDue)}</Field>}
       <Field label="Accounts">{p.accounts > 0 ? String(p.accounts) : "—"}</Field>
+      <Field label="Rental">{
+        !p.rental ? "—"
+          : p.rental.rentedCount > 0
+            ? `Rented to ${p.rental.renterName || "renter"} · ${p.rental.rentedCount} of ${p.rental.totalCount} accounts${p.rental.since ? ` · since ${fmtDate(p.rental.since)}` : ""}`
+            : "Not rented"
+      }</Field>
       <Field label="Last payment">{last ? `${money(last.amount)} · ${fmtDate(last.date)}` : "—"}</Field>
       <Field label="Total paid">{money(p.totalPaid)}</Field>
       <Field label="Contact email">{p.email || "—"}</Field>
@@ -590,7 +603,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeName}</span>
           </div>
           <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{payee?.workEmail || r.payeeSub}</div>
-          {flags && <FlagPills flags={flags} />}
+          {payee && <PayeePills payee={payee} />}
         </div>
         <div title={r.description} style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.description}</div>
         <div style={{ font: `700 15px ${GRO}`, color: C.ink, textAlign: "right" }}>{money(r.amount, r.currency)}</div>
@@ -602,7 +615,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
       </div>
       {expanded && (
         <div style={{ margin: "0 16px 16px 56px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
-          {flags && <CheckBlock flags={flags} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
+          {flags && <CheckBlock flags={flags} rental={payee?.rental} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
           {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
           {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
           <InfoGrid p={payee} amount={r.amount} />
@@ -716,6 +729,7 @@ function ctxForPayee(p: Payee): PauseCtx {
 function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; actions: PayoutActions }) {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | Kind>("all");
+  const [rented, setRented] = useState<"all" | "yes" | "no">("all");
   const [status, setStatus] = useState<Status | "all" | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
 
@@ -736,10 +750,12 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
     return withStatus.filter(({ p, st }) => {
       if (status && status !== "all" && st !== status) return false;
       if (kind !== "all" && !p.kinds.includes(kind)) return false;
+      if (rented === "yes" && !(p.rental && p.rental.rentedCount > 0)) return false;
+      if (rented === "no" && !(p.rental && p.rental.rentedCount === 0)) return false;
       if (!needle) return true;
       return [p.name, p.sub, p.referredBy, p.method, p.masked, p.email, p.workEmail, p.phone, p.holder].some((v) => v?.toLowerCase().includes(needle));
     });
-  }, [withStatus, q, kind, status]);
+  }, [withStatus, q, kind, rented, status]);
 
   const cards = [
     { k: "all", label: "All", dot: "#2563eb", fg: "#1d4ed8", value: String(counts.all), hint: "every payee" },
@@ -761,6 +777,9 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
         <select value={kind} onChange={(e) => setKind(e.target.value as "all" | Kind)} style={{ border: `1px solid ${C.inputBorder}`, background: C.card, borderRadius: 10, padding: "9px 10px", font: `600 13px ${SANS}`, color: C.ink }}>
           <option value="all">All payout types</option><option value="referral">Referral</option><option value="monthly">Monthly</option><option value="setup">Setup</option>
         </select>
+        <select value={rented} onChange={(e) => setRented(e.target.value as "all" | "yes" | "no")} style={{ border: `1px solid ${C.inputBorder}`, background: C.card, borderRadius: 10, padding: "9px 10px", font: `600 13px ${SANS}`, color: C.ink }}>
+          <option value="all">Rented or not</option><option value="yes">Rented</option><option value="no">Not rented</option>
+        </select>
       </div>
       <div style={{ font: `500 12.5px ${SANS}`, color: C.muted, margin: "0 4px" }}><b style={{ color: C.ink, fontFamily: "var(--font-grotesk)" }}>{filtered.length}</b> of {payees.length} payees · click a name for details and payment record</div>
       <div style={{ ...cardBox, overflow: "auto" }}>
@@ -780,7 +799,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                     </div>
                     <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.workEmail || p.sub}</div>
-                    {p.flags && <FlagPills flags={p.flags} />}
+                    <PayeePills payee={p} />
                   </div>
                   <span style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.referredBy || "—"}</span>
                   <div style={{ minWidth: 0 }}>
@@ -797,7 +816,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                 </div>
                 {isOpen && (
                   <div style={{ margin: "0 16px 16px 34px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
-                    {p.flags && <CheckBlock flags={p.flags} onMarkChecked={() => actions.markChecked(p.key)} />}
+                    {p.flags && <CheckBlock flags={p.flags} rental={p.rental} onMarkChecked={() => actions.markChecked(p.key)} />}
                     {st !== "ended" && <PausePanel ctx={ctxForPayee(p)} paused={p.pause} onPause={actions.pause} onResume={() => actions.resume(p.key)} />}
                     {p.note && <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, font: `500 12.5px/1.5 ${SANS}`, background: st === "restricted" ? "#fef2f2" : st === "hold" ? "#fff7ed" : C.inset, color: st === "restricted" ? "#7f1d1d" : st === "hold" ? "#9a3412" : C.ink2 }}>{p.note}</div>}
                     <InfoGrid p={p} nextDue />
