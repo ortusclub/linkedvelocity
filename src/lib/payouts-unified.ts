@@ -76,6 +76,9 @@ export interface UnifiedReadyPayout {
   sentViaWise: boolean;       // paid and the receipt is a wise.com link
   paused: PayoutPause | null; // manual pause (console) — when set this row is held
   flagged: boolean;           // its payee has a visible "check before paying" flag
+  // Setup rows only: pipeline Step-5 security lockdown complete? undefined for non-setup /
+  // non-owed rows. Does not gate payment — the console flags "ready but not locked down".
+  secured?: boolean;
 }
 
 export interface UnifiedPayment {
@@ -368,6 +371,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       holdReason: paused ? reasonLabel(paused.reason) : held ? d.blocked : null,
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
       paused, flagged: !!flagsByEmail.get(email)?.flagged,
+      ...(d.kind === "setup" ? { secured: d.secured } : {}),
     });
   };
   for (const d of due.setup) pushAmb(d, true);
