@@ -105,6 +105,7 @@ export interface UnifiedPayee {
   linkedinUrls: string[];     // the LinkedIn account URL(s) this ambassador supplies
   workEmail: string | null;   // the account's work/recovery email (shown on the row sub-line)
   rental: PayeeRental | null; // rental status of this owner's accounts (null = referral-only payee)
+  currency: Currency;         // this payee's payout currency (USD India ambassadors etc.)
   nextDue: string | null;     // next monthly due date (ISO)
   note: string | null;        // hold / restriction reason, if any
   totalPaid: number;
@@ -374,7 +375,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, rental: null, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, rental: null, currency: "PHP", nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -390,6 +391,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const r = refById.get(p.referrerId);
     const key = `ref:${(r?.slug || p.referrerId).toLowerCase()}`;
     const payee = ensurePayee(key, r?.name || r?.paymentName || p.referrerId, r?.slug || null, "referral", r?.paymentMethod || null, r?.paymentDetails || null, null);
+    payee.currency = currencyConfig(r?.slug || "").currency;
     if (!payee.email && r?.email) payee.email = r.email;
     if (!payee.holder && r?.paymentName) payee.holder = r.paymentName;
     const amt = Number(p.amount) || 0;
@@ -416,6 +418,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
       if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
       if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
+      payee.currency = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
