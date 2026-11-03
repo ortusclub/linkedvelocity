@@ -224,19 +224,21 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
     raw.set(email, { linkedinUrl: urls.get(email)?.[0] || null, unreadMail, recoveredAt, recoveryNote });
   }
 
-  // Rental status per owner — an active rental means a renter may be using the account.
+  // Rental status per owner — a live rental means a renter may be using the account. Includes
+  // payment_failed (still rented, payment just lapsed). Labelled by the renter's company
+  // (so "Ortus Club", not a generic "info"). When an account has both a real and a shadow
+  // rental, prefer the real one (isShadow asc = false first).
   const rentalRows = accEmail.size
     ? await prisma.rental.findMany({
-        // Real (external) renters only — exclude shadow rentals (e.g. the internal Ortus
-        // placeholder), which would otherwise mislabel the account's renter.
-        where: { linkedinAccountId: { in: [...accEmail.keys()] }, status: { in: ["active", "pending_access"] }, isShadow: false },
-        select: { linkedinAccountId: true, createdAt: true, user: { select: { fullName: true, email: true, company: true } } },
+        where: { linkedinAccountId: { in: [...accEmail.keys()] }, status: { in: ["active", "pending_access", "payment_failed"] } },
+        select: { linkedinAccountId: true, createdAt: true, isShadow: true, user: { select: { fullName: true, email: true, company: true } } },
+        orderBy: [{ isShadow: "asc" }, { createdAt: "asc" }],
       })
     : [];
   const rentalByAcct = new Map<string, { renter: string; since: string }>();
   for (const r of rentalRows) {
-    if (rentalByAcct.has(r.linkedinAccountId)) continue;
-    rentalByAcct.set(r.linkedinAccountId, { renter: r.user?.fullName || r.user?.company || r.user?.email || "renter", since: r.createdAt.toISOString() });
+    if (rentalByAcct.has(r.linkedinAccountId)) continue; // first = preferred (real over shadow, earliest)
+    rentalByAcct.set(r.linkedinAccountId, { renter: r.user?.company || r.user?.fullName || r.user?.email || "renter", since: r.createdAt.toISOString() });
   }
   const rentals = new Map<string, PayeeRental>();
   for (const [email, accs] of emailAccounts) {
@@ -420,6 +422,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
       if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
       if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
+      if (!payee.accounts && payee.rental) payee.accounts = payee.rental.totalCount;
       payee.currency = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
