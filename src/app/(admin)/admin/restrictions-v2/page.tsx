@@ -217,12 +217,31 @@ const WF_MAP: Record<string, Record<string, unknown>> = {
   perma: { action: "mark_lost", outcome: "perma" }, relist: { action: "add_step", kind: "relist", outcome: "ok" }, handback: { action: "add_step", kind: "handback", outcome: "ok" },
   recovered: { action: "mark_recovered" },
 };
+type HbState = { loading: boolean; canSend: boolean; to: string | null; creditedDays: number; newPeriodEnd: string | null; accountName: string; reason?: string; subject: string; body: string };
 function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
   const [pw, setPw] = useState("");
-  const run = (id: string) => { const b = WF_MAP[id]; if (b) post(b); };
+  const [hb, setHb] = useState<HbState | null>(null);
+  // Hand-back opens the renter notice preview FIRST — nothing is committed or sent until the admin
+  // reviews (and can edit) the email and picks "Hand back + send" or "Hand back without email".
+  const openHandback = async () => {
+    setHb({ loading: true, canSend: false, to: null, creditedDays: 0, newPeriodEnd: null, accountName: "", subject: "", body: "" });
+    try {
+      const res = await fetch(`/api/admin/accounts/${r.id}/recovery-case`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "handback_preview" }) });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Could not load the preview.");
+      setHb({ loading: false, canSend: !!d.canSend, to: d.to ?? null, creditedDays: d.creditedDays || 0, newPeriodEnd: d.newPeriodEnd ?? null, accountName: d.accountName || "", reason: d.reason, subject: d.subject || "", body: d.body || "" });
+    } catch (e) { setHb(null); alert(e instanceof Error ? e.message : "Could not load the preview."); }
+  };
+  const confirmHandback = (withEmail: boolean) => {
+    const body: Record<string, unknown> = { action: "add_step", kind: "handback", outcome: "ok" };
+    if (withEmail && hb?.canSend) { body.notifyRenter = true; body.emailSubject = hb.subject; body.emailBody = hb.body; }
+    setHb(null); post(body);
+  };
+  const run = (id: string) => { if (id === "handback") { void openHandback(); return; } const b = WF_MAP[id]; if (b) post(b); };
   const toggle = (kind: "gl" | "pw", opts?: { noReset?: boolean }) => post({ action: "toggle_step", kind, ...(kind === "pw" && pw.trim() ? { password: pw.trim() } : {}), ...(opts?.noReset ? { noReset: true } : {}) });
   const bstyle = (v: string): CSSProperties => ({ border: v === "primary" ? "none" : `1px solid ${v === "danger" ? "#f3c7c7" : "#dde1e8"}`, background: v === "primary" ? "#2563eb" : "#fff", color: v === "primary" ? "#fff" : v === "danger" ? "#b91c1c" : "#0b1220", borderRadius: 8, padding: "6px 11px", font: `700 12px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" });
   return (
+    <>
     <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Recovery workflow</span>
@@ -276,6 +295,29 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
         </div>
       </div>
     </div>
+    {hb && (
+      <div onClick={() => setHb(null)} style={{ position: "fixed", inset: 0, background: "rgba(10,18,32,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(620px,96vw)", maxHeight: "90vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(10,18,32,.25)" }}>
+          <div style={{ font: `800 15px ${F_SANS}`, color: "#0b1220" }}>Hand back {hb.accountName}</div>
+          {hb.loading ? <div style={{ font: `500 13px ${F_SANS}`, color: "#5b6779" }}>Loading preview…</div> : <>
+            <div style={{ font: `500 12.5px ${F_SANS}`, color: "#5b6779", lineHeight: 1.5 }}>
+              Closes the case and credits <b>{hb.creditedDays} day{hb.creditedDays === 1 ? "" : "s"}</b> of downtime to the rental{hb.newPeriodEnd ? <> (current period extends to <b>{new Date(hb.newPeriodEnd).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" })}</b>)</> : null}.
+            </div>
+            {hb.canSend ? <>
+              <div style={{ font: `600 12px ${F_SANS}`, color: "#0b1220" }}>Email to renter <span style={{ color: "#5b6779", fontWeight: 500 }}>({hb.to})</span></div>
+              <input value={hb.subject} onChange={(e) => setHb({ ...hb, subject: e.target.value })} style={{ border: "1px solid #dde1e8", borderRadius: 8, padding: "8px 10px", font: `600 13px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
+              <textarea value={hb.body} onChange={(e) => setHb({ ...hb, body: e.target.value })} rows={11} style={{ border: "1px solid #dde1e8", borderRadius: 8, padding: "8px 10px", font: `500 12.5px ${F_SANS}`, color: "#0b1220", outline: "none", resize: "vertical", lineHeight: 1.5 }} />
+            </> : <div style={{ font: `500 12.5px ${F_SANS}`, color: "#b45309", background: "#fff7ed", border: "1px solid #f5d9b8", borderRadius: 8, padding: "8px 10px" }}>No email will be sent: {hb.reason || "no renter to notify"}.</div>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", marginTop: 2 }}>
+              <button onClick={() => setHb(null)} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 9, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Cancel</button>
+              {hb.canSend && <button onClick={() => confirmHandback(false)} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 9, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: "pointer" }}>Hand back without email</button>}
+              <button onClick={() => confirmHandback(hb.canSend)} disabled={hb.canSend && (!hb.subject.trim() || !hb.body.trim())} style={{ border: "none", background: "#2563eb", color: "#fff", borderRadius: 9, padding: "8px 13px", font: `700 12.5px ${F_SANS}`, cursor: hb.canSend && (!hb.subject.trim() || !hb.body.trim()) ? "not-allowed" : "pointer", opacity: hb.canSend && (!hb.subject.trim() || !hb.body.trim()) ? 0.5 : 1 }}>{hb.canSend ? "Hand back + send" : "Hand back"}</button>
+            </div>
+          </>}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
