@@ -582,14 +582,57 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
   );
 }
 
+interface Quote { id: string; sourceAmount: number | null; targetAmount: number | null; fee: number | null; targetCurrency: string; expirationTime: string | null; }
+// Prepare-then-tap Wise send for one row: click Send → real Wise quote (prices it, moves no
+// money) → review with a live quote timer → "Pay in Wise" to finish the payout in Wise.
+function WiseSend({ r }: { r: Row }) {
+  const [st, setSt] = useState<"idle" | "preparing" | "prepared" | "error">("idle");
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [payUrl, setPayUrl] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (st !== "prepared") return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [st]);
+
+  const prepare = async () => {
+    setSt("preparing"); setErr(null);
+    try {
+      const res = await fetch("/api/admin/payouts/wise/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: r.amount, currency: r.currency }) });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't prepare");
+      setQuote(d.quote); setPayUrl(d.payUrl || "https://wise.com/send"); setNow(Date.now()); setSt("prepared");
+    } catch (e) { setErr(e instanceof Error ? e.message : "Couldn't prepare"); setSt("error"); }
+  };
+
+  const btn = (bg: string, fg: string): CSSProperties => ({ border: "none", borderRadius: 8, padding: "7px 12px", font: `700 12.5px ${SANS}`, whiteSpace: "nowrap", cursor: "pointer", background: bg, color: fg });
+  if (st === "idle") return <button onClick={prepare} style={btn(C.ink, "#fff")}>Send {money(r.amount, r.currency)} via Wise</button>;
+  if (st === "preparing") return <span style={{ font: `600 12px ${SANS}`, color: C.muted }}>Preparing quote…</span>;
+  if (st === "error") return <><Pill tone="red">Couldn’t prepare</Pill><button onClick={prepare} style={{ ...btn(C.card, C.link), border: `1px solid ${C.inputBorder}` }}>Retry</button>{err && <span title={err} style={{ font: `500 11.5px ${SANS}`, color: C.faint, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{err}</span>}</>;
+  // prepared
+  const secs = quote?.expirationTime ? Math.max(0, Math.floor((new Date(quote.expirationTime).getTime() - now) / 1000)) : null;
+  const expired = secs !== null && secs <= 0;
+  const mmss = secs !== null ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` : "";
+  return <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", minWidth: 0 }}>
+    <span style={{ font: `500 11.5px ${SANS}`, color: C.muted, textAlign: "right" }}>
+      Payee gets {money(quote?.targetAmount ?? r.amount, r.currency)}{quote?.fee != null ? ` · fee ${money(quote.fee, r.currency)}` : ""}{quote?.sourceAmount != null ? ` · ${money(quote.sourceAmount, r.currency)} leaves balance` : ""}
+    </span>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {expired
+        ? <><Pill tone="neutral">Quote expired</Pill><button onClick={prepare} style={{ ...btn(C.card, C.link), border: `1px solid ${C.inputBorder}` }}>Get new quote</button></>
+        : <><span style={{ font: `600 11.5px ${SANS}`, color: C.faint }}>Quote valid {mmss}</span><a href={payUrl} target="_blank" rel="noopener noreferrer" style={btn("#12a150", "#fff")}>Pay in Wise →</a></>}
+    </div>
+  </div>;
+}
+
 function WiseCell({ r, wiseEnabled, onResume }: { r: Row; wiseEnabled: boolean; onResume: () => void }) {
   const link = { font: `700 12px ${SANS}`, color: C.link } as const;
   if (r.state === "ready") return <>
     {r.overdue && <Pill tone="red">Overdue</Pill>}
-    <button disabled={!wiseEnabled} title={!wiseEnabled ? "Wise sending switches on once the full-access token is added" : undefined}
-      style={{ border: "none", borderRadius: 8, padding: "7px 12px", font: `700 12.5px ${SANS}`, whiteSpace: "nowrap", cursor: wiseEnabled ? "pointer" : "not-allowed", background: wiseEnabled ? C.ink : C.countPill, color: wiseEnabled ? "#fff" : C.faint }}>
-      Send {money(r.amount, r.currency)} via Wise
-    </button>
+    {wiseEnabled
+      ? <WiseSend r={r} />
+      : <button disabled title="Wise sending switches on once the full-access token is added"
+          style={{ border: "none", borderRadius: 8, padding: "7px 12px", font: `700 12.5px ${SANS}`, whiteSpace: "nowrap", cursor: "not-allowed", background: C.countPill, color: C.faint }}>
+          Send {money(r.amount, r.currency)} via Wise
+        </button>}
   </>;
   if (r.state === "paid") return <>
     <Pill tone="green">{r.confirmed ? "Paid" : "Sent"}</Pill>
