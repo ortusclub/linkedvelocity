@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import * as gologin from "@/services/gologin";
 import { pickAvailableProxy } from "@/lib/proxy-select";
 import { testProxy } from "@/lib/proxy-verify";
+import { logProxyChange } from "@/lib/proxy-activity";
 
 // Mid-rental proxy swap for a RENTED account — the one thing provisionAccount deliberately
 // refuses to do (it bails on status === "rented"). Safe because swapping a proxy is a PATCH
@@ -85,6 +86,18 @@ export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
       proxyLocation: picked.country ?? acct.proxyLocation,
     },
   });
+
+  // Record the swap on the account's Activity feed with a date (best-effort).
+  try {
+    await logProxyChange(
+      { id: acct.id, linkedinUrl: acct.linkedinUrl, notes: acct.notes },
+      { host: old.host, port: old.port, location: acct.proxyLocation },
+      { host: next.host, port: next.port, location: picked.country ?? acct.proxyLocation },
+      "Fix-my-proxy (auto-swap)",
+    );
+  } catch (e) {
+    console.error("fixAccountProxy: proxy activity log failed", rentalId, e instanceof Error ? e.message : e);
+  }
 
   return { outcome: "swapped", newProxyHost: next.host, newProxyPort: next.port };
 }

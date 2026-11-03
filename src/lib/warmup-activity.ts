@@ -4,15 +4,16 @@ import type { Prisma } from "@/generated/prisma/client";
 const normUrl = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
 /**
- * Append a note to the owner application's Activity (outreach) log when an account's
- * warm-up flag is toggled, so starting / stopping / re-warming is auditable with a date
- * and the admin who did it. Resolves the application the same way the pipeline does, in
- * order: a self-service onboarding session pinned to this account, else the same LinkedIn
- * URL, else the "Owner: <email>" on the account's notes matched to an application's email
+ * Append a note to the owner application's Activity (outreach) log, so an account event
+ * (warm-up start/stop, a proxy change, an issue) is auditable with a date and the admin
+ * who did it. Resolves the application the same way the pipeline does, in order: a
+ * self-service onboarding session pinned to this account, else the same LinkedIn URL,
+ * else the "Owner: <email>" on the account's notes matched to an application's email
  * (the URL can be stored with a reversed or utm-tagged slug, so email is the reliable
- * fallback). Account-only inventory with no application is a silent no-op.
+ * fallback). Returns false (silent no-op) for account-only inventory with no application,
+ * so callers that need a guaranteed trail can fall back to the account's own notes.
  */
-export async function logWarmupActivity(
+export async function logAccountActivity(
   accountId: string,
   linkedinUrl: string | null,
   notes: string | null,
@@ -58,3 +59,6 @@ export async function logWarmupActivity(
   });
   return true;
 }
+
+// Back-compat alias — warm-up toggles still call this name.
+export const logWarmupActivity = logAccountActivity;
