@@ -150,8 +150,12 @@ export const levelKey = (r: Row): number => levelOf(r);
 
 // Referral-program invite status for an onboarded ambassador: which channels we can reach them
 // on, and whether the "earn on the side" referral invite has actually been sent on each.
-// A referral send (email or mobile) is logged in outreachLog with id "referral:<uuid>"
-// (see /api/admin/ambassadors/[id]/referral-invite); older entries are matched by text too.
+// A referral send is logged in outreachLog with id "referral:<uuid>". The TEXT varies by the
+// writer — the pipeline route logs "Referral invite to ambassador …"; the referral-outreach
+// page logs "Referral program invite emailed (…)" / "Referral program invite sent via …". We
+// match the id prefix (all writers use it) and these text shapes, and only EXCLUDE an explicit
+// "to referrer" nudge (same row can nudge the referrer); everything else is the ambassador
+// invite. Matching only one writer's wording was the bug that left the chip stuck forever.
 // `pending` lists only the AVAILABLE channels still un-sent, so an ambassador with no mobile
 // number doesn't flag forever — once every channel we can use has gone out, pending is empty.
 export const referralInvite = (r: Row): { hasEmail: boolean; hasMobile: boolean; emailSent: boolean; mobileSent: boolean; pending: ("email" | "mobile")[] } => {
@@ -160,9 +164,11 @@ export const referralInvite = (r: Row): { hasEmail: boolean; hasMobile: boolean;
   const hasMobile = (["whatsapp", "telegram", "viber"] as const).some((ch) => !!contactLink(ch, c[ch], ""));
   let emailSent = false, mobileSent = false;
   for (const e of r.outreachLog || []) {
-    // Only invites to the AMBASSADOR count here (the panel can also nudge the referrer, which
-    // logs on this same row); referral entries read "Referral invite to ambassador …".
-    if (!(e.text || "").startsWith("Referral invite to ambassador")) continue;
+    const text = e.text || "";
+    const isReferral = String(e.id || "").startsWith("referral:") || /^referral (program )?invite\b/i.test(text) || text.startsWith("Referral invite to ");
+    if (!isReferral) continue;
+    // A nudge sent to the REFERRER (not the ambassador) doesn't count toward this chip.
+    if (text.startsWith("Referral invite to referrer")) continue;
     if (e.ch === "email") emailSent = true;
     else if (e.ch === "whatsapp" || e.ch === "telegram" || e.ch === "viber") mobileSent = true;
   }

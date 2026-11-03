@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { refFromCookieHeader, writeRefCookie } from "@/lib/referral-cookie";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -198,8 +199,8 @@ export default function BecomeAmbassadorPage() {
     try {
       const sp = new URLSearchParams(window.location.search);
       const fromUrl = sp.get("ref") || "";
-      if (fromUrl) sessionStorage.setItem("lv_ref", fromUrl);
-      const ref = fromUrl || sessionStorage.getItem("lv_ref") || "";
+      if (fromUrl) { sessionStorage.setItem("lv_ref", fromUrl); writeRefCookie(fromUrl); }
+      const ref = fromUrl || sessionStorage.getItem("lv_ref") || refFromCookieHeader(document.cookie) || "";
       setCurrencyKey(`ambassador:${ref || "direct"}`);
       if (ref) {
         setForm((prev) => ({
