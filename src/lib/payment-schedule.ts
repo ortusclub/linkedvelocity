@@ -170,6 +170,15 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const horizonEnd = now + horizonDays * DAY;
 
+  // A payment date (built at noon UTC — see monthlyDueDate) becomes payable from the START
+  // of its Manila working day (00:00 PHT), not noon UTC / 8pm PHT. The team pays in the
+  // morning, so gate "due now" on the Manila day beginning — otherwise a payout dated today
+  // stays hidden as "upcoming" until the evening. Display/email keep the noon-UTC date.
+  const payableFrom = (d: Date): number => {
+    const man = new Date(d.getTime() + 8 * 3600 * 1000);
+    return Date.UTC(man.getUTCFullYear(), man.getUTCMonth(), man.getUTCDate()) - 8 * 3600 * 1000;
+  };
+
   const apps = await prisma.ambassadorApplication.findMany({
     // Payment comes BEFORE the "onboarded" flip — the team pays the owner first, then marks
     // onboarded as the "paid" marker. So the schedule must surface a MATURED account (passed
@@ -254,7 +263,7 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
     const nextDue = monthlyDueDate(setupPaidDate(a.paidAt, a.monthlyPayouts), paidCount);
     if (nextDue) {
       const item: DueItem = { ...base, kind: "monthly", amount: monthlyAmount, dueDate: nextDue.toISOString(), overdue: nextDue < startOfToday };
-      if (nextDue.getTime() <= now) monthly.push(item);
+      if (payableFrom(nextDue) <= now) monthly.push(item);
       else if (nextDue.getTime() <= horizonEnd) upcoming.push(item);
     }
   }
