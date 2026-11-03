@@ -7,7 +7,8 @@
 // /api/admin/payouts/unified. Wise send lights up when WISE_API_TOKEN_FULL is set
 // (wiseEnabled) and the prepare/send routes are deployed.
 
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { PAUSE_REASONS, REASON_LABEL, reasonLabel, reasonIsRestricted, ownerPauseEmail, type PauseReason } from "@/lib/payout-pause";
 
 // Fonts: next/font exposes Plus Jakarta Sans as --font-sans and Space Grotesk as
 // --font-grotesk on the admin subtree; the literal names are fallbacks.
@@ -33,71 +34,206 @@ const GROUP_DOT: Record<Kind, string> = { referral: "#7c3aed", monthly: "#12a150
 type Kind = "referral" | "setup" | "monthly";
 type State = "ready" | "upcoming" | "hold" | "needs_details" | "manual" | "paid";
 
-interface Health {
-  level: "danger" | "review"; flags: string[]; restricted: boolean;
-  recoveredAt: string | null; twoFaReset: boolean; mailCount: number; mailLatest: string | null;
-}
+interface UnreadMail { from: string; subject: string; when: string }
+interface Flags { linkedinUrl: string | null; unreadMail: UnreadMail[]; recoveredAt: string | null; recoveryNote: string | null; checkedAt: string | null; flagged: boolean; }
+interface Pause { reason: string; pausedAt: string; note: string; emailed: string[]; }
 interface Row {
   id: string; kind: Kind; payeeKey: string; payeeName: string; payeeSub: string | null;
   referredBy: string | null; description: string; amount: number; currency: "PHP" | "USD";
   method: string | null; rail: "wallet" | "bank" | null; dueDate: string; overdue: boolean;
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
-  health: Health | null;
+  paused: Pause | null; flagged: boolean;
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
   email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; nextDue: string | null; note: string | null;
-  totalPaid: number; lastPaidAt: string | null; history: Payment[]; health: Health | null;
+  totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
+interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; }
 
 const money = (n: number, c: "PHP" | "USD" = "PHP") =>
   c === "USD" ? `$${(n || 0).toLocaleString()}` : new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(n || 0);
 const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 const KIND_LABEL: Record<Kind, string> = { referral: "Referral", setup: "Setup", monthly: "Monthly" };
-// Short label for a LinkedIn account URL — the /in/<handle> slug, else the bare host/path.
-const liHandle = (url: string) => {
-  const m = url.match(/\/in\/([^/?#]+)/i);
-  return m ? `in/${decodeURIComponent(m[1])}` : url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
-};
+// LinkedIn URL shown without the https://www. prefix, e.g. linkedin.com/in/jane-doe.
+const linkedinLabel = (url: string) => url.replace(/^https?:\/\/(www\.)?/i, "").replace(/\?.*$/, "").replace(/\/$/, "");
+// Short date, no year — "Oct 29" (Manila), for the flag pills / check block.
+const fmtShort = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Manila" }) : "";
+const first = (name: string | null | undefined) => (name || "there").trim().split(/\s+/)[0] || "there";
+const KIND_EMAIL: Record<Kind, string> = { monthly: "monthly", setup: "setup fee", referral: "referral" };
 
 // ── shared atoms ────────────────────────────────────────────────────────
 function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
   const p = PILLS[tone];
   return <span style={{ display: "inline-flex", alignItems: "center", font: `700 11.5px ${SANS}`, padding: "3px 10px", borderRadius: 999, background: p.bg, color: p.fg, whiteSpace: "nowrap" }}>{children}</span>;
 }
-// Compact login-health flag for the pay-run row (red = probably can't log in, amber =
-// recently recovered / unresolved security mail → eyeball before paying). Full flags on hover.
-function HealthDot({ h }: { h: Health }) {
-  const danger = h.level === "danger";
-  const c = danger ? PILLS.red : PILLS.amber;
-  const label = h.restricted ? "Restricted" : h.twoFaReset ? "2FA reset" : "Check login";
+// Row flag pills, under the payee sub-line: unread account mail + a recent recovery.
+function FlagPills({ flags }: { flags: Flags }) {
+  const n = flags.unreadMail.length;
+  if (!flags.flagged) return null;
+  const pill = (bg: string, fg: string): CSSProperties => ({ font: `700 11px ${SANS}`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", background: bg, color: fg });
   return (
-    <span title={h.flags.join(" · ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, font: `700 10.5px ${SANS}`, padding: "2px 8px", borderRadius: 999, background: c.bg, color: c.fg, whiteSpace: "nowrap", flexShrink: 0 }}>
-      <span style={{ width: 6, height: 6, borderRadius: 999, background: c.dot }} />{label}
-    </span>
-  );
-}
-// Expanded "Login check" block listing every flag + a one-line prompt to verify login first.
-function HealthPanel({ h }: { h: Health }) {
-  const danger = h.level === "danger";
-  const c = danger ? PILLS.red : PILLS.amber;
-  return (
-    <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: c.bg, border: `1px solid ${c.dot}33` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
-        <span style={{ width: 7, height: 7, borderRadius: 999, background: c.dot }} />
-        <span style={{ font: `800 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: c.fg }}>Login check</span>
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 7 }}>
-        {h.flags.map((f, i) => <span key={i} style={{ font: `700 11.5px ${SANS}`, padding: "2px 9px", borderRadius: 999, background: C.card, color: c.fg, border: `1px solid ${c.dot}44` }}>{f}</span>)}
-      </div>
-      <span style={{ font: `500 12px ${SANS}`, color: C.muted }}>{danger ? "This account may not be accessible — confirm you can log in before paying." : "Recently recovered or flagged — double-check login works before paying."}</span>
+    <div style={{ paddingLeft: 18, marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {n > 0 && <span style={pill("#eef3fe", "#1d4ed8")}>✉ {n} new email{n === 1 ? "" : "s"}</span>}
+      {flags.recoveredAt && <span style={pill("#fff7ed", "#c2410c")}>↻ Recovered {fmtShort(flags.recoveredAt)}</span>}
     </div>
   );
 }
+
+// "Check before paying" block — first thing in an expanded panel when the payee is flagged.
+// Lists the unread account inbox mail + a recovery note, each with a jump-out link, and a
+// "Mark as checked" button. Once checked (and nothing newer), collapses to a one-line stamp.
+function CheckBlock({ flags, onMarkChecked }: { flags: Flags; onMarkChecked: () => void }) {
+  if (!flags.flagged) {
+    if (!flags.checkedAt) return null;
+    return (
+      <div style={{ padding: "8px 14px", borderBottom: `1px solid ${C.divider}`, font: `600 12px ${SANS}`, color: "#0f7a3d" }}>
+        ✓ Checked {fmtShort(flags.checkedAt)} · inbox and GoLogin reviewed
+      </div>
+    );
+  }
+  const n = flags.unreadMail.length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", borderBottom: `1px solid ${C.divider}`, background: "#f8faff" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ flex: 1, font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#1d4ed8" }}>Check before paying</span>
+        <button onClick={onMarkChecked} style={{ border: `1px solid ${C.inputBorder}`, background: C.card, color: C.ink, borderRadius: 8, padding: "6px 11px", font: `600 12px ${SANS}`, cursor: "pointer" }}>✓ Mark as checked</button>
+      </div>
+      {n > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1, font: `700 13px ${SANS}`, color: C.ink }}>✉ {n} new email{n === 1 ? "" : "s"} in the account inbox</span>
+            <a href="/admin/inventory-v2" target="_blank" rel="noopener noreferrer" style={{ font: `700 12px ${SANS}`, color: C.link }}>Open in Inventory →</a>
+          </div>
+          <div style={{ border: "1px solid #dfe6f5", borderRadius: 10, overflow: "hidden", background: C.card }}>
+            {flags.unreadMail.map((m, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr) 90px", gap: 12, alignItems: "center", padding: "8px 12px", borderTop: i ? `1px solid ${C.divider}` : "none", font: `500 12.5px ${SANS}`, color: C.ink2 }}>
+                <span style={{ fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.from}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.subject}</span>
+                <span style={{ textAlign: "right", color: C.faint }}>{fmtShort(m.when)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {flags.recoveredAt && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa" }}>
+          <span style={{ flex: 1, font: `500 12.5px/1.5 ${SANS}`, color: "#9a3412" }}>
+            <b>↻ Recovered {fmtShort(flags.recoveredAt)}.</b> {flags.recoveryNote ? `${flags.recoveryNote} ` : ""}Check the GoLogin profile opens and is still logged in before paying.
+          </span>
+          <a href="https://app.gologin.com/" target="_blank" rel="noopener noreferrer" style={{ font: `700 12px ${SANS}`, color: "#c2410c", whiteSpace: "nowrap" }}>Open GoLogin →</a>
+        </div>
+      )}
+    </div>
+  );
+}
+// Context the Pause form needs to compose the owner email + know who can be notified.
+interface PauseCtx { payeeKey: string; ownerFirst: string; ownerEmail: string | null; referrerFirst: string | null; kind: string; amt: string; dest: string; }
+interface PausePayload { payeeKey: string; reason: PauseReason; notifyOwner: boolean; notifyReferrer: boolean; ownerEmailBody: string | null; }
+
+function emailedLine(emailed: string[]): string {
+  const who = emailed.filter((e) => e === "owner" || e === "referrer").map((e) => e === "owner" ? "owner" : "referrer");
+  if (who.length === 0) return "";
+  return ` Emailed ${who.join(" and ")}.`;
+}
+
+// Pause / resume a payout, with an optional templated email to the owner (editable) and a
+// heads-up to the referrer. Idle strip → form → paused strip. Form state is local to the row.
+function PausePanel({ ctx, paused, onPause, onResume }: { ctx: PauseCtx; paused: Pause | null; onPause: (p: PausePayload) => void; onResume: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState<PauseReason | "">("");
+  const [notifyOwner, setNotifyOwner] = useState(true);
+  const [notifyReferrer, setNotifyReferrer] = useState(false);
+  const [body, setBody] = useState<string | null>(null); // null = use the reason's template
+
+  // State C — already paused.
+  if (paused) {
+    const red = reasonIsRestricted(paused.reason);
+    const bg = red ? "#fef2f2" : "#fff7ed", fg = red ? "#7f1d1d" : "#9a3412";
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, background: bg, flexWrap: "wrap" }}>
+        <span style={{ flex: 1, minWidth: 220, font: `500 12.5px/1.45 ${SANS}`, color: fg }}>
+          <b>Paused · {reasonLabel(paused.reason)}</b> since {fmtDate(paused.pausedAt)}. {paused.note}{emailedLine(paused.emailed)}
+        </span>
+        <button onClick={onResume} style={secBtn}>Resume payout</button>
+      </div>
+    );
+  }
+
+  // State A — idle.
+  if (!open) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, flexWrap: "wrap" }}>
+        <span style={{ flex: 1, minWidth: 220, font: `500 12.5px ${SANS}`, color: C.muted }}>Restricted, can&apos;t log in, or account inaccessible? Pause the payout so it isn&apos;t sent.</span>
+        <button onClick={() => setOpen(true)} style={{ background: "#fffbeb", border: "1px solid #f0c36d", color: "#92400e", borderRadius: 8, padding: "6px 12px", font: `700 12px ${SANS}`, cursor: "pointer" }}>Pause payout</button>
+      </div>
+    );
+  }
+
+  // State B — the form.
+  const template = reason ? ownerPauseEmail(reason, { first: ctx.ownerFirst, kind: ctx.kind, amt: ctx.amt, dest: ctx.dest }) : null;
+  const bodyVal = body ?? template?.body ?? "";
+  const pickReason = (r: PauseReason) => { setReason(r); setBody(null); };
+  const confirmLabel = !notifyOwner && !notifyReferrer ? "Pause payout"
+    : notifyOwner && notifyReferrer ? "Pause & email owner + referrer"
+    : notifyOwner ? "Pause & email owner" : "Pause & email referrer";
+  const canConfirm = !!reason;
+  const submit = () => { if (!reason) return; onPause({ payeeKey: ctx.payeeKey, reason, notifyOwner: notifyOwner && !!ctx.ownerEmail, notifyReferrer: notifyReferrer && !!ctx.referrerFirst, ownerEmailBody: notifyOwner ? bodyVal : null }); };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", borderBottom: `1px solid ${C.divider}`, background: "#fffbeb" }}>
+      <span style={{ font: `700 13px ${SANS}`, color: "#92400e" }}>What&apos;s wrong?</span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+        {PAUSE_REASONS.map((r) => {
+          const on = reason === r;
+          return <button key={r} onClick={() => pickReason(r)} style={{ background: C.card, border: `1.5px solid ${on ? "#92400e" : C.border}`, color: on ? "#92400e" : C.ink2, borderRadius: 999, padding: "5px 12px", font: `700 12.5px ${SANS}`, cursor: "pointer" }}>{REASON_LABEL[r]}</button>;
+        })}
+      </div>
+
+      {reason && (
+        <>
+          <span style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#92400e" }}>Let them know</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <ToggleChip on={notifyOwner} onClick={() => setNotifyOwner((v) => !v)} label="Email owner" sub={ctx.ownerEmail || ""} />
+            {ctx.referrerFirst && <ToggleChip on={notifyReferrer} onClick={() => setNotifyReferrer((v) => !v)} label="Email referrer" sub={ctx.referrerFirst} />}
+          </div>
+
+          {notifyOwner && ctx.ownerEmail && template && (
+            <div style={{ background: C.card, border: "1px solid #f0dca8", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "8px 12px", borderBottom: "1px solid #f5ebcf", font: `600 12.5px ${SANS}`, color: C.ink }}>
+                <span style={{ color: C.faint }}>Subject</span> {template.subject}
+              </div>
+              <textarea value={bodyVal} onChange={(e) => setBody(e.target.value)} rows={6} style={{ width: "100%", boxSizing: "border-box", border: "none", outline: "none", resize: "vertical", padding: "10px 12px", font: `500 13px/1.55 ${SANS}`, color: C.ink }} />
+            </div>
+          )}
+          {notifyReferrer && ctx.referrerFirst && (
+            <span style={{ font: `500 12px ${SANS}`, color: "#92400e" }}>{ctx.referrerFirst} gets a short heads-up: “Heads up: {ctx.ownerFirst}&apos;s payout is on hold”</span>
+          )}
+        </>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ flex: 1, minWidth: 200, font: `500 12px ${SANS}`, color: "#92400e" }}>Nothing is sent while paused. It shows as On hold or Restricted in All payees until you resume it.</span>
+        <button onClick={() => { setOpen(false); setReason(""); setBody(null); }} style={secBtn}>Cancel</button>
+        <button onClick={submit} disabled={!canConfirm} style={{ background: canConfirm ? "#92400e" : "#d6c9a8", color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", font: `700 12px ${SANS}`, cursor: canConfirm ? "pointer" : "not-allowed" }}>{confirmLabel}</button>
+      </div>
+    </div>
+  );
+}
+function ToggleChip({ on, onClick, label, sub }: { on: boolean; onClick: () => void; label: string; sub: string }) {
+  return (
+    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: C.card, border: `1.5px solid ${on ? "#92400e" : C.border}`, borderRadius: 999, padding: "5px 12px 5px 8px", font: `700 12.5px ${SANS}`, color: C.ink, cursor: "pointer" }}>
+      <span style={{ width: 14, height: 14, borderRadius: 4, border: `1.5px solid ${on ? "#92400e" : C.border}`, background: on ? "#92400e" : C.card, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "700 10px sans-serif" }}>{on ? "✓" : ""}</span>
+      {label}{sub && <span style={{ font: `500 12px ${SANS}`, color: C.muted }}>{sub}</span>}
+    </button>
+  );
+}
+const secBtn: CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", color: "#0b1220", borderRadius: 8, padding: "6px 12px", font: `700 12px ${SANS}`, cursor: "pointer" };
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
@@ -150,20 +286,16 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(210px,1fr))", gap: "14px 24px", padding: 14 }}>
       <Field label="Owner (ambassador)">{p.name}</Field>
+      <Field label="LinkedIn">
+        {p.linkedinUrls[0]
+          ? <a href={p.linkedinUrls[0]} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ font: `600 13.5px ${SANS}`, color: C.link, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{linkedinLabel(p.linkedinUrls[0])} ↗</a>
+          : "—"}
+      </Field>
       <Field label="Referred by">{p.referredBy || "—"}</Field>
       <Field label="Payment method">{[p.method, p.masked, p.holder].filter(Boolean).join(" · ") || "—"}</Field>
       <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
       {nextDue && <Field label="Next payment due">{fmtDate(p.nextDue)}</Field>}
       <Field label="Accounts">{p.accounts > 0 ? String(p.accounts) : "—"}</Field>
-      {p.linkedinUrls.length > 0 && (
-        <Field label={p.linkedinUrls.length > 1 ? `LinkedIn accounts (${p.linkedinUrls.length})` : "LinkedIn account"}>
-          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {p.linkedinUrls.map((u, i) => (
-              <a key={i} href={u} target="_blank" rel="noreferrer" style={{ color: C.link, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{liHandle(u)} ↗</a>
-            ))}
-          </span>
-        </Field>
-      )}
       <Field label="Last payment">{last ? `${money(last.amount)} · ${fmtDate(last.date)}` : "—"}</Field>
       <Field label="Total paid">{money(p.totalPaid)}</Field>
       <Field label="Contact email">{p.email || "—"}</Field>
@@ -200,14 +332,21 @@ export default function PayoutsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"run" | "all">("run");
 
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/admin/payouts/unified")
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then((d) => { if (alive) setData(d); })
-      .catch((e) => { if (alive) setErr(e.message || "Failed to load"); });
-    return () => { alive = false; };
-  }, []);
+  const load = useCallback(() => fetch("/api/admin/payouts/unified")
+    .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+    .then((d) => setData(d))
+    .catch((e) => setErr(e.message || "Failed to load")), []);
+  useEffect(() => { load(); }, [load]);
+
+  // Console actions — POST then reload so row state (hold/flags) reflects the server truth.
+  const actions: PayoutActions = useMemo(() => {
+    const post = (path: string, body: object) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => load()).catch(() => {});
+    return {
+      markChecked: (payeeKey) => void post("/api/admin/payouts/mark-checked", { payeeKey }),
+      pause: (p) => void post("/api/admin/payouts/pause", p),
+      resume: (payeeKey) => void post("/api/admin/payouts/resume", { payeeKey }),
+    };
+  }, [load]);
 
   const payeeByKey = useMemo(() => new Map((data?.payees || []).map((p) => [p.key, p])), [data]);
   const runCount = (data?.ready || []).filter((r) => r.state !== "upcoming").length;
@@ -251,8 +390,8 @@ export default function PayoutsPage() {
       {err && <div style={{ padding: 16, borderRadius: 12, background: PILLS.red.bg, color: PILLS.red.fg, font: `600 13px ${SANS}` }}>Couldn’t load payouts: {err}</div>}
       {!data && !err && <div style={{ padding: 40, textAlign: "center", color: C.faint, font: `500 14px ${SANS}` }}>Loading…</div>}
 
-      {data && tab === "run" && <PayRun rows={data.ready} wiseEnabled={data.wiseEnabled} payeeByKey={payeeByKey} />}
-      {data && tab === "all" && <AllPayees payees={data.payees} ready={data.ready} />}
+      {data && tab === "run" && <PayRun rows={data.ready} wiseEnabled={data.wiseEnabled} payeeByKey={payeeByKey} actions={actions} />}
+      {data && tab === "all" && <AllPayees payees={data.payees} ready={data.ready} actions={actions} />}
     </div>
   );
 }
@@ -281,8 +420,8 @@ function StatCards({ cards, active, onPick }: { cards: { k: string; label: strin
 }
 
 // ── Tab A: This pay run ─────────────────────────────────────────────────
-type RunCard = "owed" | "ready" | "sent" | "failed" | "cant";
-function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: boolean; payeeByKey: Map<string, Payee> }) {
+type RunCard = "owed" | "flag" | "ready" | "sent" | "failed" | "cant";
+function PayRun({ rows, wiseEnabled, payeeByKey, actions }: { rows: Row[]; wiseEnabled: boolean; payeeByKey: Map<string, Payee>; actions: PayoutActions }) {
   const [q, setQ] = useState("");
   const [card, setCard] = useState<RunCard | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -292,6 +431,7 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
   const run = useMemo(() => rows.filter((r) => r.state !== "upcoming"), [rows]);
   const inCard = (r: Row, c: RunCard) => {
     if (c === "owed") return ["ready", "manual", "needs_details"].includes(r.state); // held payouts aren't owed this cycle — they're under Can't send
+    if (c === "flag") return r.flagged && !["paid", "hold", "needs_details", "manual"].includes(r.state); // flagged, excl. sent + can't-send
     if (c === "ready") return r.state === "ready";
     if (c === "sent") return r.state === "paid" && r.sentViaWise;
     if (c === "failed") return false;
@@ -303,6 +443,7 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
     const cnt = (f: (r: Row) => boolean) => run.filter(f).length;
     return {
       owed: { t: sum((r) => inCard(r, "owed")), n: cnt((r) => inCard(r, "owed")) },
+      flag: { n: cnt((r) => inCard(r, "flag")) },
       ready: { t: sum((r) => inCard(r, "ready")), n: cnt((r) => inCard(r, "ready")) },
       sent: { t: sum((r) => inCard(r, "sent")), n: cnt((r) => inCard(r, "sent")) },
       cant: { n: cnt((r) => inCard(r, "cant")), miss: cnt((r) => r.state === "needs_details"), man: cnt((r) => r.state === "manual"), hold: cnt((r) => r.state === "hold") },
@@ -333,6 +474,7 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
 
   const cards = [
     { k: "owed", label: "Owed this cycle", dot: "#2563eb", fg: "#1d4ed8", value: money(stats.owed.t), hint: `${stats.owed.n} payout${stats.owed.n === 1 ? "" : "s"}` },
+    { k: "flag", label: "Check first", dot: "#7c3aed", fg: "#6d28d9", value: String(stats.flag.n), hint: "new emails or recently recovered" },
     { k: "ready", label: "Ready to send", dot: "#ca8a04", fg: "#a16207", value: money(stats.ready.t), hint: `${stats.ready.n} payout${stats.ready.n === 1 ? "" : "s"}` },
     { k: "sent", label: "Sent via Wise", dot: "#12a150", fg: "#0f7a3d", value: money(stats.sent.t), hint: `${stats.sent.n} sent · receipts emailed` },
     { k: "failed", label: "Failed", dot: "#dc2626", fg: "#b91c1c", value: money(0), hint: "0 to retry" },
@@ -377,7 +519,7 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
                   <span style={{ marginLeft: "auto", font: `700 13.5px ${GRO}`, color: C.ink }}>{money(g.total)}</span>
                 </div>
                 {gOpen && g.rows.map((r) => (
-                  <RunRow key={r.id} r={r} colTemplate={colTemplate} wiseEnabled={wiseEnabled} selected={sel.has(r.id)} onToggleSel={() => toggleSel(r.id)} expanded={open.has(r.id)} onToggleOpen={() => toggleOpen(r.id)} payee={payeeByKey.get(r.payeeKey)} />
+                  <RunRow key={r.id} r={r} colTemplate={colTemplate} wiseEnabled={wiseEnabled} selected={sel.has(r.id)} onToggleSel={() => toggleSel(r.id)} expanded={open.has(r.id)} onToggleOpen={() => toggleOpen(r.id)} payee={payeeByKey.get(r.payeeKey)} actions={actions} />
                 ))}
               </div>
             );
@@ -394,7 +536,18 @@ function PayRun({ rows, wiseEnabled, payeeByKey }: { rows: Row[]; wiseEnabled: b
 }
 const sumKind = (rows: Row[], k: Kind) => rows.filter((r) => r.kind === k).reduce((s, r) => s + r.amount, 0);
 
-function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, onToggleOpen, payee }: { r: Row; colTemplate: string; wiseEnabled: boolean; selected: boolean; onToggleSel: () => void; expanded: boolean; onToggleOpen: () => void; payee: Payee | undefined }) {
+function ctxForRow(r: Row, payee?: Payee): PauseCtx {
+  return {
+    payeeKey: r.payeeKey, ownerFirst: first(r.payeeName),
+    ownerEmail: payee?.email || (r.payeeSub?.includes("@") ? r.payeeSub : null),
+    referrerFirst: r.kind !== "referral" && r.referredBy ? first(r.referredBy) : null,
+    kind: KIND_EMAIL[r.kind], amt: money(r.amount, r.currency),
+    dest: [r.method, r.masked].filter(Boolean).join(" · ") || "your account",
+  };
+}
+function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, onToggleOpen, payee, actions }: { r: Row; colTemplate: string; wiseEnabled: boolean; selected: boolean; onToggleSel: () => void; expanded: boolean; onToggleOpen: () => void; payee: Payee | undefined; actions: PayoutActions }) {
+  const flags = payee?.flags || null;
+  const canPause = ["ready", "needs_details", "manual", "hold"].includes(r.state);
   return (
     <div style={{ borderBottom: `1px solid ${C.divider}` }}>
       <div style={{ display: "grid", gridTemplateColumns: colTemplate, gap: 12, alignItems: "center", padding: "12px 16px" }}>
@@ -403,9 +556,9 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           <div style={{ display: "flex", alignItems: "center", gap: 6, font: `700 13.5px ${SANS}`, color: C.ink, minWidth: 0 }}>
             <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeName}</span>
-            {r.health && <HealthDot h={r.health} />}
           </div>
           <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.payeeSub}</div>
+          {flags && <FlagPills flags={flags} />}
         </div>
         <div title={r.description} style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.description}</div>
         <div style={{ font: `700 15px ${GRO}`, color: C.ink, textAlign: "right" }}>{money(r.amount, r.currency)}</div>
@@ -413,12 +566,13 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           <div style={{ font: `600 13px ${SANS}`, color: C.ink }}>{r.method || "—"}</div>
           <div style={{ font: `500 12px ${GRO}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.masked || ""}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0, overflow: "hidden" }}><WiseCell r={r} wiseEnabled={wiseEnabled} /></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0, overflow: "hidden" }}><WiseCell r={r} wiseEnabled={wiseEnabled} onResume={() => actions.resume(r.payeeKey)} /></div>
       </div>
       {expanded && (
         <div style={{ margin: "0 16px 16px 56px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
+          {flags && <CheckBlock flags={flags} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
+          {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
           <InfoGrid p={payee} amount={r.amount} />
-          {(r.health || payee?.health) && <div style={{ padding: "0 14px" }}><HealthPanel h={(r.health || payee?.health)!} /></div>}
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
             <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} />
           </div>
@@ -428,7 +582,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
   );
 }
 
-function WiseCell({ r, wiseEnabled }: { r: Row; wiseEnabled: boolean }) {
+function WiseCell({ r, wiseEnabled, onResume }: { r: Row; wiseEnabled: boolean; onResume: () => void }) {
   const link = { font: `700 12px ${SANS}`, color: C.link } as const;
   if (r.state === "ready") return <>
     {r.overdue && <Pill tone="red">Overdue</Pill>}
@@ -445,8 +599,10 @@ function WiseCell({ r, wiseEnabled }: { r: Row; wiseEnabled: boolean }) {
   if (r.state === "needs_details") return <><Pill tone="neutral">No payment details</Pill><a href="/admin/payouts-ii" style={link}>Add details →</a></>;
   if (r.state === "manual") return <><Pill tone="neutral">Not on Wise</Pill><a href="/admin/payouts-ii" style={link}>Pay manually →</a></>;
   if (r.state === "hold") return <>
-    <Pill tone="orange">On hold</Pill>
-    {r.holdReason && <span title={r.holdReason} style={{ font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "0 1 auto" }}>{r.holdReason}</span>}
+    <Pill tone={r.paused && reasonIsRestricted(r.paused.reason) ? "red" : "orange"}>{r.paused ? reasonLabel(r.paused.reason) : "On hold"}</Pill>
+    {r.paused
+      ? <button onClick={(e) => { e.stopPropagation(); onResume(); }} style={{ border: "none", background: "none", font: `700 12px ${SANS}`, color: C.link, cursor: "pointer", padding: 0 }}>Resume</button>
+      : r.holdReason && <span title={r.holdReason} style={{ font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "0 1 auto" }}>{r.holdReason}</span>}
   </>;
   return <Pill tone="blue">Due {fmtDate(r.dueDate)}</Pill>;
 }
@@ -472,13 +628,27 @@ function payeeStatus(key: string, ready: Row[]): Status {
   return "ended";
 }
 
-function AllPayees({ payees, ready }: { payees: Payee[]; ready: Row[] }) {
+function ctxForPayee(p: Payee): PauseCtx {
+  const last = p.history.find((h) => h.date);
+  const kind = p.kinds.includes("monthly") ? "monthly" : p.kinds.includes("setup") ? "setup fee" : "referral";
+  return {
+    payeeKey: p.key, ownerFirst: first(p.name), ownerEmail: p.email,
+    referrerFirst: p.referredBy ? first(p.referredBy) : null,
+    kind, amt: money(last?.amount || 0), dest: [p.method, p.masked].filter(Boolean).join(" · ") || "your account",
+  };
+}
+function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; actions: PayoutActions }) {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | Kind>("all");
   const [status, setStatus] = useState<Status | "all" | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
 
-  const withStatus = useMemo(() => payees.map((p) => ({ p, st: payeeStatus(p.key, ready) })), [payees, ready]);
+  // Status comes from the pay-run row; a manual pause overrides it (restricted/hold).
+  const withStatus = useMemo(() => payees.map((p) => {
+    let st = payeeStatus(p.key, ready);
+    if (p.pause) st = reasonIsRestricted(p.pause.reason) ? "restricted" : "hold";
+    return { p, st };
+  }), [payees, ready]);
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: payees.length, due: 0, paid: 0, hold: 0, restricted: 0, upcoming: 0, ended: 0 };
     for (const { st } of withStatus) c[st]++;
@@ -532,9 +702,9 @@ function AllPayees({ payees, ready }: { payees: Payee[]; ready: Row[] }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 6, font: `700 13.5px ${SANS}`, color: C.ink }}>
                       <span style={{ font: `700 12px ${SANS}`, color: C.faint, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                      {p.health && <HealthDot h={p.health} />}
                     </div>
                     <div style={{ paddingLeft: 18, font: `500 12px ${SANS}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sub}</div>
+                    {p.flags && <FlagPills flags={p.flags} />}
                   </div>
                   <span style={{ font: `500 13px ${SANS}`, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.referredBy || "—"}</span>
                   <div style={{ minWidth: 0 }}>
@@ -551,9 +721,10 @@ function AllPayees({ payees, ready }: { payees: Payee[]; ready: Row[] }) {
                 </div>
                 {isOpen && (
                   <div style={{ margin: "0 16px 16px 34px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
+                    {p.flags && <CheckBlock flags={p.flags} onMarkChecked={() => actions.markChecked(p.key)} />}
+                    {st !== "ended" && <PausePanel ctx={ctxForPayee(p)} paused={p.pause} onPause={actions.pause} onResume={() => actions.resume(p.key)} />}
                     {p.note && <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, font: `500 12.5px/1.5 ${SANS}`, background: st === "restricted" ? "#fef2f2" : st === "hold" ? "#fff7ed" : C.inset, color: st === "restricted" ? "#7f1d1d" : st === "hold" ? "#9a3412" : C.ink2 }}>{p.note}</div>}
                     <InfoGrid p={p} nextDue />
-                    {p.health && <div style={{ padding: "0 14px" }}><HealthPanel h={p.health} /></div>}
                     <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
                       <PaymentRecord history={p.history} total={p.totalPaid} />
                     </div>
