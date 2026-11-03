@@ -1208,3 +1208,19 @@ model ProfileChangeRequest {
   @@index([status, plannedFor])
   @@map("profile_change_requests")
 }
+
+// Admin overrides for the unified payouts console, keyed by payee key ("amb:<email>" or
+// "ref:<slug>"). Holds the "checked before paying" acknowledgement and a manual payout
+// pause (richer than the per-account payout_hold: carries a reason, note and who was
+// emailed). Absent row = never checked, not paused.
+model PayoutOverride {
+  key          String    @id                              // payee key: amb:<email> | ref:<slug>
+  checkedAt    DateTime? @map("checked_at")               // admin ticked "Mark as checked"
+  pauseReason  String?   @map("pause_reason")             // cant_login|restricted|wrong_info|inaccessible|owner_request|other
+  pausedAt     DateTime? @map("paused_at")
+  pauseNote    String?   @map("pause_note")
+  pauseEmailed Json?     @map("pause_emailed")            // string[]: ["owner"], ["owner","referrer"], …
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("payout_overrides")
+}
