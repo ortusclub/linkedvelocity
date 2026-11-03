@@ -50,7 +50,7 @@ interface Payment { date: string | null; amount: number; kind: Kind; label: stri
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
-  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; rental: Rental | null; nextDue: string | null; note: string | null;
+  email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; rental: Rental | null; currency: "PHP" | "USD"; nextDue: string | null; note: string | null;
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
@@ -275,16 +275,16 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // ── payment record (both tabs) ──────────────────────────────────────────
-function PaymentRecord({ history, total }: { history: Payment[]; total: number }) {
+function PaymentRecord({ history, total, currency = "PHP" }: { history: Payment[]; total: number; currency?: "PHP" | "USD" }) {
   const copy = () => {
-    const tsv = history.map((h) => [fmtDate(h.date), money(h.amount), h.label, h.acknowledged ? "Acked" : "Awaiting"].join("\t")).join("\n");
+    const tsv = history.map((h) => [fmtDate(h.date), money(h.amount, currency), h.label, h.acknowledged ? "Acked" : "Awaiting"].join("\t")).join("\n");
     navigator.clipboard?.writeText(tsv);
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <span style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.faint, flex: 1 }}>Payment record</span>
-        <span style={{ font: `500 12.5px ${SANS}`, color: C.muted }}>Total paid <b style={{ fontFamily: "var(--font-grotesk)", color: "#0f7a3d" }}>{money(total)}</b></span>
+        <span style={{ font: `500 12.5px ${SANS}`, color: C.muted }}>Total paid <b style={{ fontFamily: "var(--font-grotesk)", color: "#0f7a3d" }}>{money(total, currency)}</b></span>
         <button onClick={copy} style={{ border: `1px solid ${C.inputBorder}`, background: C.card, color: C.ink, borderRadius: 8, padding: "6px 11px", font: `600 12px ${SANS}`, cursor: "pointer" }}>Copy history</button>
       </div>
       <div style={{ border: `1px solid ${C.divider}`, borderRadius: 10, overflow: "hidden" }}>
@@ -296,7 +296,7 @@ function PaymentRecord({ history, total }: { history: Payment[]; total: number }
           <div key={i} style={{ display: "grid", gridTemplateColumns: "110px minmax(0,1fr) 110px 110px 150px", gap: 12, alignItems: "center", padding: "10px 12px", borderTop: `1px solid ${C.divider}` }}>
             <span style={{ font: `600 13px ${SANS}`, color: C.ink }}>{fmtDate(h.date)}</span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ font: `500 13px ${SANS}`, color: C.muted }}><b style={{ fontFamily: "var(--font-grotesk)", color: C.ink }}>{money(h.amount)}</b> · {h.label}</div>
+              <div style={{ font: `500 13px ${SANS}`, color: C.muted }}><b style={{ fontFamily: "var(--font-grotesk)", color: C.ink }}>{money(h.amount, currency)}</b> · {h.label}</div>
               {h.by && <div style={{ font: `500 11.5px ${SANS}`, color: C.faint }}>by {h.by}</div>}
             </div>
             {h.receipt ? <a href={h.receipt} target="_blank" rel="noreferrer"><Pill tone="blue">↗ Receipt</Pill></a> : <span style={{ color: "#c0c4cc" }}>—</span>}
@@ -324,7 +324,7 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
       </Field>
       <Field label="Referred by">{p.referredBy || "—"}</Field>
       <Field label="Payment method">{[p.method, p.masked, p.holder].filter(Boolean).join(" · ") || "—"}</Field>
-      <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
+      <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount, p.currency) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
       {nextDue && <Field label="Next payment due">{fmtDate(p.nextDue)}</Field>}
       <Field label="Accounts">{p.accounts > 0 ? String(p.accounts) : "—"}</Field>
       <Field label="Rental">{
@@ -333,8 +333,8 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
             ? `Rented to ${p.rental.renterName || "renter"} · ${p.rental.rentedCount} of ${p.rental.totalCount} accounts${p.rental.since ? ` · since ${fmtDate(p.rental.since)}` : ""}`
             : "Not rented"
       }</Field>
-      <Field label="Last payment">{last ? `${money(last.amount)} · ${fmtDate(last.date)}` : "—"}</Field>
-      <Field label="Total paid">{money(p.totalPaid)}</Field>
+      <Field label="Last payment">{last ? `${money(last.amount, p.currency)} · ${fmtDate(last.date)}` : "—"}</Field>
+      <Field label="Total paid">{money(p.totalPaid, p.currency)}</Field>
       <Field label="Contact email">{p.email || "—"}</Field>
       <Field label="Work email">{p.workEmail || "—"}</Field>
       <Field label="Contact number">{p.phone || "—"}</Field>
@@ -620,7 +620,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
           <InfoGrid p={payee} amount={r.amount} />
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
-            <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} />
+            <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} currency={payee?.currency} />
           </div>
         </div>
       )}
@@ -821,7 +821,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                     {p.note && <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, font: `500 12.5px/1.5 ${SANS}`, background: st === "restricted" ? "#fef2f2" : st === "hold" ? "#fff7ed" : C.inset, color: st === "restricted" ? "#7f1d1d" : st === "hold" ? "#9a3412" : C.ink2 }}>{p.note}</div>}
                     <InfoGrid p={p} nextDue />
                     <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
-                      <PaymentRecord history={p.history} total={p.totalPaid} />
+                      <PaymentRecord history={p.history} total={p.totalPaid} currency={p.currency} />
                     </div>
                   </div>
                 )}
