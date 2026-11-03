@@ -225,6 +225,33 @@ export async function sendProxyEscalation(opts: {
   });
 }
 
+// A renter tapped "Something wrong? Report it" on an account and picked what's happening (logged
+// out / code or ID check / won't load / something else). Internal only (TEAM_NOTIFY_EMAIL),
+// mirrors sendProxyEscalation. The renter is told not to retry sign-in; the team picks it up.
+export async function sendProblemReport(opts: {
+  ticketRef: string;
+  accountName: string;
+  renterEmail: string;
+  category: string;
+  categoryLabel: string;
+  note?: string | null;
+  state?: string | null; // e.g. "Restricted" / "Paused" — the account's current state, if notable
+}) {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
+  const to = process.env.TEAM_NOTIFY_EMAIL || "info@linkedvelocity.com";
+  const noteHtml = opts.note ? `<br>Note: ${opts.note}` : "";
+  const stateHtml = opts.state ? `<br>Account state: <strong>${opts.state}</strong>` : "";
+  return sendEmail({
+    to,
+    subject: `Problem report ${opts.ticketRef} — ${opts.accountName} (${opts.categoryLabel})`,
+    html: brandWrap(`
+      <p style="font-size:15px;color:#374151;margin:0 0 10px;">A renter reported a problem on a rented account. They've been told not to retry sign-in — the team picks this up.</p>
+      <p style="font-size:14px;color:#536471;line-height:1.7;margin:0 0 16px;">Account: <strong>${opts.accountName}</strong><br>Renter: ${opts.renterEmail}<br>Ticket: <strong>${opts.ticketRef}</strong><br>What's happening: <strong>${opts.categoryLabel}</strong>${stateHtml}${noteHtml}</p>
+      <a href="${appUrl}/admin/inventory-v2" style="display:inline-block;background:#0A66C2;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:10px;">Open inventory →</a>
+    `),
+  });
+}
+
 // Fired when an admin marks an account-security email "Wasn't us" — an incident is open and the
 // account may be compromised. Internal only (TEAM_NOTIFY_EMAIL), mirrors sendProxyEscalation. The
 // recommended-response steps shown in the email match the in-app checklist by email type.

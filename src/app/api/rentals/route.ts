@@ -53,6 +53,20 @@ export async function GET(req: NextRequest) {
       if (!swapByRental.has(s.rentalId)) swapByRental.set(s.rentalId, { status: s.status, ticketRef: s.ticketRef, openedAt: s.createdAt.toISOString() });
     }
 
+    // Open problem reports ("Something wrong? Report it"): surface the latest open report per
+    // rental so the row shows "Reported · we're on it" until it's sorted. Fades after 14 days so a
+    // report nobody closed doesn't pin the row forever (the team email is the real hand-off).
+    const REPORT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+    const openReports = await prisma.problemReport.findMany({
+      where: { userId: user.id, status: "open", createdAt: { gte: new Date(Date.now() - REPORT_WINDOW_MS) } },
+      orderBy: { createdAt: "desc" },
+      select: { rentalId: true, category: true, ticketRef: true, createdAt: true },
+    });
+    const reportByRental = new Map<string, { category: string; ticketRef: string; openedAt: string }>();
+    for (const r of openReports) {
+      if (!reportByRental.has(r.rentalId)) reportByRental.set(r.rentalId, { category: r.category, ticketRef: r.ticketRef, openedAt: r.createdAt.toISOString() });
+    }
+
     // Profile-change requests (Renter Dashboard v3): the "Requested" list in the modal + the
     // Status-column pill. Attached per rental, oldest-planned first.
     const changeRows = await prisma.profileChangeRequest.findMany({
@@ -137,6 +151,7 @@ export async function GET(req: NextRequest) {
         // "finish GoLogin setup" card while a rental is still pending access.
         gologinLoginEmail: user.gologinShareEmail || user.email,
         proxyFix: swapByRental.get(r.id) ?? null,
+        problemReport: reportByRental.get(r.id) ?? null,
         profileChanges: changesByRental.get(r.id) ?? [],
         linkedinAccount: {
           ...account,

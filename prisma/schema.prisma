@@ -1037,6 +1037,27 @@ model ProxySwap {
   @@map("proxy_swaps")
 }
 
+// Renter-reported problem on a rented account (Renter Dashboard v3 "Something wrong? Report it").
+// The renter picks what's happening; we log it, email the team, and the dashboard shows the row as
+// "reported" until it's resolved. A "wont_load" on a healthy account is handled by the proxy-fix
+// swap flow instead (ProxySwap) — this table is for logged_out / verification / other, and for a
+// wont_load that can't be auto-swapped (e.g. a restricted/paused account).
+model ProblemReport {
+  id                String    @id @default(uuid()) @db.Uuid
+  rentalId          String    @map("rental_id") @db.Uuid
+  linkedinAccountId String    @map("linkedin_account_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  ticketRef         String    @unique @map("ticket_ref")
+  category          String // logged_out | verification | wont_load | other
+  note              String?
+  status            String    @default("open") // open | resolved
+  createdAt         DateTime  @default(now()) @map("created_at")
+  resolvedAt        DateTime? @map("resolved_at")
+  @@index([userId, status])
+  @@index([rentalId, createdAt])
+  @@map("problem_reports")
+}
+
 // Short-lived owner-verified recovery for an existing assigned LV email.
 model PrimaryEmailRecovery {
   id String @id
