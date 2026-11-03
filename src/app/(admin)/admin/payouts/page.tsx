@@ -53,7 +53,8 @@ interface Payee {
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
-interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; }
+interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; }
+interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; markPaid: (p: MarkPaidPayload) => Promise<boolean>; }
 
 const money = (n: number, c: "PHP" | "USD" = "PHP") =>
   c === "USD" ? `$${(n || 0).toLocaleString()}` : new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(n || 0);
@@ -234,6 +235,29 @@ function ToggleChip({ on, onClick, label, sub }: { on: boolean; onClick: () => v
 }
 const secBtn: CSSProperties = { border: `1px solid #dde1e8`, background: "#fff", color: "#0b1220", borderRadius: 8, padding: "6px 12px", font: `700 12px ${SANS}`, cursor: "pointer" };
 
+// Record a payout made manually in Wise: paste the receipt link → logs it + emails the payee.
+function MarkPaid({ r, markPaid }: { r: Row; markPaid: (p: MarkPaidPayload) => Promise<boolean> }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const submit = async () => {
+    if (!url.trim()) { setErr("Paste the Wise receipt link first."); return; }
+    setBusy(true); setErr(null);
+    const ok = await markPaid({ id: r.id, payeeKey: r.payeeKey, kind: r.kind, amount: r.amount, receiptUrl: url.trim() });
+    if (!ok) { setErr("Couldn’t record — try again."); setBusy(false); }
+    // On success the feed reloads and this row moves to Paid (component unmounts).
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, flexWrap: "wrap" }}>
+      <span style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted }}>Record payment</span>
+      <span style={{ font: `500 12px ${SANS}`, color: C.faint }}>Already paid {money(r.amount, r.currency)} in Wise? Paste the receipt to log it and email the payee.</span>
+      <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Wise receipt link…" style={{ flex: "1 1 220px", minWidth: 160, border: `1px solid ${C.inputBorder}`, background: C.inset, borderRadius: 8, padding: "7px 10px", font: `500 12.5px ${SANS}`, color: C.ink, outline: "none" }} />
+      <button onClick={submit} disabled={busy} style={{ border: "none", borderRadius: 8, padding: "7px 12px", font: `700 12px ${SANS}`, cursor: busy ? "default" : "pointer", whiteSpace: "nowrap", background: busy ? C.countPill : "#12a150", color: busy ? C.faint : "#fff" }}>{busy ? "Recording…" : "Mark paid & email receipt"}</button>
+      {err && <span style={{ font: `600 11.5px ${SANS}`, color: PILLS.red.fg }}>{err}</span>}
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
@@ -346,6 +370,12 @@ export default function PayoutsPage() {
       markChecked: (payeeKey) => void post("/api/admin/payouts/mark-checked", { payeeKey }),
       pause: (p) => void post("/api/admin/payouts/pause", p),
       resume: (payeeKey) => void post("/api/admin/payouts/resume", { payeeKey }),
+      markPaid: async (p) => {
+        const res = await fetch("/api/admin/payouts/mark-paid", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).catch(() => null);
+        if (!res || !res.ok) return false;
+        await load();
+        return true;
+      },
     };
   }, [load]);
 
@@ -574,6 +604,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
         <div style={{ margin: "0 16px 16px 56px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
           {flags && <CheckBlock flags={flags} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
           {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
+          {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
           <InfoGrid p={payee} amount={r.amount} />
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
             <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} />
