@@ -37,6 +37,10 @@ export interface UnreadMail { from: string; subject: string; when: string } // w
 // carries a reason, note and who was emailed). While set, the payout is held.
 export interface PayoutPause { reason: string; pausedAt: string; note: string; emailed: string[] }
 
+// Rental status of an account owner's LinkedIn accounts — so the console can warn that a
+// rented account may be in active use by a renter. renterName/since are null when none rented.
+export interface PayeeRental { renterName: string | null; since: string | null; rentedCount: number; totalCount: number }
+
 // "Check before paying" signals for an ambassador, so the team can confirm the account logs
 // in before sending. Flags are suppressed once an admin marks the payee checked (unless a
 // newer email / recovery lands after the check). Attached to the payee and its pay-run rows.
@@ -100,6 +104,7 @@ export interface UnifiedPayee {
   accounts: number;           // accounts this ambassador supplies (0 for pure referrers)
   linkedinUrls: string[];     // the LinkedIn account URL(s) this ambassador supplies
   workEmail: string | null;   // the account's work/recovery email (shown on the row sub-line)
+  rental: PayeeRental | null; // rental status of this owner's accounts (null = referral-only payee)
   nextDue: string | null;     // next monthly due date (ISO)
   note: string | null;        // hold / restriction reason, if any
   totalPaid: number;
@@ -153,7 +158,7 @@ type RawFlags = { linkedinUrl: string | null; unreadMail: UnreadMail[]; recovere
 // account-inbox mail in the last 30 days, and a recovery in the last 14 days (with its note).
 // Account→owner mapping mirrors computePaymentsDue (notes "Owner:" / LinkedIn URL). The
 // checkedAt suppression and pause state are applied by the caller from PayoutOverride.
-async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null }[], accounts: HealthAccount[]): Promise<{ raw: Map<string, RawFlags>; urls: Map<string, string[]>; workEmails: Map<string, string> }> {
+async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null }[], accounts: HealthAccount[]): Promise<{ raw: Map<string, RawFlags>; urls: Map<string, string[]>; workEmails: Map<string, string>; rentals: Map<string, PayeeRental> }> {
   const urlToEmail = new Map<string, string>();
   for (const a of apps) {
     if (a.linkedinUrl) { urlToEmail.set(a.linkedinUrl, a.email); urlToEmail.set(a.linkedinUrl.replace(/\/$/, ""), a.email); }
@@ -217,7 +222,31 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
     if (unreadMail.length === 0 && !recoveredAt) continue;
     raw.set(email, { linkedinUrl: urls.get(email)?.[0] || null, unreadMail, recoveredAt, recoveryNote });
   }
-  return { raw, urls, workEmails };
+
+  // Rental status per owner — an active rental means a renter may be using the account.
+  const rentalRows = accEmail.size
+    ? await prisma.rental.findMany({
+        where: { linkedinAccountId: { in: [...accEmail.keys()] }, status: { in: ["active", "pending_access"] } },
+        select: { linkedinAccountId: true, createdAt: true, user: { select: { fullName: true, email: true } } },
+      })
+    : [];
+  const rentalByAcct = new Map<string, { renter: string; since: string }>();
+  for (const r of rentalRows) {
+    if (rentalByAcct.has(r.linkedinAccountId)) continue;
+    rentalByAcct.set(r.linkedinAccountId, { renter: r.user?.fullName || r.user?.email || "renter", since: r.createdAt.toISOString() });
+  }
+  const rentals = new Map<string, PayeeRental>();
+  for (const [email, accs] of emailAccounts) {
+    const rented = accs.map((a) => rentalByAcct.get(a.id)).filter((x): x is { renter: string; since: string } => !!x);
+    rented.sort((a, b) => a.since.localeCompare(b.since)); // earliest first
+    rentals.set(email, {
+      renterName: rented[0]?.renter ?? null,
+      since: rented[0]?.since ?? null,
+      rentedCount: rented.length,
+      totalCount: accs.length,
+    });
+  }
+  return { raw, urls, workEmails, rentals };
 }
 
 export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayouts> {
@@ -243,7 +272,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   ]);
 
   // "Check before paying" signals per ambassador email + admin overrides (checkedAt / pause).
-  const [{ raw: rawFlagsByEmail, urls: accountUrlsByEmail, workEmails: workEmailByEmail }, overrideRows] = await Promise.all([
+  const [{ raw: rawFlagsByEmail, urls: accountUrlsByEmail, workEmails: workEmailByEmail, rentals: rentalByEmail }, overrideRows] = await Promise.all([
     buildPayeeFlags(apps, accounts),
     prisma.payoutOverride.findMany(),
   ]);
@@ -345,7 +374,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, rental: null, nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -386,6 +415,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       if (!payee.flags) payee.flags = flagsByEmail.get(a.email.toLowerCase()) || null;
       if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
       if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
+      if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
