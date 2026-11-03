@@ -20,18 +20,18 @@ export function referralInviteMessage(
     // The referrer who brought this account in — re-engage them (they have a portal).
     const subject = "Your referrals are worth more now";
     if (channel === "chat") {
-      return { subject, text: `${hi}, it's Ortus from LinkedVelocity. Thanks again for the accounts you've sent our way. Quick heads up: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself. Same process you already know, just more for your time. We're still taking on new accounts whenever you have someone in mind.${portalUrl ? ` Your dashboard and share link are here: ${portalUrl}` : ""}` };
+      return { subject, text: `${hi}, it's the team at LinkedVelocity. Thanks again for the accounts you've sent our way. Quick heads up: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself. Same process you already know, just more for your time. We're still taking on new accounts whenever you have someone in mind.${portalUrl ? ` Your dashboard and share link are here: ${portalUrl}` : ""}` };
     }
-    return { subject, text: `${hi},\n\nThanks again for the accounts you've sent our way.\n\nQuick heads up: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself. Same process you already know, just more for your time, and we're still taking on new accounts whenever you have someone in mind.${portalUrl ? `\n\nYour dashboard and share link are here:\n${portalUrl}` : ""}\n\nHappy to help if you have any questions.\nOrtus, LinkedVelocity` };
+    return { subject, text: `${hi},\n\nThanks again for the accounts you've sent our way.\n\nQuick heads up: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself. Same process you already know, just more for your time, and we're still taking on new accounts whenever you have someone in mind.${portalUrl ? `\n\nYour dashboard and share link are here:\n${portalUrl}` : ""}\n\nHappy to help if you have any questions.\nThe LinkedVelocity team` };
   }
 
   // Ambassador who is ALSO a referrer already — nudge, don't re-pitch from scratch.
   if (portalUrl) {
     const subject = "Your referrals are worth more now";
     if (channel === "chat") {
-      return { subject, text: `${hi}, it's Ortus from LinkedVelocity. Quick nudge, since you're already set up as a referrer: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself, the same way you did with yours. We're still taking on new accounts. Your dashboard and share link are right here: ${portalUrl}` };
+      return { subject, text: `${hi}, it's the team at LinkedVelocity. Quick nudge, since you're already set up as a referrer: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself, the same way you did with yours. We're still taking on new accounts. Your dashboard and share link are right here: ${portalUrl}` };
     }
-    return { subject, text: `${hi},\n\nQuick heads up, since you're already one of our referrers: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself, the same way you did with yours. We're still taking on new accounts whenever you have someone in mind.\n\nEverything's in your dashboard:\n${portalUrl}\n\nOrtus, LinkedVelocity` };
+    return { subject, text: `${hi},\n\nQuick heads up, since you're already one of our referrers: the payout just got better. On top of the ₱500 for a referral, you now earn up to ₱1,000 when you set the account up yourself, the same way you did with yours. We're still taking on new accounts whenever you have someone in mind.\n\nEverything's in your dashboard:\n${portalUrl}\n\nThe LinkedVelocity team` };
   }
 
   // Ambassador, just onboarded, not a referrer yet — send them straight to self-signup
@@ -39,7 +39,7 @@ export function referralInviteMessage(
   const subject = "Earn on the side with LinkedVelocity";
   const signupLine = signupUrl || "https://linkedvelocity.com/become-a-referrer";
   if (channel === "chat") {
-    return { subject, text: `${hi}, it's Ortus from LinkedVelocity. You've been through the whole setup now, so you already know how it works, which puts you in a good spot to earn on the side. It's ₱500 when you refer someone, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. Sign up here and your link is ready instantly (takes about 30 seconds): ${signupLine}` };
+    return { subject, text: `${hi}, it's the team at LinkedVelocity. You've been through the whole setup now, so you already know how it works, which puts you in a good spot to earn on the side. It's ₱500 when you refer someone, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. Sign up here and your link is ready instantly (takes about 30 seconds): ${signupLine}` };
   }
-  return { subject, text: `${hi},\n\nYou've been through the whole setup now, so you already know how it works. That puts you in a good spot to earn on the side.\n\nIt's ₱500 when you refer someone to us, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. We're always glad to take on more.\n\nSign up here and your link is ready instantly (takes about 30 seconds):\n${signupLine}\n\nOrtus, LinkedVelocity` };
+  return { subject, text: `${hi},\n\nYou've been through the whole setup now, so you already know how it works. That puts you in a good spot to earn on the side.\n\nIt's ₱500 when you refer someone to us, or up to ₱1,000 when you set the account up yourself, the same way you just did with yours. We're always glad to take on more.\n\nSign up here and your link is ready instantly (takes about 30 seconds):\n${signupLine}\n\nThe LinkedVelocity team` };
 }

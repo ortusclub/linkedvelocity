@@ -5,6 +5,7 @@ import { OnboardingError, reserveOnboarding, mintSelfToken, onboardingSummary, D
 import { createSession, getSession } from "@/lib/auth";
 import { isLikelyTestEmail } from "@/lib/test-mode";
 import { verifyPermit } from "@/lib/self-onboarding-gate";
+import { refFromCookieHeader } from "@/lib/referral-cookie";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -32,7 +33,13 @@ export async function POST(req: Request) {
     // Attribution: if the owner arrived from a referral link (/become-ambassador?ref=slug or
     // /r/slug), the client forwards that slug here. Credit the real ACTIVE referrer so they show
     // on their dashboard and get paid; fall back to the hidden "diy" system referrer otherwise.
-    const refSlug = typeof raw?.ref === "string" ? raw.ref.trim().toLowerCase() : "";
+    let refSlug = typeof raw?.ref === "string" ? raw.ref.trim().toLowerCase() : "";
+    // The client often loses ?ref across the email-verify step, so recover it from the
+    // lv_ref cookie dropped at the referral link before defaulting to "diy".
+    if (!refSlug || refSlug === DIY_REFERRER_SLUG) {
+      const cookieRef = refFromCookieHeader(req.headers.get("cookie"));
+      if (cookieRef) refSlug = cookieRef;
+    }
     const sel = { id: true, slug: true, name: true, type: true, active: true } as const;
     let referrer = refSlug && refSlug !== DIY_REFERRER_SLUG
       ? await prisma.referrer.findUnique({ where: { slug: refSlug }, select: sel })

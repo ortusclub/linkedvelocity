@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth";
 import { z } from "zod";
 import { assessFromApplication } from "@/services/profile-assessor";
 import { sendAmbassadorApplicationLead } from "@/services/email";
+import { refFromCookieHeader } from "@/lib/referral-cookie";
 
 const applySchema = z.object({
   fullName: z.string().min(1),
@@ -33,6 +34,13 @@ export async function POST(req: Request) {
     // Canonicalize a referral code to the matching referrer's slug, so a manually-typed
     // code ("Lewis-4823", "lewis 4823", "LEWIS-4823") credits the same person as the QR.
     let referredBy = data.referredBy?.trim() || undefined;
+    // The DIY page posts referredBy:"diy" when it has lost the ?ref. Treat empty/"diy" as
+    // "no referrer yet" and recover the real code from the lv_ref cookie dropped at the
+    // referral link, so a self-onboarding owner still credits their referrer.
+    if (!referredBy || referredBy.toLowerCase() === "diy") {
+      const cookieRef = refFromCookieHeader(req.headers.get("cookie"));
+      if (cookieRef) referredBy = cookieRef;
+    }
     let referrerType: string | undefined;
     if (referredBy) {
       const norm = referredBy.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

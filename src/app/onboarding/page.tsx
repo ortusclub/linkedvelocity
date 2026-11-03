@@ -3,6 +3,7 @@
 import { MeetingBooker } from "@/components/meeting-booker";
 import { useEffect, useState } from "react";
 import { OnboardingPrice } from "@/components/onboarding-price";
+import { refFromCookieHeader, writeRefCookie } from "@/lib/referral-cookie";
 
 // Public DIY landing page — post it anywhere, no referrer needed. Presents the three
 // self-onboarding tiers (sign-on bonus scales with how much the owner does themselves;
@@ -35,7 +36,7 @@ export default function DIYPage() {
   const [ref, setRef] = useState("");
 
   useEffect(() => {
-    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || ""; if (r) setRef(r); } catch {}
+    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || refFromCookieHeader(document.cookie) || ""; if (r) { setRef(r); writeRefCookie(r); } } catch {}
   }, []);
 
   const update = (k: keyof typeof form, v: string) => setForm((p) => ({ ...p, [k]: v }));

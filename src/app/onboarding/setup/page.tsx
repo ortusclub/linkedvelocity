@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { OnboardingPrice } from "@/components/onboarding-price";
+import { refFromCookieHeader, writeRefCookie } from "@/lib/referral-cookie";
 
 // DIY self-onboarding entry: verify email (gate), collect the details reserve needs, then
 // POST /api/self-onboarding/start → get a per-session token → hand off to the live wizard.
@@ -38,7 +39,7 @@ export default function SelfSetupStart() {
 
   useEffect(() => {
     try { const t = new URLSearchParams(window.location.search).get("tier"); if (t === "partial" || t === "full") setTier(t); } catch {}
-    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || ""; if (r) setRef(r); } catch {}
+    try { const r = new URLSearchParams(window.location.search).get("ref") || sessionStorage.getItem("lv_ref") || refFromCookieHeader(document.cookie) || ""; if (r) { setRef(r); writeRefCookie(r); } } catch {}
     fetch("/api/self-onboarding/config").then((r) => r.json()).then((d: Cfg) => {
       // Bank transfer needs a multi-field sub-form; keep DIY to single-field payout methods.
       const methods = (d.payoutMethods || []).filter((m) => m !== "Bank transfer");
