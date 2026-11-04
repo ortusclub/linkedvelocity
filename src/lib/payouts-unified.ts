@@ -83,6 +83,10 @@ export interface UnifiedReadyPayout {
   // commission per referred ambassador). Paying the row records a payout per entry, mirroring
   // /admin/referrals (attributed, no amount-netting), and sends the referrer one receipt email.
   refApps?: { applicationId: string; person: string; amount: number; type: string }[];
+  // Consolidated setup rows only: the individual ambassadors whose setup fee lands in this one
+  // payout account. Paying the row records one setup entry per ambassador and emails each —
+  // one Wise transfer, one receipt for all. Present only when >1 setup fee shares a destination.
+  setupApps?: { email: string; person: string; amount: number; secured: boolean }[];
 }
 
 export interface UnifiedPayment {
@@ -335,6 +339,9 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     a?.paymentMethod || (a?.paypalEmail ? `PayPal: ${a.paypalEmail}` : a?.wiseEmail ? `Wise: ${a.wiseEmail}` : null);
 
   const ready: UnifiedReadyPayout[] = [];
+  // Destination-grouped setup payouts needing a seeded payee (so their detail panel shows the
+  // account). Collected while building ready rows; seeded in the payee section below.
+  const setupDestSeeds: { key: string; holder: string | null; method: string | null; details: string | null; currency: Currency; count: number }[] = [];
 
   // ── Owed: referral commissions ────────────────────────────────────────
   const pushReferral = (r: ReferralDue, held: boolean) => {
@@ -412,7 +419,48 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       ...(d.kind === "setup" ? { secured: d.secured } : {}),
     });
   };
-  for (const d of due.setup) pushAmb(d, true);
+  // Consolidate setup fees that land in the SAME payout account into one payout — one row, one
+  // total, the people listed — kept SEPARATE from referral rows. Several ambassadors can
+  // nominate one account (e.g. a referrer's GCash), so their setup fees are really one Wise
+  // transfer; collapsing them means ticking one row and stamping one receipt across each
+  // person's setup entry. Grouped by destination (method + details + currency); fees with no
+  // details on file have no shared destination, so they stay individual.
+  const setupGroups = new Map<string, DueItem[]>();
+  const setupSingles: DueItem[] = [];
+  for (const d of due.setup) {
+    const dest = (d.details || "").trim();
+    if (!dest) { setupSingles.push(d); continue; }
+    const key = `${(d.method || "").trim().toLowerCase()}|${dest.toLowerCase()}|${d.currency}`;
+    const g = setupGroups.get(key) || []; g.push(d); setupGroups.set(key, g);
+  }
+  for (const group of setupGroups.values()) {
+    if (group.length === 1) { setupSingles.push(group[0]); continue; }
+    const first = group[0];
+    const method = first.method, details = first.details;
+    const holder = appByEmail.get(first.email.toLowerCase())?.payoutName || null;
+    const destKey = `setup-dest:${(method || "").toLowerCase()}|${(details || "").toLowerCase()}|${first.currency}`;
+    const paused = pauseFor(destKey);
+    const amount = group.reduce((s, d) => s + d.amount, 0);
+    const people = group.map((d) => d.name).filter(Boolean);
+    const earliestDue = group.reduce((min, d) => (d.dueDate < min ? d.dueDate : min), first.dueDate);
+    const anyOverdue = group.some((d) => d.overdue);
+    const state: ReadyState = paused ? "hold" : readyStateFor(method, details, anyOverdue, true);
+    setupDestSeeds.push({ key: destKey, holder, method, details, currency: first.currency, count: group.length });
+    ready.push({
+      id: destKey, kind: "setup",
+      payeeKey: destKey, payeeName: holder || `${group.length} setup fees`, payeeSub: null,
+      referredBy: null,
+      description: `${group.length} setup fees · ${people.join(", ")}`,
+      amount, currency: first.currency,
+      method, details, rail: railFor(method), dueDate: earliestDue, overdue: anyOverdue, state,
+      holdReason: paused ? reasonLabel(paused.reason) : null,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused,
+      flagged: group.some((d) => !!flagsByEmail.get(d.email.toLowerCase())?.flagged),
+      secured: group.every((d) => d.secured),
+      setupApps: group.map((d) => ({ email: d.email, person: d.name, amount: d.amount, secured: !!d.secured })),
+    });
+  }
+  for (const d of setupSingles) pushAmb(d, true);
   for (const d of due.monthly) pushAmb(d, true);
   for (const d of due.upcoming) pushAmb(d, false);
 
@@ -459,6 +507,15 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     payee.currency = r.currency;
     if (!payee.email && ref?.email) payee.email = ref.email;
     if (!payee.holder && ref?.paymentName) payee.holder = ref.paymentName;
+  }
+  // Destination-grouped setup rows key by the account, not an ambassador email, so they have no
+  // payee from the ambassador loop below. Seed one per destination from the group metadata so the
+  // consolidated row's detail panel shows the payout account (method / details / holder).
+  for (const s of setupDestSeeds) {
+    if (payeeMap.has(s.key)) continue;
+    const payee = ensurePayee(s.key, s.holder || `${s.count} setup fees`, null, "setup", s.method, s.details, null);
+    payee.currency = s.currency;
+    if (!payee.holder && s.holder) payee.holder = s.holder;
   }
   // Owners owed a payout this run (setup / monthly / upcoming), so a first-ever setup fee with
   // no payment history still gets a payee — and therefore a populated detail panel (LinkedIn,

@@ -46,6 +46,7 @@ interface Row {
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
   paused: Pause | null; flagged: boolean; secured?: boolean;
   refApps?: { applicationId: string; person: string; amount: number; type: string }[];
+  setupApps?: { email: string; person: string; amount: number; secured: boolean }[];
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
@@ -55,7 +56,7 @@ interface Payee {
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
-interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; apps?: { applicationId: string; amount: number }[]; }
+interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; apps?: { applicationId: string; amount: number }[]; setups?: { email: string; amount: number }[]; }
 interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; markPaid: (p: MarkPaidPayload) => Promise<boolean>; }
 
 const money = (n: number, c: "PHP" | "USD" = "PHP") =>
@@ -251,7 +252,7 @@ function MarkPaid({ r, markPaid }: { r: Row; markPaid: (p: MarkPaidPayload) => P
   const submit = async () => {
     if (!url.trim()) { setErr("Paste the Wise receipt link first."); return; }
     setBusy(true); setErr(null);
-    const ok = await markPaid({ id: r.id, payeeKey: r.payeeKey, kind: r.kind, amount: r.amount, receiptUrl: url.trim(), ...(r.refApps ? { apps: r.refApps.map((a) => ({ applicationId: a.applicationId, amount: a.amount })) } : {}) });
+    const ok = await markPaid({ id: r.id, payeeKey: r.payeeKey, kind: r.kind, amount: r.amount, receiptUrl: url.trim(), ...(r.refApps ? { apps: r.refApps.map((a) => ({ applicationId: a.applicationId, amount: a.amount })) } : {}), ...(r.setupApps ? { setups: r.setupApps.map((s) => ({ email: s.email, amount: s.amount })) } : {}) });
     if (!ok) { setErr("Couldn’t record — try again."); setBusy(false); }
     // On success the feed reloads and this row moves to Paid (component unmounts).
   };
@@ -275,16 +276,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// The referrals a consolidated payout covers — the full list (the row only fits a few names),
-// each with its own commission, so you can see exactly who this one payment is for.
-function ReferralBreakdown({ items, currency }: { items: { applicationId: string; person: string; amount: number; type: string }[]; currency: "PHP" | "USD" }) {
+// The line items a consolidated payout covers — the full list (the row only fits a few names),
+// each with its own amount, so you can see exactly who this one payment is for. Used for both
+// consolidated referral rows (label "Referrals") and destination-grouped setup rows ("Setup fees").
+function PayoutBreakdown({ items, currency, label }: { items: { key: string; person: string; amount: number; type: string }[]; currency: "PHP" | "USD"; label: string }) {
   const total = items.reduce((s, a) => s + a.amount, 0);
   return (
     <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
-      <div style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 8 }}>Referrals in this payout · {items.length}</div>
+      <div style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 8 }}>{label} in this payout · {items.length}</div>
       <div style={{ display: "grid", gap: 6 }}>
         {items.map((a, i) => (
-          <div key={a.applicationId || i} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+          <div key={a.key || i} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
             <span style={{ minWidth: 0, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
               <span style={{ font: `500 13px ${SANS}`, color: C.ink2 }}>{a.person}</span>
               <span style={{ font: `600 10.5px ${SANS}`, color: C.faint, background: C.inset, borderRadius: 999, padding: "1px 8px", whiteSpace: "nowrap" }}>{a.type}</span>
@@ -650,7 +652,8 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           {flags && <CheckBlock flags={flags} rental={payee?.rental} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
           {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
           {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
-          {r.kind === "referral" && r.refApps && r.refApps.length > 1 && <ReferralBreakdown items={r.refApps} currency={r.currency} />}
+          {r.kind === "referral" && r.refApps && r.refApps.length > 1 && <PayoutBreakdown label="Referrals" currency={r.currency} items={r.refApps.map((a) => ({ key: a.applicationId, person: a.person, amount: a.amount, type: a.type }))} />}
+          {r.kind === "setup" && r.setupApps && r.setupApps.length > 1 && <PayoutBreakdown label="Setup fees" currency={r.currency} items={r.setupApps.map((a) => ({ key: a.email, person: a.person, amount: a.amount, type: a.secured ? "✓ Secured" : "⚠ Not locked down" }))} />}
           <InfoGrid p={payee} amount={r.amount} />
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
             <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} currency={payee?.currency} />
