@@ -77,36 +77,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // A consolidated setup row (body.setups) covers several ambassadors whose setup fee lands in
-    // one payout account — one Wise transfer. Record one setup entry per ambassador and email
-    // each with the shared receipt. Already-settled setups are skipped so re-recording is safe.
-    if (kind === "setup" && Array.isArray(body.setups) && body.setups.length) {
-      const setups = body.setups
-        .filter((s: unknown): s is { email: string; amount: unknown } => !!s && typeof (s as { email?: unknown }).email === "string")
-        .map((s: { email: string; amount: unknown }) => ({ email: s.email, amount: Number(s.amount) || 0 }));
-      const paidNames: string[] = [];
-      for (const s of setups) {
-        const app = await prisma.ambassadorApplication.findFirst({
-          where: { email: { equals: s.email, mode: "insensitive" } },
-          orderBy: { onboardedAt: "desc" },
-          select: { id: true, email: true, fullName: true, monthlyPayouts: true, paidAt: true, payoutCurrency: true, referredBy: true, diyTier: true, createdAt: true },
-        });
-        if (!app) continue;
-        const entries = Array.isArray(app.monthlyPayouts) ? [...(app.monthlyPayouts as Array<{ kind?: string; proofUrl?: string | null }>)] : [];
-        if (entries.some((e) => e?.kind === "setup" && !!e?.proofUrl)) continue; // already settled
-        entries.push({ kind: "setup", amount: s.amount, paidAt: nowISO, proofUrl: receiptUrl, by, notified: true, notifiedAt: nowISO } as never);
-        await prisma.ambassadorApplication.update({
-          where: { id: app.id },
-          data: { monthlyPayouts: entries as never, ...(app.paidAt ? {} : { paidAt: new Date() }) },
-        });
-        const cur = currencyConfigFor(app.payoutCurrency, app.referredBy, app).currency;
-        try { await sendSetupFeePaidEmail(app.email, app.fullName || app.email, s.amount, receiptUrl, new Date(), cur); }
-        catch (e) { console.error("[mark-paid] setup email failed", e); }
-        paidNames.push(app.fullName || app.email);
-      }
-      return NextResponse.json({ ok: true, paid: paidNames.length });
-    }
-
     // Ambassador setup / monthly — append to the owner application's monthlyPayouts ledger.
     const email = payeeKey.startsWith("amb:") ? payeeKey.slice(4) : payeeKey;
     const app = await prisma.ambassadorApplication.findFirst({
