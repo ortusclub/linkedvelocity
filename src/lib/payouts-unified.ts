@@ -79,6 +79,10 @@ export interface UnifiedReadyPayout {
   // Setup rows only: pipeline Step-5 security lockdown complete? undefined for non-setup /
   // non-owed rows. Does not gate payment — the console flags "ready but not locked down".
   secured?: boolean;
+  // Consolidated referral rows only: the individual referrals this one payout covers (one
+  // commission per referred ambassador). Paying the row records a payout per entry, mirroring
+  // /admin/referrals (attributed, no amount-netting), and sends the referrer one receipt email.
+  refApps?: { applicationId: string; person: string; amount: number }[];
 }
 
 export interface UnifiedPayment {
@@ -350,7 +354,41 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused, flagged: false,
     });
   };
-  for (const r of due.referralsDue) pushReferral(r, false);
+  // Consolidate the READY referrals per referrer into a single payout — one row, one total,
+  // the referred people listed — mirroring /admin/referrals (a referrer is paid one combined
+  // amount per run). Held referrals stay as individual rows since each may be held for its own
+  // reason. Grouped by referrer + currency so a referrer's rows never mix ₱ and $.
+  const refGroups = new Map<string, ReferralDue[]>();
+  for (const r of due.referralsDue) {
+    const key = `${(r.referrerSlug || r.referrerName).toLowerCase()}|${r.currency}`;
+    const g = refGroups.get(key) || [];
+    g.push(r); refGroups.set(key, g);
+  }
+  for (const group of refGroups.values()) {
+    const first = group[0];
+    const ref = first.referrerSlug ? refBySlug.get(first.referrerSlug.toLowerCase()) : undefined;
+    const method = ref?.paymentMethod || null;
+    const details = ref?.paymentDetails || null;
+    const payeeKey = `ref:${(first.referrerSlug || first.referrerName).toLowerCase()}`;
+    const paused = pauseFor(payeeKey);
+    const amount = group.reduce((s, r) => s + r.amount, 0);
+    const people = group.map((r) => r.person).filter(Boolean);
+    const earliestDue = group.reduce((min, r) => (r.dueDate < min ? r.dueDate : min), first.dueDate);
+    const anyReady = group.some((r) => r.status === "ready");
+    const overdue = !paused && anyReady && new Date(earliestDue).getTime() < Date.now();
+    const state: ReadyState = paused ? "hold" : readyStateFor(method, details, false, anyReady);
+    ready.push({
+      id: `${payeeKey}:${first.currency}`, kind: "referral",
+      payeeKey, payeeName: first.referrerName, payeeSub: first.referrerSlug,
+      referredBy: null,
+      description: people.length === 1 ? people[0] : `${people.length} referrals · ${people.join(", ")}`,
+      amount, currency: first.currency,
+      method, details, rail: railFor(method), dueDate: earliestDue, overdue, state,
+      holdReason: paused ? reasonLabel(paused.reason) : null,
+      receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused, flagged: false,
+      refApps: group.map((r) => ({ applicationId: r.applicationId, person: r.person, amount: r.amount })),
+    });
+  }
   for (const r of due.referralsHeld) pushReferral(r, true);
 
   // ── Owed: ambassador setup + monthly (due now, overdue, upcoming) ─────

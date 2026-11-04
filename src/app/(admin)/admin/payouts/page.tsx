@@ -45,6 +45,7 @@ interface Row {
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
   paused: Pause | null; flagged: boolean; secured?: boolean;
+  refApps?: { applicationId: string; person: string; amount: number }[];
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
@@ -54,7 +55,7 @@ interface Payee {
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
-interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; }
+interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; apps?: { applicationId: string; amount: number }[]; }
 interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; markPaid: (p: MarkPaidPayload) => Promise<boolean>; }
 
 const money = (n: number, c: "PHP" | "USD" = "PHP") =>
@@ -250,7 +251,7 @@ function MarkPaid({ r, markPaid }: { r: Row; markPaid: (p: MarkPaidPayload) => P
   const submit = async () => {
     if (!url.trim()) { setErr("Paste the Wise receipt link first."); return; }
     setBusy(true); setErr(null);
-    const ok = await markPaid({ id: r.id, payeeKey: r.payeeKey, kind: r.kind, amount: r.amount, receiptUrl: url.trim() });
+    const ok = await markPaid({ id: r.id, payeeKey: r.payeeKey, kind: r.kind, amount: r.amount, receiptUrl: url.trim(), ...(r.refApps ? { apps: r.refApps.map((a) => ({ applicationId: a.applicationId, amount: a.amount })) } : {}) });
     if (!ok) { setErr("Couldn’t record — try again."); setBusy(false); }
     // On success the feed reloads and this row moves to Paid (component unmounts).
   };
