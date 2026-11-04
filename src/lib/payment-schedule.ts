@@ -249,19 +249,21 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
     const monthlyAmount = monthlyByEmail.get(a.email) || cfg.monthlyAmount;
     const base = { name: a.fullName || a.email, email: a.email, method: a.paymentMethod, details: a.paymentDetails, currency: cfg.currency, blocked: a.accountIssue || null };
 
-    // Setup fee — only if not yet marked paid. Due one week after QC (the same maturation
-    // clock the pipeline and referrer portal show), so every view agrees on the date.
+    // Setup fee — only if not yet marked paid.
     if (!a.paidAt) {
-      // Fall back to the onboard date for the rare onboarded account with no QC date, so an
-      // owed fee still appears rather than dropping out of the digest.
-      const due = setupFeeReadyDate(a.verifiedAt) || (a.onboardedAt ? new Date(a.onboardedAt) : null);
+      // Step-5 security lockdown complete? (mirrors the pipeline's `allSec`: sessionsOut +
+      // noRememberedPw + phoneRemoved always, plus gologinRemoved for "computer" onboardings.)
+      const qc = (a.qcChecks && typeof a.qcChecks === "object" ? a.qcChecks as Record<string, unknown> : {});
+      const secNeeded = ["sessionsOut", "noRememberedPw", "phoneRemoved", ...(a.onboardingMethod === "computer" ? ["gologinRemoved"] : [])];
+      const secured = secNeeded.every((k) => !!qc[k]);
+      // Readiness: finishing the Step-5 security checklist makes the setup fee payable NOW —
+      // the handover is locked down, so there's nothing left to wait on. Until it's secured
+      // the fee follows the usual one-week post-QC maturation (fall back to the onboard date
+      // for the rare onboarded account with no QC date), so unsecured owners still surface on
+      // schedule rather than being hidden.
+      const matured = setupFeeReadyDate(a.verifiedAt) || (a.onboardedAt ? new Date(a.onboardedAt) : null);
+      const due = secured ? (matured && matured.getTime() <= now ? matured : new Date(now)) : matured;
       if (due) {
-        // Step-5 security lockdown complete? (mirrors the pipeline's `allSec`: sessionsOut +
-        // noRememberedPw + phoneRemoved always, plus gologinRemoved for "computer" onboardings.)
-        // Surfaced as a flag only — it does not gate payment.
-        const qc = (a.qcChecks && typeof a.qcChecks === "object" ? a.qcChecks as Record<string, unknown> : {});
-        const secNeeded = ["sessionsOut", "noRememberedPw", "phoneRemoved", ...(a.onboardingMethod === "computer" ? ["gologinRemoved"] : [])];
-        const secured = secNeeded.every((k) => !!qc[k]);
         const item: DueItem = { ...base, kind: "setup", amount: cfg.setupAmount, dueDate: due.toISOString(), overdue: due < startOfToday, secured };
         if (due.getTime() <= now) setup.push(item);
         else if (due.getTime() <= horizonEnd) upcoming.push(item);
