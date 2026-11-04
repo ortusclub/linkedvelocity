@@ -26,35 +26,52 @@ export async function POST(req: Request) {
     const nowISO = new Date().toISOString();
 
     if (kind === "referral") {
-      const applicationId = id.startsWith("ref:") ? id.slice(4) : id;
-      const app = await prisma.ambassadorApplication.findUnique({
-        where: { id: applicationId },
-        select: { fullName: true, referredBy: true },
-      });
-      if (!app) return NextResponse.json({ error: "Referral application not found." }, { status: 404 });
-      const slug = (app.referredBy || "").trim();
-      const referrer = slug ? await prisma.referrer.findFirst({
-        where: { OR: [{ slug: { equals: slug, mode: "insensitive" } }, { name: { equals: slug, mode: "insensitive" } }] },
-        select: { id: true, slug: true, name: true, email: true },
-      }) : null;
-      if (!referrer) return NextResponse.json({ error: `Referrer "${slug}" not found.` }, { status: 404 });
+      // A consolidated referrer row covers several referrals (body.apps); a single-referral
+      // row falls back to the one id. Record one attributed commission payout per referral
+      // (mirrors /admin/referrals — no amount-netting), then email the referrer once for the
+      // combined total. Already-paid referrals are skipped so re-recording never double-pays.
+      const apps: { applicationId: string; amount: number }[] = Array.isArray(body.apps) && body.apps.length
+        ? body.apps
+            .filter((a: unknown): a is { applicationId: string; amount: unknown } => !!a && typeof (a as { applicationId?: unknown }).applicationId === "string")
+            .map((a: { applicationId: string; amount: unknown }) => ({ applicationId: a.applicationId, amount: Number(a.amount) || 0 }))
+        : [{ applicationId: id.startsWith("ref:") ? id.slice(4) : id, amount }];
 
-      const existing = await prisma.payout.findFirst({
-        where: { type: "commission", ambassadorApplicationId: applicationId, paidAt: { not: null } },
-        select: { id: true },
-      });
-      if (existing) return NextResponse.json({ ok: true, alreadyPaid: true });
-
-      await prisma.payout.create({
-        data: {
-          referrerId: referrer.id, type: "commission", ambassadorApplicationId: applicationId,
-          amount, description: `Commission for ${app.fullName}`, paidAt: new Date(), paidBy: by,
-          reference: receiptUrl, notifiedAt: new Date(),
-        },
-      });
+      let referrer: { id: string; slug: string; name: string | null; email: string | null } | null = null;
+      const paidNames: string[] = [];
+      let total = 0;
+      for (const a of apps) {
+        const app = await prisma.ambassadorApplication.findUnique({
+          where: { id: a.applicationId },
+          select: { fullName: true, referredBy: true },
+        });
+        if (!app) continue;
+        if (!referrer) {
+          const slug = (app.referredBy || "").trim();
+          referrer = slug ? await prisma.referrer.findFirst({
+            where: { OR: [{ slug: { equals: slug, mode: "insensitive" } }, { name: { equals: slug, mode: "insensitive" } }] },
+            select: { id: true, slug: true, name: true, email: true },
+          }) : null;
+          if (!referrer) return NextResponse.json({ error: `Referrer "${slug}" not found.` }, { status: 404 });
+        }
+        const existing = await prisma.payout.findFirst({
+          where: { type: "commission", ambassadorApplicationId: a.applicationId, paidAt: { not: null } },
+          select: { id: true },
+        });
+        if (existing) continue;
+        await prisma.payout.create({
+          data: {
+            referrerId: referrer.id, type: "commission", ambassadorApplicationId: a.applicationId,
+            amount: a.amount, description: `Commission for ${app.fullName}`, paidAt: new Date(), paidBy: by,
+            reference: receiptUrl, notifiedAt: new Date(),
+          },
+        });
+        paidNames.push(app.fullName || "referral"); total += a.amount;
+      }
+      if (!referrer) return NextResponse.json({ error: "Referral application not found." }, { status: 404 });
+      if (paidNames.length === 0) return NextResponse.json({ ok: true, alreadyPaid: true });
       const cur = currencyConfig(referrer.slug).currency;
       if (referrer.email) {
-        try { await sendReferralPayoutEmail(referrer.email, referrer.name || referrer.slug, amount, receiptUrl, app.fullName, 1, cur); }
+        try { await sendReferralPayoutEmail(referrer.email, referrer.name || referrer.slug, total, receiptUrl, paidNames.join(", "), paidNames.length, cur); }
         catch (e) { console.error("[mark-paid] referral email failed", e); }
       }
       return NextResponse.json({ ok: true });
