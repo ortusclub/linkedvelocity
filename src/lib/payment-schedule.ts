@@ -154,7 +154,16 @@ export interface ReferralDue {
   dueDate: string;         // maturation date (past for ready, future for upcoming)
   status: "ready" | "upcoming";
   payVia: string | null;   // referrer's payout method · details
+  onboardingType: string;  // what sets the commission tier: "Standard referral" / "DIY · computer · verified" etc.
   holdReason?: string | null; // set only on held items (see referralsHeld)
+}
+
+// Human label for the onboarding tier that drives the referral commission amount — mirrors the
+// branches in referralCommissionAmount so the console can show why a commission is priced as it is.
+export function referralTierLabel(a: { referralSource: string | null; onboardingMethod: string | null; onboardingVerified: boolean | null }): string {
+  if (a.referralSource !== "self-service" || a.onboardingMethod === "team_meeting") return "Standard referral";
+  const method = a.onboardingMethod === "phone" ? "phone" : "computer";
+  return `DIY · ${method}${a.onboardingVerified ? " · verified" : ""}`;
 }
 export interface PaymentsDue {
   setup: DueItem[];        // setup fees due now / overdue (unpaid)
@@ -348,6 +357,7 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
         referrerName: r?.name || slug, referrerId: r?.id || null, referrerSlug: r?.slug || null,
         amount: amt, currency: cfg.currency, dueDate: new Date(dueMs).toISOString(),
         status: matured ? "ready" : "upcoming", payVia,
+        onboardingType: referralTierLabel(a),
       };
       // Manually held (blocked) → out of "due now" and totals, into the Held list. This MUST be
       // checked BEFORE the legacy-lump netting below: a held referral is not payable, so it must

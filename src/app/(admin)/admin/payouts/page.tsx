@@ -45,7 +45,7 @@ interface Row {
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
   paused: Pause | null; flagged: boolean; secured?: boolean;
-  refApps?: { applicationId: string; person: string; amount: number }[];
+  refApps?: { applicationId: string; person: string; amount: number; type: string }[];
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
@@ -271,6 +271,32 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
       <span style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.faint }}>{label}</span>
       <span style={{ font: `600 13.5px ${GRO}`, color: C.ink, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
+    </div>
+  );
+}
+
+// The referrals a consolidated payout covers — the full list (the row only fits a few names),
+// each with its own commission, so you can see exactly who this one payment is for.
+function ReferralBreakdown({ items, currency }: { items: { applicationId: string; person: string; amount: number; type: string }[]; currency: "PHP" | "USD" }) {
+  const total = items.reduce((s, a) => s + a.amount, 0);
+  return (
+    <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
+      <div style={{ font: `700 10.5px ${SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 8 }}>Referrals in this payout · {items.length}</div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {items.map((a, i) => (
+          <div key={a.applicationId || i} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+            <span style={{ minWidth: 0, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ font: `500 13px ${SANS}`, color: C.ink2 }}>{a.person}</span>
+              <span style={{ font: `600 10.5px ${SANS}`, color: C.faint, background: C.inset, borderRadius: 999, padding: "1px 8px", whiteSpace: "nowrap" }}>{a.type}</span>
+            </span>
+            <span style={{ font: `600 13px ${GRO}`, color: C.ink, whiteSpace: "nowrap" }}>{money(a.amount, currency)}</span>
+          </div>
+        ))}
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, borderTop: `1px solid ${C.divider}`, paddingTop: 6, marginTop: 2 }}>
+          <span style={{ font: `700 12px ${SANS}`, color: C.muted }}>Total</span>
+          <span style={{ font: `700 13px ${GRO}`, color: C.ink }}>{money(total, currency)}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -624,6 +650,7 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
           {flags && <CheckBlock flags={flags} rental={payee?.rental} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
           {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
           {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
+          {r.kind === "referral" && r.refApps && r.refApps.length > 1 && <ReferralBreakdown items={r.refApps} currency={r.currency} />}
           <InfoGrid p={payee} amount={r.amount} />
           <div style={{ borderTop: `1px solid ${C.divider}`, padding: "12px 14px" }}>
             <PaymentRecord history={payee?.history || []} total={payee?.totalPaid || 0} currency={payee?.currency} />

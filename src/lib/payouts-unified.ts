@@ -82,7 +82,7 @@ export interface UnifiedReadyPayout {
   // Consolidated referral rows only: the individual referrals this one payout covers (one
   // commission per referred ambassador). Paying the row records a payout per entry, mirroring
   // /admin/referrals (attributed, no amount-netting), and sends the referrer one receipt email.
-  refApps?: { applicationId: string; person: string; amount: number }[];
+  refApps?: { applicationId: string; person: string; amount: number; type: string }[];
 }
 
 export interface UnifiedPayment {
@@ -386,7 +386,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       method, details, rail: railFor(method), dueDate: earliestDue, overdue, state,
       holdReason: paused ? reasonLabel(paused.reason) : null,
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused, flagged: false,
-      refApps: group.map((r) => ({ applicationId: r.applicationId, person: r.person, amount: r.amount })),
+      refApps: group.map((r) => ({ applicationId: r.applicationId, person: r.person, amount: r.amount, type: r.onboardingType })),
     });
   }
   for (const r of due.referralsHeld) pushReferral(r, true);
@@ -447,6 +447,18 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       receipt: p.reference || null, notified: !!p.notifiedAt, acknowledged: !!p.confirmedAt,
     });
     payee.totalPaid += amt;
+  }
+  // Referrers owed a commission this run but never paid before have no payee yet (payees are
+  // seeded from PAID commissions above), so their consolidated referral row's detail panel comes
+  // up empty. Seed a payee for each from the referrer record so the payout details show.
+  for (const r of [...due.referralsDue, ...due.referralsHeld]) {
+    const key = `ref:${(r.referrerSlug || r.referrerName).toLowerCase()}`;
+    if (payeeMap.has(key)) continue;
+    const ref = r.referrerSlug ? refBySlug.get(r.referrerSlug.toLowerCase()) : undefined;
+    const payee = ensurePayee(key, r.referrerName, r.referrerSlug, "referral", ref?.paymentMethod || null, ref?.paymentDetails || null, null);
+    payee.currency = r.currency;
+    if (!payee.email && ref?.email) payee.email = ref.email;
+    if (!payee.holder && ref?.paymentName) payee.holder = ref.paymentName;
   }
   // Owners owed a payout this run (setup / monthly / upcoming), so a first-ever setup fee with
   // no payment history still gets a payee — and therefore a populated detail panel (LinkedIn,
