@@ -49,7 +49,7 @@ interface Row {
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
 interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
-  method: string | null; masked: string | null; rail: "wallet" | "bank" | null;
+  method: string | null; masked: string | null; details: string | null; rail: "wallet" | "bank" | null;
   email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; rental: Rental | null; currency: "PHP" | "USD"; nextDue: string | null; note: string | null;
   totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
 }
@@ -323,7 +323,7 @@ function InfoGrid({ p, amount, nextDue }: { p: Payee | undefined; amount?: numbe
           : "—"}
       </Field>
       <Field label="Referred by">{p.referredBy || "—"}</Field>
-      <Field label="Payment method">{[p.method, p.masked, p.holder].filter(Boolean).join(" · ") || "—"}</Field>
+      <Field label="Payment method">{[p.method, p.details || p.masked, p.holder].filter(Boolean).join(" · ") || "—"}</Field>
       <Field label={amount != null ? "This payout" : "Payout"}>{amount != null ? money(amount, p.currency) : (p.kinds.includes("monthly") ? "monthly" : "—")}</Field>
       {nextDue && <Field label="Next payment due">{fmtDate(p.nextDue)}</Field>}
       <Field label="Accounts">{p.accounts > 0 ? String(p.accounts) : "—"}</Field>
