@@ -89,7 +89,7 @@ export async function POST(req: Request) {
         const app = await prisma.ambassadorApplication.findFirst({
           where: { email: { equals: s.email, mode: "insensitive" } },
           orderBy: { onboardedAt: "desc" },
-          select: { id: true, email: true, fullName: true, monthlyPayouts: true, paidAt: true, payoutCurrency: true, referredBy: true, diyTier: true, createdAt: true },
+          select: { id: true, email: true, fullName: true, monthlyPayouts: true, paidAt: true, payoutCurrency: true, referredBy: true },
         });
         if (!app) continue;
         const entries = Array.isArray(app.monthlyPayouts) ? [...(app.monthlyPayouts as Array<{ kind?: string; proofUrl?: string | null }>)] : [];
