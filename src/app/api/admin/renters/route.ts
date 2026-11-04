@@ -36,7 +36,7 @@ export async function GET() {
           include: {
             rentals: {
               select: {
-                status: true, lockedPrice: true, replacesRentalId: true, discountCode: true,
+                status: true, lockedPrice: true, replacesRentalId: true, discountCode: true, autoRenew: true,
                 linkedinAccount: { select: { monthlyPrice: true } },
               },
             },
@@ -78,6 +78,8 @@ export async function GET() {
       // GoLogin yet). Both are live, billable rentals, so they count toward the live total and MRR.
       const live = rentals.filter((r) => r.status === "active" || r.status === "pending_access");
       const mrr = live.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount?.monthlyPrice ?? 0), 0);
+      // How many of the live rentals auto-renew (vs. will lapse at period end). Drives the board badge.
+      const autoRenewOn = live.filter((r) => r.autoRenew).length;
       const lead = p.inboundLeadId ? leadById.get(p.inboundLeadId) : null;
       // Timeline: for a lead-linked person, read the comms_log LIVE so the history always matches
       // /admin/crm + /admin/inbound (comms_log is the superset — renter notes are mirrored into it,
@@ -122,6 +124,7 @@ export async function GET() {
         notes: p.notes,
         liveRentals: live.length,
         totalRentals: u?._count.rentals ?? 0,
+        autoRenewOn,
         mrr,
         txnCount: (u && txnCount.get(u.id)) || 0,
         paidTotal: (u && paidTotal.get(u.id)) || 0,
