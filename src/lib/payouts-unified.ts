@@ -410,24 +410,32 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     });
     payee.totalPaid += amt;
   }
+  // Owners owed a payout this run (setup / monthly / upcoming), so a first-ever setup fee with
+  // no payment history still gets a payee — and therefore a populated detail panel (LinkedIn,
+  // rental, work email, …) — instead of only owners who already have monthly_payouts entries.
+  const owedAmbEmails = new Set<string>([...due.setup, ...due.monthly, ...due.upcoming].map((d) => d.email.toLowerCase()));
   for (const a of apps) {
     const entries = Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as Entry[]) : [];
-    if (entries.length === 0) continue;
+    if (entries.length === 0 && !owedAmbEmails.has(a.email.toLowerCase())) continue;
     const key = `amb:${a.email.toLowerCase()}`;
     const referredBy = a.referredBy ? refNameBySlug.get(a.referredBy.trim().toLowerCase()) || a.referredBy.trim() : null;
+    // Seed + enrich the payee once, whether or not there's payment history yet (kind reflects
+    // history if any, else the owed kind — a bare setup owner seeds as "setup").
+    const seedKind: PayoutKind = entries.some((e) => e.kind !== "setup") ? "monthly" : "setup";
+    const payee = ensurePayee(key, a.fullName || a.email, a.email, seedKind, ambMethod(a), a.paymentDetails || null, referredBy);
+    if (!payee.email) payee.email = a.email;
+    if (!payee.phone && a.contactNumber) payee.phone = a.contactNumber;
+    if (!payee.holder && a.payoutName) payee.holder = a.payoutName;
+    if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
+    if (!payee.flags) payee.flags = flagsByEmail.get(a.email.toLowerCase()) || null;
+    if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
+    if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
+    if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
+    if (!payee.accounts && payee.rental) payee.accounts = payee.rental.totalCount;
+    payee.currency = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
     for (const e of entries) {
       const kind: PayoutKind = e.kind === "setup" ? "setup" : "monthly";
-      const payee = ensurePayee(key, a.fullName || a.email, a.email, kind, ambMethod(a), a.paymentDetails || null, referredBy);
-      if (!payee.email) payee.email = a.email;
-      if (!payee.phone && a.contactNumber) payee.phone = a.contactNumber;
-      if (!payee.holder && a.payoutName) payee.holder = a.payoutName;
-      if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
-      if (!payee.flags) payee.flags = flagsByEmail.get(a.email.toLowerCase()) || null;
-      if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
-      if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
-      if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
-      if (!payee.accounts && payee.rental) payee.accounts = payee.rental.totalCount;
-      payee.currency = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
+      if (!payee.kinds.includes(kind)) payee.kinds.push(kind);
       const amt = Number(e.amount) || 0;
       payee.history.push({ date: e.paidAt || null, amount: amt, kind, label: kind === "setup" ? "Setup fee" : "Monthly", by: e.by || null, receipt: e.proofUrl || null, notified: !!e.notified, acknowledged: !!e.acknowledged });
       payee.totalPaid += amt;
