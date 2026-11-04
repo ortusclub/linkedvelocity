@@ -18,11 +18,26 @@ export const emailAction = z.discriminatedUnion("action", [
   z.object({ action: z.literal("primary"), consent: z.literal(true) }),
 ]);
 
-// Called only inside the email allocation lock. Retained setup rows are the
-// durable round-robin counter; resends/resumes never consume another position.
+// Called only inside the email allocation lock. Picks the configured domain that is
+// currently LEAST used across live accounts, so under-used domains catch up and inventory
+// stays spread across providers instead of concentrating on whichever ones seeded the pool
+// first. (An even round-robin preserves any starting imbalance; least-used self-corrects it.)
+// Ties break by the domain's order in `domains`. Dead accounts (retired/removed) are excluded
+// so a domain that burned through accounts isn't re-flooded.
+async function leastUsedDomain(tx: Prisma.TransactionClient, domains: string[]) {
+  const counts = await Promise.all(domains.map(d =>
+    tx.linkedInAccount.count({ where: {
+      loginEmail: { endsWith: `@${d}`, mode: "insensitive" },
+      status: { notIn: ["retired", "removed"] },
+    } })));
+  let best = 0;
+  for (let i = 1; i < domains.length; i++) if (counts[i] < counts[best]) best = i;
+  return domains[best];
+}
+
 export async function allocateOnboardingAddress(tx: Prisma.TransactionClient, name: string, domains: string[], excludeAddress?: string | null) {
   if (!domains.length) throw new EmailSetupError("No receiving domain is configured.", 503);
-  const domain = domains[(await tx.onboardingEmailSetup.count()) % domains.length];
+  const domain = await leastUsedDomain(tx, domains);
   for (let collision = 0; collision < 10000; collision++) {
     const address = assignedEmail(name, domain, collision);
     if (address === excludeAddress) continue;
