@@ -45,6 +45,25 @@ const WILL_CFG: CatalogueConfig = {
   snAddon: 70,
 };
 
+// Yaron Been — same full-pipeline browse-only catalogue (he replies with picks, we provision
+// manually at his agreed rate). Real per-account tier price (connections + age, +$10 verified),
+// NO Sales Navigator add-on: he runs his own Sales Navigator independently on the accounts.
+const YARON_SLUG = "iv-yaron-been-8n4k2p7xqm";
+const YARON_PASSWORD = "YaronLV2026";
+const yaronPrice = (a: PriceInput) => tierPricing(a.connectionCount, a.accountAgeMonths, false, a.linkedinVerified).monthly;
+const YARON_CFG: CatalogueConfig = {
+  forLabel: "Yaron Been",
+  storageKey: "yaronbeen",
+  heroBlurb: "Aged, warmed LinkedIn profiles, plus everything currently in warm-up. Each account is priced by tier (connections and age), starting at $45/mo, with +$10 if verified. Open any profile to review it.",
+  legend: [
+    { cls: "u", label: "By tier", value: "from $45/mo" },
+    { cls: "v", label: "✓ Verified", value: "+$10/mo" },
+  ],
+  showRent: false,
+  showAge: true,
+  snAddon: null,
+};
+
 // Martin Perak — NY real-estate renter testing with Alta. Full-pipeline catalogue on the Agent360
 // pattern, standard per-account website tier price (by connections + age, +$10 verified), no Sales
 // Navigator (not offered to new renters). First-come Rent link ON: his self-serve checkout prices
@@ -230,6 +249,12 @@ export default async function PartnerInventoryPage({ params }: { params: Promise
   if (key === WILL_SLUG) {
     const rows = await pipelineRows(willPrice);
     return <Agent360Catalogue rows={rows} password={WILL_PASSWORD} cfg={WILL_CFG} />;
+  }
+
+  // Yaron Been: full-pipeline browse-only catalogue, real tier price, no SN add-on.
+  if (key === YARON_SLUG) {
+    const rows = await pipelineRows(yaronPrice);
+    return <Agent360Catalogue rows={rows} password={YARON_PASSWORD} cfg={YARON_CFG} />;
   }
 
   // Martin Perak: full-pipeline catalogue, first-come Rent, standard tier price, no SN.
