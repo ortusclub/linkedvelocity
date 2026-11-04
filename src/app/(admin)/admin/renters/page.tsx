@@ -28,6 +28,17 @@ const BLUE = "#2563eb";
 const F = "'Plus Jakarta Sans',system-ui,sans-serif";
 const G = "'Space Grotesk',system-ui,sans-serif";
 
+// Auto-renew indicator for the Spend/mo cell: how many of a renter's LIVE rentals auto-renew.
+// All on → green "auto-renew"; all off → grey "no auto-renew"; partial → amber "auto N/total".
+function autoRenewBadge(on: number, total: number) {
+  if (total <= 0) return null;
+  const all = on >= total, none = on === 0;
+  const label = all ? "auto-renew" : none ? "no auto-renew" : `auto ${on}/${total}`;
+  const bg = all ? "#e7f6ee" : none ? "#eef1f5" : "#fff4e5";
+  const fg = all ? "#0f7a3d" : none ? "#66707e" : "#b45309";
+  return <span style={{ font: `600 10px ${F}`, padding: "1px 7px", borderRadius: 999, background: bg, color: fg, whiteSpace: "nowrap" }}>{label}</span>;
+}
+
 const ST = {
   Active: { bg: "#e7f6ee", fg: "#0f7a3d" },
   Dormant: { bg: "#fff4e5", fg: "#b45309" },
@@ -64,7 +75,7 @@ type Person = {
   followUp: string | null; leadStage: "warm" | "cold" | null; statusOverride: "renting" | "dormant" | null;
   vetting: keyof typeof VET; paymentMethod: "Card" | "Crypto Wallet" | null; paymentFailed: boolean;
   signInAccess: boolean; dailyCap: number; isTest: boolean; notes: string | null;
-  liveRentals: number; totalRentals: number; mrr: number; txnCount: number; paidTotal: number;
+  liveRentals: number; totalRentals: number; autoRenewOn: number; mrr: number; txnCount: number; paidTotal: number;
   replacementCount: number; discount: string | null; joinedAt: string; lastActivityAt: string;
   companyId: string | null; companyDomain: string | null; vettingReviewRaw: string | null;
   commsSummary: string | null; commsSummaryStale: boolean;
@@ -448,6 +459,7 @@ export default function RentersV3Page() {
                 const live = row.members.reduce((s, m) => s + m.liveRentals, 0);
                 const total = row.members.reduce((s, m) => s + m.totalRentals, 0);
                 const spend = row.members.reduce((s, m) => s + m.mrr, 0);
+                const arOn = row.members.reduce((s, m) => s + m.autoRenewOn, 0);
                 const main = row.co.mainContactId ? personById.get(row.co.mainContactId) : null;
                 return (
                   <div key={row.co.id} onClick={() => setOpenCompany(row.co.id)} style={{ display: "grid", gridTemplateColumns: colGrid, gap: 14, alignItems: "center", padding: "12px 18px", background: INPUT, borderBottom: `1px solid ${LINE2}`, cursor: "pointer" }}>
@@ -462,7 +474,10 @@ export default function RentersV3Page() {
                     <span />
                     <span style={{ font: `500 12px ${F}`, color: SUB }}>{main ? `Main: ${main.name.split(" ")[0]}` : ""}</span>
                     <span style={{ font: `700 15px ${G}`, color: INK }}>{live}<span style={{ font: `500 12px ${F}`, color: MUT }}> / {total}</span></span>
-                    <span style={{ font: `700 14px ${G}`, color: INK }}>{money(spend)}</span>
+                    <span style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
+                      <span style={{ font: `700 14px ${G}`, color: INK }}>{money(spend)}</span>
+                      {autoRenewBadge(arOn, live)}
+                    </span>
                     <span />
                     <span style={{ font: `700 14px ${F}`, color: "#b4bccb" }}>›</span>
                   </div>
@@ -509,7 +524,10 @@ export default function RentersV3Page() {
                     <span style={{ font: `600 11px ${F}`, padding: "2px 8px", borderRadius: 999, background: PAY[payK].bg, color: PAY[payK].fg, whiteSpace: "nowrap" }}>{p.paymentMethod ?? "No method"}</span>
                   </div>
                   <span style={{ font: `700 15px ${G}`, color: p.liveRentals ? "#0f7a3d" : INK }}>{p.liveRentals}<span style={{ font: `500 12px ${F}`, color: MUT }}> / {p.totalRentals}</span></span>
-                  <span style={{ font: `700 14px ${G}`, color: INK }}>{money(p.mrr)}</span>
+                  <span style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
+                    <span style={{ font: `700 14px ${G}`, color: INK }}>{money(p.mrr)}</span>
+                    {autoRenewBadge(p.autoRenewOn, p.liveRentals)}
+                  </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 7, font: `600 12.5px ${F}`, color: SUB, whiteSpace: "nowrap" }}>
                     <span title={p.pocOwner || "Unassigned"} style={{ flex: "none", width: 22, height: 22, borderRadius: "50%", background: p.pocOwner ? POC_COLOR[p.pocOwner] : "#c6ccd6", color: "#fff", display: "grid", placeItems: "center", font: `700 9.5px ${F}` }}>{p.pocOwner ? p.pocOwner[0] : "—"}</span>{daysAgo(p.lastActivityAt)}
                   </span>
@@ -571,7 +589,7 @@ function PersonDrawer(props: {
   const toggleEntry = (id: string) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const rid = p.userId || "";
   const links = [
-    { label: "Rentals", val: `${p.liveRentals} live · ${p.totalRentals} total`, href: `/admin/rentals?renter=${rid}` },
+    { label: "Rentals", val: `${p.liveRentals} live · ${p.totalRentals} total${p.liveRentals > 0 ? ` · ${p.autoRenewOn === p.liveRentals ? "all auto-renew" : p.autoRenewOn === 0 ? "no auto-renew" : `${p.autoRenewOn}/${p.liveRentals} auto-renew`}` : ""}`, href: `/admin/rentals?renter=${rid}` },
     { label: "Transactions", val: `${p.txnCount} · ${money(p.paidTotal)} paid`, href: `/admin/transactions?renter=${rid}` },
     { label: "Replacements", val: `${p.replacementCount}`, href: `/admin/replacements?renter=${rid}` },
     { label: "Discounts", val: p.discount || "none", href: `/admin/discounts${p.discount ? `?code=${encodeURIComponent(p.discount)}` : ""}` },
