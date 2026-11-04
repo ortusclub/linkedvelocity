@@ -330,7 +330,7 @@ export default function Agent360Catalogue({ rows, password, cfg = DEFAULT_CFG }:
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
               {cfg.showRent
                 ? <div><b>See one you like?</b> Available accounts are first come, first served — hit <b>Rent →</b> to take one. Prefer to send a list? Tick several and use &quot;Copy my picks&quot; at the bottom.</div>
-                : <div><b>Browse the inventory.</b> Look through what&apos;s available now and what&apos;s coming up, then tick the ones you&apos;d like, hit <b>Copy my picks</b> and reply to us — we&apos;ll set them up with Sales Navigator and connect you.</div>}
+                : <div><b>Browse the inventory.</b> Look through what&apos;s available now and what&apos;s coming up, then tick the ones you&apos;d like, hit <b>Copy my picks</b> and reply to us — we&apos;ll {cfg.snAddon ? "set them up with Sales Navigator and connect you" : "get them set up and connect you"}.</div>}
             </div>
             <div className="filters">
               <input className="fsearch" type="search" placeholder="Search name, role, or industry…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search accounts" />
@@ -354,7 +354,7 @@ export default function Agent360Catalogue({ rows, password, cfg = DEFAULT_CFG }:
               {filtersActive
                 ? <>{shownCount} of {displayTotal} accounts match &middot; {buckets.now.length} available now{cfg.hideSoon ? "" : `, ${soonItems.length} within a week`}, {buckets.warm.length} in warm-up.</>
                 : <>{displayTotal} accounts total &middot; {buckets.now.length} available now{cfg.hideSoon ? "" : `, ${soonItems.length} within a week`}, {buckets.warm.length} in warm-up.</>}<br />
-              Prices per account / month. {cfg.showRent ? "Rent available accounts directly; earmark anything not yet available and we’ll reserve it for you." : "Tick the ones you’d like and we’ll set them up with Sales Navigator."}
+              Prices per account / month. {cfg.showRent ? "Rent available accounts directly; earmark anything not yet available and we’ll reserve it for you." : cfg.snAddon ? "Tick the ones you’d like and we’ll set them up with Sales Navigator." : "Tick the ones you’d like, reply with your picks, and we’ll get them set up for you."}
             </p>
           </main>
           <div className="bar">
