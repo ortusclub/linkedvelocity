@@ -27,9 +27,10 @@ export async function GET() {
     await requireAdmin();
     const { ready, payees } = await getUnifiedPayouts();
 
-    // Strip raw account details; expose only the masked form to the client.
+    // Pay-run rows keep only the masked detail (shown in the list). The expanded payee panel
+    // also carries the full account number so the admin can copy it to pay by hand.
     const readyOut = ready.map(({ details, ...r }) => ({ ...r, masked: maskDetail(details) }));
-    const payeesOut = payees.map(({ details, ...p }) => ({ ...p, masked: maskDetail(details) }));
+    const payeesOut = payees.map((p) => ({ ...p, masked: maskDetail(p.details) }));
 
     // Whether live Wise sending is switched on (full-access token present). Until then the
     // console renders the Send buttons but keeps them inert.
