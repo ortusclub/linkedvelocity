@@ -1128,6 +1128,36 @@ function DashboardContent() {
     !rentalQuery || [linkedinAccount.linkedinName, linkedinAccount.accountEmail]
       .some((value) => value?.toLowerCase().includes(rentalQuery))
   );
+  const downloadRentalCsv = () => {
+    const rows: (string | number | boolean | null | undefined)[][] = [
+      ["Name", "Email", "LinkedIn URL", "Headline", "Connections", "LinkedIn verified", "Rental status", "Paused", "Restricted since", "Permanently restricted", "Monthly price (USD)", "Rental start", "Renews", "Auto-renew", "Downtime credit (days)", "GoLogin login email", "GoLogin profile ID", "GoLogin share link", "Rental ID", "Account ID", "Replaces rental ID", "Proxy support status", "Proxy support ticket", "Problem category", "Problem ticket", "Profile changes"],
+      ...sortedRentals.map((rental) => {
+        const account = rental.linkedinAccount;
+        return [account.linkedinName, account.accountEmail, account.linkedinUrl, account.linkedinHeadline,
+          account.connectionCount, account.linkedinVerified, rental.status, rental.paused ?? false,
+          account.restrictedAt, account.permanentlyRestricted ?? false, rental.price, rental.startDate,
+          rental.currentPeriodEnd, rental.autoRenew, rental.downtimeCreditDays ?? 0,
+          rental.gologinLoginEmail, account.gologinProfileId, account.gologinShareLink,
+          rental.id, account.id, rental.replacesRentalId, rental.proxyFix?.status, rental.proxyFix?.ticketRef,
+          rental.problemReport?.category, rental.problemReport?.ticketRef,
+          rental.profileChanges?.map((change) => `${change.label}: ${change.detail} (${change.status}; planned ${change.plannedFor}${change.appliedAt ? `; applied ${change.appliedAt}` : ""})`).join("; ")];
+      }),
+    ];
+    const csv = rows.map((row) => row.map((value) => {
+      const text = String(value ?? "");
+      // Keep spreadsheet applications from interpreting account data as formulas.
+      const safe = /^[\s]*[=+@-]/.test(text) ? `'${text}` : text;
+      return `"${safe.replaceAll('"', '""')}"`;
+    }).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `linkedvelocity-accounts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const restrictedCount = currentRentals.filter((r) => !!r.linkedinAccount.restrictedAt).length;
   // Payment problems float to the very top so the renter can fix billing before anything renews.
   const paymentIssueRentals = currentRentals.filter((r) => r.status === "payment_failed");
@@ -1686,6 +1716,11 @@ function DashboardContent() {
           <span style={{ fontWeight: 600, fontSize: 13, color: V.faint, whiteSpace: "nowrap", marginTop: 2 }}>{currentRentals.length} {currentRentals.length === 1 ? "account" : "accounts"}</span>
         </div>
 
+        {currentRentals.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <Button type="button" variant="outline" onClick={downloadRentalCsv}>Download all accounts (CSV)</Button>
+          </div>
+        )}
         {showRentalSearch && (
           <div className="mb-4">
             <label htmlFor="rental-search" className="sr-only">Search rented accounts by name or email</label>

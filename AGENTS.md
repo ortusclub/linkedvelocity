@@ -11,6 +11,7 @@ Use `npm run wise -- --help` and `npm run test:wise`. Update the handoff status 
 ## Dashboard rental search — Samuel, 5 November 2026
 
 Show a search field above Accounts I'm Renting when there are more than three current accounts. Filter by account name or email, case-insensitively.
+Provide a CSV download of all current rented accounts and their account/rental details, independent of the search filter. Keep passwords and 2FA secrets out of the export.
 
 ## Project map
 
