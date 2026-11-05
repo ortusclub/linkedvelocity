@@ -658,6 +658,69 @@ export async function sendRenewalCronAlert(stuck: number, activeAutoRenew: numbe
   });
 }
 
+// Internal end-of-run digest of what the renewal cron DID this pass — the actions the team
+// needs to know about (a renewal that failed, access that was cut, an account released out of
+// the renter's hands). One email per run, only when there's something to report; clean renewals
+// are a count, not a line. This is the team's "nothing happened silently" trigger — renters still
+// get their own notices separately.
+export async function sendBillingActionsDigest(
+  to: string | string[],
+  data: {
+    renewed: number;
+    events: { kind: "grace" | "revoked" | "lapsed" | "released"; renter: string; account: string; note?: string }[];
+  }
+) {
+  if (!data.events.length) return;
+  const LABEL: Record<string, string> = {
+    grace: "Payment failed (in grace)",
+    revoked: "Access cut",
+    lapsed: "Access cut",
+    released: "Released",
+  };
+  const COLOR: Record<string, string> = {
+    grace: "#B45309",
+    revoked: "#B91C1C",
+    lapsed: "#B91C1C",
+    released: "#6D28D9",
+  };
+  const order = ["revoked", "lapsed", "released", "grace"];
+  const sorted = [...data.events].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+  const rows = sorted
+    .map(
+      (e) => `<tr>
+        <td style="padding:7px 10px;border-bottom:1px solid #EEF0F3;font-size:13px;font-weight:600;color:${COLOR[e.kind]};">${LABEL[e.kind]}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #EEF0F3;font-size:13px;color:#0B1220;">${e.renter}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #EEF0F3;font-size:13px;color:#374151;">${e.account}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #EEF0F3;font-size:12.5px;color:#536471;">${e.note || ""}</td>
+      </tr>`
+    )
+    .join("");
+  const nCut = data.events.filter((e) => e.kind === "revoked" || e.kind === "lapsed").length;
+  const nRel = data.events.filter((e) => e.kind === "released").length;
+  const nGrace = data.events.filter((e) => e.kind === "grace").length;
+  const parts: string[] = [];
+  if (nCut) parts.push(`${nCut} access cut`);
+  if (nRel) parts.push(`${nRel} released`);
+  if (nGrace) parts.push(`${nGrace} in grace`);
+  return sendEmail({
+    to,
+    subject: `[Billing] Renewal run — ${parts.join(", ")}`,
+    html: brandWrap(`
+      <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 14px;">Today's renewal run took the actions below. <strong>${data.renewed}</strong> rental${data.renewed === 1 ? "" : "s"} renewed cleanly (not listed).</p>
+      <table style="border-collapse:collapse;width:100%;margin:0 0 16px;">
+        <thead><tr>
+          <th style="padding:7px 10px;border-bottom:2px solid #E6E8EC;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8A93A2;text-align:left;">Action</th>
+          <th style="padding:7px 10px;border-bottom:2px solid #E6E8EC;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8A93A2;text-align:left;">Renter</th>
+          <th style="padding:7px 10px;border-bottom:2px solid #E6E8EC;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8A93A2;text-align:left;">Account</th>
+          <th style="padding:7px 10px;border-bottom:2px solid #E6E8EC;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8A93A2;text-align:left;">Note</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p style="font-size:14px;color:#536471;line-height:1.6;margin:0;"><strong>Access cut</strong> = the GoLogin share + public link were pulled. If the renter holds the raw LinkedIn login, change the password and sign out all sessions to fully lock them out. <strong>Released</strong> = the account left the renter and was pulled into the after-rental reset (hidden); it re-lists as Available only after housekeeping.</p>
+    `),
+  });
+}
+
 // Daily Stripe -> ledger reconciliation summary. Only sent when there is a gap: a
 // charge Stripe collected that our ledger doesn't account for.
 export async function sendReconciliationSummary(
