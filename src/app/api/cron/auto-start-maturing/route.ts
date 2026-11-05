@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
 import { list, start } from "@/lib/maturing/service.mjs";
+import { categoryResolver, programStages } from "@/lib/maturing/programs.mjs";
 import { newMaturePlan } from "@/lib/maturing/shared/mature-profile-plan.mjs";
 
 export const dynamic = "force-dynamic";
@@ -20,36 +21,14 @@ export const maxDuration = 180;
 const DISQUALIFYING_APP_STATUS = new Set(["rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
-// Warm-then-cold ramps. Warm connections (other LV profiles) get accepted and carry low
-// restriction risk, so they lead; cold outreach (from the default cold sheet) follows to
-// keep the account active once the warm pool thins out. Two profiles:
-//  - AGGRESSIVE (default): warm 10→18→25/day (days 1-7), then cold 8→15/day (days 8-28)
-//    for clean, never-recently-restricted accounts.
-//  - GENTLE: warm 2→5→8/day (days 1-14), then cold 4→8/day (days 15-35) for accounts
-//    restricted/recovered in the last 30 days — fragile, warmed slowly per the SOP.
-// Stages must stay consecutive (each fromDay = previous toDay + 1). Tune here.
-const AGGRESSIVE_STAGES = [
-  { id: "warm", name: "Warm connections", fromDay: 1, toDay: 2, warmDaily: 10, coldDaily: 0, likesDaily: 0 },
-  { id: "ramp", name: "Ramp warm connections", fromDay: 3, toDay: 5, warmDaily: 18, coldDaily: 0, likesDaily: 0 },
-  { id: "push", name: "Push warm connections", fromDay: 6, toDay: 7, warmDaily: 25, coldDaily: 0, likesDaily: 0 },
-  { id: "cold", name: "Introduce cold outreach", fromDay: 8, toDay: 14, warmDaily: 10, coldDaily: 8, likesDaily: 0 },
-  { id: "coldramp", name: "Ramp cold outreach", fromDay: 15, toDay: 28, warmDaily: 5, coldDaily: 15, likesDaily: 0 },
-];
-const GENTLE_STAGES = [
-  { id: "warm", name: "Warm connections", fromDay: 1, toDay: 4, warmDaily: 2, coldDaily: 0, likesDaily: 0 },
-  { id: "ramp", name: "Ramp warm connections", fromDay: 5, toDay: 9, warmDaily: 5, coldDaily: 0, likesDaily: 0 },
-  { id: "push", name: "Ease up warm connections", fromDay: 10, toDay: 14, warmDaily: 8, coldDaily: 0, likesDaily: 0 },
-  { id: "cold", name: "Introduce cold (slow)", fromDay: 15, toDay: 21, warmDaily: 5, coldDaily: 4, likesDaily: 0 },
-  { id: "coldramp", name: "Ramp cold (slow)", fromDay: 22, toDay: 35, warmDaily: 3, coldDaily: 8, likesDaily: 0 },
-];
-function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean) {
+function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean, category: string) {
   const p = newMaturePlan() as Record<string, unknown>;
   p.warmEnabled = true;
   p.coldEnabled = true; // warm first, then cold — keep maturing past onboarding
   p.warmPool = "linkedvelocity_owned";
   p.coldPoolSource = "default"; // the shared default cold sheet (DEFAULT_MATURE_COLD_SHEET_URL)
   p.warmUntilExhausted = false; // warm runs its fixed stages, then cold carries on
-  p.stages = gentle ? GENTLE_STAGES : AGGRESSIVE_STAGES;
+  p.stages = programStages(category, gentle);
   p.targetProfileIds = [gid];
   p.accounts = { [gid]: { name, linkedinUrl } };
   return p;
@@ -156,18 +135,14 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Fragile accounts get the GENTLE ramp, not the aggressive one, so maturing doesn't
-  // tip them over. Two kinds are fragile: (1) recently restricted/recovered — any
-  // restriction-log event in the last 30 days (the warm-up SOP window); (2) still
-  // under construction — a freshly built profile that isn't established yet and can't
-  // take an aggressive 10→18→25/day ramp.
+  // Recent restriction history keeps the gentle ramp in every inventory category.
   const RESTR_WINDOW_MS = 30 * 86400000;
   function recentlyRestricted(a: { restrictionLog: unknown }): boolean {
     const log = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string }[]) : [];
     return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
   }
   function isFragile(a: { restrictionLog: unknown; status: string }): boolean {
-    return recentlyRestricted(a) || ["under_construction", "construction_immature"].includes(a.status);
+    return recentlyRestricted(a);
   }
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
@@ -196,25 +171,15 @@ export async function POST(req: NextRequest) {
       a.rentals.length === 0 &&
       campaignOk(a.gologinProfileId) &&
       startFailOk(a) &&
-      atLevel4(a),
+      (atLevel4(a) || ["under_construction", "construction_immature", "available"].includes(a.status)) &&
+      !(a.notes || "").includes("[SHOWCASE]"),
   );
 
   // Pipeline accounts take priority over already-onboarded inventory. Match
   // the Level-4 bucket: received, QC passed, no setup in progress, not earning
   // inventory with its setup fee paid. Retain all existing eligibility holds.
-  const byAppId = new Map(apps.map(a => [a.id, a]));
-  const isPipeline = (a: (typeof accounts)[number]) => {
-    const session = sessions.find(s => s.accountId === a.id);
-    const u = norm(a.linkedinUrl);
-    const owner = (a.notes || "").match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
-    const app = (session ? byAppId.get(session.applicationId) : undefined)
-      || (u && urlCount.get(u) === 1 ? apps.find(x => norm(x.linkedinUrl) === u) : undefined)
-      || (owner ? apps.find(x => x.email.toLowerCase() === owner) : undefined);
-    return !!app?.verifiedAt && app.applicationReceived !== false
-      && !["onboarded", "rejected", "unreachable"].includes(app.status)
-      && !sessions.some(s => s.applicationId === app.id && ["reserved", "needs_help", "ready"].includes(s.state))
-      && !(app.paidAt && ["available", "rented", "trial"].includes(a.status));
-  };
+  const category = categoryResolver(apps, sessions);
+  const isPipeline = (a: (typeof accounts)[number]) => category(a) === "pipeline";
   const CONSTRUCTION_STATUS = new Set(["under_construction", "construction_immature"]);
   const inConstruction = (a: { status: string }) => CONSTRUCTION_STATUS.has(a.status);
   // A scoped operator-triggered run can enrol just the visible Level-4 cohort.
@@ -234,14 +199,14 @@ export async function POST(req: NextRequest) {
   let queueFull = false;
   const errors: { account: string; error: string }[] = [];
   for (const a of ordered.slice(0, cap)) {
-    const gentle = isFragile(a);
+    const gentle = isFragile(a) || isPipeline(a);
     const isRestart = lastEndedAt.has(a.gologinProfileId!);
     try {
       await start(
-        { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
+        { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle, category(a)), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? `gentle warm→cold ramp (fragile — ${inConstruction(a) ? "still in construction" : "recently restricted"})` : "warm→cold ramp"}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started"} — ${category(a)} programme${gentle ? " · gentle ramp" : ""}`, "system").catch(() => {});
       // Clear any prior start-failure mark now that it launched.
       if (a.maturingStartFailedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: null, maturingStartFailedReason: null } }).catch(() => {});
       if (gentle) gentleStarted++;

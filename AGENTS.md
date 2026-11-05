@@ -68,3 +68,16 @@ qualification dates. Current production hold remains seven days. Compare recorde
 restriction timing after setup payment with equal follow-up windows; preserve
 recovered/retired histories and keep unlabeled/ambiguous identities explicit.
 Aggregate audit: docs/restriction-analysis-20261105.json.
+
+## Maturing board and programmes — Samuel, 5 November 2026
+Use the development Outreach Profile Maturing board as the reference for Admin
+Profile Maturing: compact rows, account filtering, warm/cold confirmed counts,
+next action, status, workbook access, and pause/resume/stop/open controls. Both
+views must read the same development-engine campaign identities and preserve
+confirmed progress. Never confuse running campaign counts with browser occupancy.
+Show separate Pipeline Maturing, Construction and Available sections. Pipeline
+classification wins overlaps. Construction and Available have stronger, separate
+warm/cold programmes; keep recent restriction history on the gentle ramp and
+preserve rental/restriction/session/provider holds and the global six-browser cap.
+Existing active campaigns retain their saved schedules and recipients; new cycles
+use the category programme. Do not create duplicates to change the display.

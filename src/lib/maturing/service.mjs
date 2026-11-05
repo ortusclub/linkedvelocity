@@ -1,3 +1,4 @@
+import {categoryResolver} from './programs.mjs';
 import {sheetRows,workspaceProfiles} from './sources.mjs';
 import {DEFAULT_MATURE_COLD_SHEET_URL} from './shared/mature-cold-pool.mjs';
 import { createHash } from 'node:crypto';
@@ -18,8 +19,10 @@ export async function accounts(db=prisma) {
   // status. Accounts with status 'unavailable' (not listed for rent, but fine to
   // warm up) CAN be matured — maturing is exactly what you do to an account that
   // isn't rental-ready yet, so they must appear in the picker and be startable.
-  const rows=await db.linkedInAccount.findMany({where:{status:{not:'removed'}},select:{id:true,gologinProfileId:true,gologinAccount:true,loginEmail:true,linkedinName:true,linkedinUrl:true,connectionCount:true,status:true,restrictedAt:true,permanentlyRestricted:true,notes:true,rentals:{where:{status:{in:['active','pending_access','payment_failed']}},select:{id:true},take:1}}});
-  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:a.status==='maintenance'}));
+  const rows=await db.linkedInAccount.findMany({where:{status:{not:'removed'}},select:{id:true,gologinProfileId:true,gologinAccount:true,loginEmail:true,linkedinName:true,linkedinUrl:true,connectionCount:true,status:true,restrictedAt:true,permanentlyRestricted:true,notes:true,inventoryPool:true,rentals:{where:{status:{in:['active','pending_access','payment_failed']}},select:{id:true},take:1}}});
+  const [apps,sessions]=await Promise.all([db.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true}}),db.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}})]);
+  const category=categoryResolver(apps,sessions);
+  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,category:category(a),inventoryStatus:a.status,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:a.status==='maintenance'||a.inventoryPool==='campaign'}));
 }
 export async function owned(id){
   if(!/^[\w-]{1,100}$/.test(id))throw new MaturingError('Invalid campaign ID.');
@@ -27,7 +30,7 @@ export async function owned(id){
   if(!visible(d.campaign))throw new MaturingError('Maturing plan not found.',404);
   return d;
 }
-export function summary(c){return {id:c.id,name:c.name,status:c.status,profileIds:c.profile_ids||[],createdAt:c.created_at,updatedAt:c.updated_at,live:!!c.live,kind:c.config?.matureKind||(c.name?.endsWith(' · Cold')?'cold':'warm')};}
+export function summary(c){return {id:c.id,name:c.name,status:c.status,profileIds:c.profile_ids||[],createdAt:c.created_at,updatedAt:c.updated_at,live:!!c.live,program:c.config?.maturingProgram||null,kind:c.config?.matureKind||(c.name?.endsWith(' · Cold')?'cold':'warm')};}
 export async function list(){
   // Load our own inventory and the engine's campaigns independently: a cloud-engine
   // outage must not blank the whole page. If the engine fails we still return the
@@ -101,7 +104,7 @@ export async function start(input, actor){
     try{
       for(const stage of stages){
         const id=prefix+'_'+stage.kind;
-        await engine('/api/campaign/start',{...stage,id,config:{...stage.config,createdBy:actor,source:'linkedvelocity-admin'}});
+        await engine('/api/campaign/start',{...stage,id,config:{...stage.config,maturingProgram:account.category,createdBy:actor,source:'linkedvelocity-admin'}});
         created.push(id);
       }
       return {ok:true,ids:created,owner:OWNER};
