@@ -74,7 +74,12 @@ export async function GET() {
       const cur = earliestRentalStart.get(r.linkedinAccountId);
       if (cur == null || t < cur) earliestRentalStart.set(r.linkedinAccountId, t);
     }
-    const PIPELINE_STATUS = new Set(["under_construction", "construction_immature", "under_review"]);
+    // Statuses that affirmatively mean the account made it into the sellable fleet. Only these get
+    // the created-date fallback when milestone dates (setup-fee-paid / rental) are missing — e.g.
+    // older accounts that predate paidAt tracking. A retired/unavailable/removed account with no
+    // paidAt and no rental was most likely never truly onboarded (it died during the build, e.g. a
+    // self-service recruit that never got past login), so it is NOT live inventory.
+    const LIVE_STATUS = new Set(["available", "rented", "trial", "maintenance"]);
     const appForAccount = (url: string | null, notes: string | null) => {
       const u = normUrl(url);
       if (u && appByUrl.has(u)) return appByUrl.get(u)!;
@@ -186,7 +191,7 @@ export async function GET() {
       const app = appForAccount(a.linkedinUrl, a.notes);
       const liveCandidates = [app?.paidAt?.getTime(), earliestRentalStart.get(a.id)].filter((x): x is number => x != null);
       let wentLiveMs: number | null = liveCandidates.length ? Math.min(...liveCandidates) : null;
-      if (wentLiveMs == null && !PIPELINE_STATUS.has(a.status) && a.createdAt) wentLiveMs = a.createdAt.getTime();
+      if (wentLiveMs == null && LIVE_STATUS.has(a.status) && a.createdAt) wentLiveMs = a.createdAt.getTime();
       const wentLiveAt = wentLiveMs != null ? new Date(wentLiveMs).toISOString() : null;
 
       return {
