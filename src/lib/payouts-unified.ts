@@ -263,6 +263,11 @@ async function buildPayeeFlags(apps: { email: string; linkedinUrl: string | null
 
 export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayouts> {
   const due = await computePaymentsDue(horizonDays);
+  // A referral's dueDate IS its maturation instant (verifiedAt + 7d, exact time-of-day), so the
+  // moment it becomes "ready" it is already past that instant. Gate "overdue" on the START of
+  // today (not Date.now()) so a referral maturing today reads as due, not overdue — matching how
+  // setup/monthly rows use `due < startOfToday`. Only a dueDate before today counts as overdue.
+  const startOfTodayMs = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
 
   // Payment method/details per payee, fetched once so referral and ambassador rows can
   // both show a masked destination and a Wise rail. Referrers key by slug; ambassadors by email.
@@ -343,7 +348,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const details = ref?.paymentDetails || null;
     const payeeKey = `ref:${(r.referrerSlug || r.referrerName).toLowerCase()}`;
     const paused = pauseFor(payeeKey);
-    const overdue = !held && !paused && r.status === "ready" && new Date(r.dueDate).getTime() < Date.now();
+    const overdue = !held && !paused && r.status === "ready" && new Date(r.dueDate).getTime() < startOfTodayMs;
     const state: ReadyState = paused || held ? "hold" : readyStateFor(method, details, false, r.status === "ready");
     ready.push({
       id: `ref:${r.applicationId}`, kind: "referral",
@@ -375,7 +380,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const people = group.map((r) => r.person).filter(Boolean);
     const earliestDue = group.reduce((min, r) => (r.dueDate < min ? r.dueDate : min), first.dueDate);
     const anyReady = group.some((r) => r.status === "ready");
-    const overdue = !paused && anyReady && new Date(earliestDue).getTime() < Date.now();
+    const overdue = !paused && anyReady && new Date(earliestDue).getTime() < startOfTodayMs;
     const state: ReadyState = paused ? "hold" : readyStateFor(method, details, false, anyReady);
     ready.push({
       id: `${payeeKey}:${first.currency}`, kind: "referral",

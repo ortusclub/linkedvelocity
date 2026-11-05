@@ -310,6 +310,17 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
   const paidAppIds = new Set(commPayouts.map((p) => p.ambassadorApplicationId).filter(Boolean) as string[]);
   const legacyPaidByRefId = new Map<string, number>();
   for (const p of commPayouts) if (!p.ambassadorApplicationId) legacyPaidByRefId.set(p.referrerId, (legacyPaidByRefId.get(p.referrerId) || 0) + Number(p.amount));
+  // The LATEST date a legacy (untagged) lump was paid, per referrer. A lump can only have paid
+  // for referrals that were already EARNED when it was sent, so a referral earned AFTER the
+  // referrer's most recent lump can never be covered by that money — it must surface as due even
+  // if lump budget remains. Without this guard old untagged lumps float forward and silently
+  // absorb brand-new onboards, so every freshly-onboarded recruit vanishes from "ready to send"
+  // (hit repeatedly with jemjem-16, whose ₱33,900 of pre-Oct-29 lumps swallowed Nov onboards).
+  const latestLumpByRefId = new Map<string, number>();
+  for (const p of commPayouts) if (!p.ambassadorApplicationId && p.paidAt) {
+    const t = new Date(p.paidAt).getTime();
+    if (t > (latestLumpByRefId.get(p.referrerId) ?? 0)) latestLumpByRefId.set(p.referrerId, t);
+  }
 
   // A referral is only EARNED once the referred account's setup fee is fully SETTLED — the
   // receipt is attached, not merely marked paid. A "paid · awaiting receipt" setup does not
@@ -320,6 +331,18 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
     a.status === "onboarded" ||
     (Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as Array<{ kind?: string; proofUrl?: string }>) : [])
       .some((p) => p?.kind === "setup" && !!p?.proofUrl);
+
+  // When a referral became EARNED (the setup fee settled): the receipted setup payment's date,
+  // else the manual onboarded date, else the app's own paid date, else QC pass. Used only to gate
+  // legacy-lump netting — a lump paid before this moment cannot have covered this referral.
+  const referralEarnedAt = (a: (typeof apps)[number]): number | null => {
+    const setup = (Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as Array<{ kind?: string; paidAt?: string; proofUrl?: string }>) : [])
+      .find((p) => p?.kind === "setup" && !!p?.proofUrl && !!p?.paidAt);
+    if (setup?.paidAt) return new Date(setup.paidAt).getTime();
+    if (a.onboardedAt) return new Date(a.onboardedAt).getTime();
+    if (a.paidAt) return new Date(a.paidAt).getTime();
+    return a.verifiedAt ? new Date(a.verifiedAt).getTime() : null;
+  };
 
   const earnedByRefSlug = new Map<string, typeof apps>();
   for (const a of apps) {
@@ -364,7 +387,13 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
       // not consume a lump payment meant for someone else — otherwise an already-paid, unheld
       // referral is left showing as due (hit: Aiza's held Larry Jaime ate Carl Estrada's paid ₱600).
       if (a.referralHoldReason) { referralsHeld.push({ ...row, holdReason: a.referralHoldReason }); continue; }
-      if (legacyRemaining >= amt - 0.001) { legacyRemaining -= amt; continue; } // covered by a legacy lump payout
+      // A legacy lump can only cover a referral earned on/before the lump was paid. If this
+      // referral was earned AFTER the referrer's most recent lump, the lump money can't be for
+      // them — surface it as due without consuming budget (otherwise new onboards get absorbed).
+      const latestLump = r ? latestLumpByRefId.get(r.id) : undefined;
+      const earnedAt = referralEarnedAt(a);
+      const earnedAfterLumps = latestLump !== undefined && earnedAt !== null && earnedAt > latestLump;
+      if (!earnedAfterLumps && legacyRemaining >= amt - 0.001) { legacyRemaining -= amt; continue; } // covered by a legacy lump payout
       referralsDue.push(row);
     }
   }
