@@ -1,0 +1,633 @@
+{
+  "asOf": "2026-11-05T17:07:43.036Z",
+  "matched_unique": 385,
+  "excluded_ambiguous_application_links": 4,
+  "groups": {
+    "established": {
+      "accounts": 172,
+      "ever_recorded_restricted": 98,
+      "setup_paid": 120,
+      "after_setup_payment": {
+        "7": {
+          "eligible_followup": 97,
+          "restricted": 17,
+          "percent": 17.5
+        },
+        "14": {
+          "eligible_followup": 85,
+          "restricted": 32,
+          "percent": 37.6
+        },
+        "30": {
+          "eligible_followup": 56,
+          "restricted": 32,
+          "percent": 57.1
+        },
+        "60": {
+          "eligible_followup": 22,
+          "restricted": 14,
+          "percent": 63.6
+        }
+      },
+      "after_qc": {
+        "7": {
+          "eligible_followup": 133,
+          "restricted": 33,
+          "percent": 24.8
+        },
+        "14": {
+          "eligible_followup": 103,
+          "restricted": 45,
+          "percent": 43.7
+        },
+        "30": {
+          "eligible_followup": 69,
+          "restricted": 41,
+          "percent": 59.4
+        },
+        "60": {
+          "eligible_followup": 22,
+          "restricted": 14,
+          "percent": 63.6
+        }
+      },
+      "paid_restricted_later": 52,
+      "median_days_to_recorded_restriction_among_affected": 11.1,
+      "median_payment_age_days": 29.5,
+      "restriction_before_payment": 25,
+      "median_qc_to_payment_days": 6.7
+    },
+    "fresh": {
+      "accounts": 125,
+      "ever_recorded_restricted": 76,
+      "setup_paid": 68,
+      "after_setup_payment": {
+        "7": {
+          "eligible_followup": 53,
+          "restricted": 9,
+          "percent": 17.0
+        },
+        "14": {
+          "eligible_followup": 46,
+          "restricted": 15,
+          "percent": 32.6
+        },
+        "30": {
+          "eligible_followup": 17,
+          "restricted": 10,
+          "percent": 58.8
+        },
+        "60": {
+          "eligible_followup": 4,
+          "restricted": 3,
+          "percent": 75.0
+        }
+      },
+      "after_qc": {
+        "7": {
+          "eligible_followup": 85,
+          "restricted": 29,
+          "percent": 34.1
+        },
+        "14": {
+          "eligible_followup": 64,
+          "restricted": 31,
+          "percent": 48.4
+        },
+        "30": {
+          "eligible_followup": 34,
+          "restricted": 19,
+          "percent": 55.9
+        },
+        "60": {
+          "eligible_followup": 4,
+          "restricted": 3,
+          "percent": 75.0
+        }
+      },
+      "paid_restricted_later": 23,
+      "median_days_to_recorded_restriction_among_affected": 9.1,
+      "median_payment_age_days": 22.0,
+      "restriction_before_payment": 18,
+      "median_qc_to_payment_days": 7.0
+    },
+    "unlabelled": {
+      "accounts": 88,
+      "ever_recorded_restricted": 38,
+      "setup_paid": 48,
+      "after_setup_payment": {
+        "7": {
+          "eligible_followup": 36,
+          "restricted": 6,
+          "percent": 16.7
+        },
+        "14": {
+          "eligible_followup": 28,
+          "restricted": 7,
+          "percent": 25.0
+        },
+        "30": {
+          "eligible_followup": 14,
+          "restricted": 7,
+          "percent": 50.0
+        },
+        "60": {
+          "eligible_followup": 3,
+          "restricted": 2,
+          "percent": 66.7
+        }
+      },
+      "after_qc": {
+        "7": {
+          "eligible_followup": 54,
+          "restricted": 14,
+          "percent": 25.9
+        },
+        "14": {
+          "eligible_followup": 40,
+          "restricted": 16,
+          "percent": 40.0
+        },
+        "30": {
+          "eligible_followup": 23,
+          "restricted": 13,
+          "percent": 56.5
+        },
+        "60": {
+          "eligible_followup": 3,
+          "restricted": 2,
+          "percent": 66.7
+        }
+      },
+      "paid_restricted_later": 17,
+      "median_days_to_recorded_restriction_among_affected": 14.8,
+      "median_payment_age_days": 21.5,
+      "restriction_before_payment": 9,
+      "median_qc_to_payment_days": 6.8
+    }
+  },
+  "all": {
+    "accounts": 385,
+    "ever_recorded_restricted": 212,
+    "setup_paid": 236,
+    "after_setup_payment": {
+      "7": {
+        "eligible_followup": 186,
+        "restricted": 32,
+        "percent": 17.2
+      },
+      "14": {
+        "eligible_followup": 159,
+        "restricted": 54,
+        "percent": 34.0
+      },
+      "30": {
+        "eligible_followup": 87,
+        "restricted": 49,
+        "percent": 56.3
+      },
+      "60": {
+        "eligible_followup": 29,
+        "restricted": 19,
+        "percent": 65.5
+      }
+    },
+    "after_qc": {
+      "7": {
+        "eligible_followup": 272,
+        "restricted": 76,
+        "percent": 27.9
+      },
+      "14": {
+        "eligible_followup": 207,
+        "restricted": 92,
+        "percent": 44.4
+      },
+      "30": {
+        "eligible_followup": 126,
+        "restricted": 73,
+        "percent": 57.9
+      },
+      "60": {
+        "eligible_followup": 29,
+        "restricted": 19,
+        "percent": 65.5
+      }
+    },
+    "paid_restricted_later": 92,
+    "median_days_to_recorded_restriction_among_affected": 11.7,
+    "median_payment_age_days": 23.4,
+    "restriction_before_payment": 52,
+    "median_qc_to_payment_days": 6.9
+  },
+  "payment_cohorts": {
+    "2026-09-01 to 2026-10-01": {
+      "fresh": {
+        "accounts": 9,
+        "ever_recorded_restricted": 5,
+        "setup_paid": 9,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 9,
+            "restricted": 1,
+            "percent": 11.1
+          },
+          "14": {
+            "eligible_followup": 9,
+            "restricted": 1,
+            "percent": 11.1
+          },
+          "30": {
+            "eligible_followup": 9,
+            "restricted": 4,
+            "percent": 44.4
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 8,
+            "restricted": 1,
+            "percent": 12.5
+          },
+          "14": {
+            "eligible_followup": 8,
+            "restricted": 1,
+            "percent": 12.5
+          },
+          "30": {
+            "eligible_followup": 8,
+            "restricted": 4,
+            "percent": 50.0
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "paid_restricted_later": 5,
+        "median_days_to_recorded_restriction_among_affected": 25.5,
+        "median_payment_age_days": 44.5,
+        "restriction_before_payment": 0,
+        "median_qc_to_payment_days": 0.0
+      },
+      "established": {
+        "accounts": 40,
+        "ever_recorded_restricted": 27,
+        "setup_paid": 40,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 40,
+            "restricted": 6,
+            "percent": 15.0
+          },
+          "14": {
+            "eligible_followup": 40,
+            "restricted": 17,
+            "percent": 42.5
+          },
+          "30": {
+            "eligible_followup": 40,
+            "restricted": 24,
+            "percent": 60.0
+          },
+          "60": {
+            "eligible_followup": 6,
+            "restricted": 5,
+            "percent": 83.3
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 40,
+            "restricted": 6,
+            "percent": 15.0
+          },
+          "14": {
+            "eligible_followup": 40,
+            "restricted": 17,
+            "percent": 42.5
+          },
+          "30": {
+            "eligible_followup": 40,
+            "restricted": 24,
+            "percent": 60.0
+          },
+          "60": {
+            "eligible_followup": 6,
+            "restricted": 5,
+            "percent": 83.3
+          }
+        },
+        "paid_restricted_later": 26,
+        "median_days_to_recorded_restriction_among_affected": 12.8,
+        "median_payment_age_days": 48.7,
+        "restriction_before_payment": 1,
+        "median_qc_to_payment_days": 0.0
+      }
+    },
+    "2026-10-01 to 2026-10-07": {
+      "fresh": {
+        "accounts": 4,
+        "ever_recorded_restricted": 3,
+        "setup_paid": 4,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 4,
+            "restricted": 0,
+            "percent": 0.0
+          },
+          "14": {
+            "eligible_followup": 4,
+            "restricted": 1,
+            "percent": 25.0
+          },
+          "30": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 4,
+            "restricted": 0,
+            "percent": 0.0
+          },
+          "14": {
+            "eligible_followup": 4,
+            "restricted": 0,
+            "percent": 0.0
+          },
+          "30": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "paid_restricted_later": 3,
+        "median_days_to_recorded_restriction_among_affected": 21.1,
+        "median_payment_age_days": 31.6,
+        "restriction_before_payment": 0,
+        "median_qc_to_payment_days": 7.0
+      },
+      "established": {
+        "accounts": 0,
+        "ever_recorded_restricted": 0,
+        "setup_paid": 0,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "14": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "30": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "14": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "30": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          },
+          "60": {
+            "eligible_followup": 0,
+            "restricted": 0,
+            "percent": null
+          }
+        },
+        "paid_restricted_later": 0,
+        "median_days_to_recorded_restriction_among_affected": null,
+        "median_payment_age_days": null,
+        "restriction_before_payment": 0,
+        "median_qc_to_payment_days": null
+      }
+    },
+    "2026-08-01 to 2026-09-01": {
+      "fresh": {
+        "accounts": 4,
+        "ever_recorded_restricted": 3,
+        "setup_paid": 4,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 4,
+            "restricted": 1,
+            "percent": 25.0
+          },
+          "14": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "30": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "60": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 4,
+            "restricted": 1,
+            "percent": 25.0
+          },
+          "14": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "30": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          },
+          "60": {
+            "eligible_followup": 4,
+            "restricted": 3,
+            "percent": 75.0
+          }
+        },
+        "paid_restricted_later": 3,
+        "median_days_to_recorded_restriction_among_affected": 8.0,
+        "median_payment_age_days": 89.7,
+        "restriction_before_payment": 0,
+        "median_qc_to_payment_days": -0.0
+      },
+      "established": {
+        "accounts": 14,
+        "ever_recorded_restricted": 9,
+        "setup_paid": 14,
+        "after_setup_payment": {
+          "7": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "14": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "30": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "60": {
+            "eligible_followup": 14,
+            "restricted": 8,
+            "percent": 57.1
+          }
+        },
+        "after_qc": {
+          "7": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "14": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "30": {
+            "eligible_followup": 14,
+            "restricted": 7,
+            "percent": 50.0
+          },
+          "60": {
+            "eligible_followup": 14,
+            "restricted": 8,
+            "percent": 57.1
+          }
+        },
+        "paid_restricted_later": 9,
+        "median_days_to_recorded_restriction_among_affected": 6.1,
+        "median_payment_age_days": 82.7,
+        "restriction_before_payment": 1,
+        "median_qc_to_payment_days": -0.0
+      }
+    }
+  },
+  "qc_7_to_30": {
+    "fresh": {
+      "full30dayFollowup": 34,
+      "noRecordedRestrictionFirst7Days": 30,
+      "firstRecordedRestrictionDays8to30": 15,
+      "ofThoseSetupPaidBeforeRestriction": 14
+    },
+    "established": {
+      "full30dayFollowup": 69,
+      "noRecordedRestrictionFirst7Days": 55,
+      "firstRecordedRestrictionDays8to30": 27,
+      "ofThoseSetupPaidBeforeRestriction": 27
+    }
+  },
+  "setup_logs": {
+    "fresh": {
+      "entries": {
+        "unspecified": 11,
+        "PHP": 57
+      },
+      "recordedAmounts": {
+        "unspecified": 11000.0,
+        "PHP": 57000.0
+      },
+      "amountOnProfilesRestrictedWithin30DaysOfEntry": {
+        "unspecified": 7000.0,
+        "PHP": 15000.0
+      }
+    },
+    "established": {
+      "entries": {
+        "PHP": 75,
+        "unspecified": 45
+      },
+      "recordedAmounts": {
+        "PHP": 75000.0,
+        "unspecified": 45000.0
+      },
+      "amountOnProfilesRestrictedWithin30DaysOfEntry": {
+        "PHP": 22000.0,
+        "unspecified": 26000.0
+      }
+    },
+    "unlabelled": {
+      "entries": {
+        "unspecified": 47,
+        "USD": 1
+      },
+      "recordedAmounts": {
+        "unspecified": 47000.0,
+        "USD": 16.0
+      },
+      "amountOnProfilesRestrictedWithin30DaysOfEntry": {
+        "unspecified": 15000.0,
+        "USD": 16.0
+      }
+    }
+  },
+  "methodology": {
+    "population": "LinkedVelocity application records uniquely matched to inventory by session, unique LinkedIn URL, or unique owner email; ambiguous duplicate account links excluded.",
+    "restriction": "Dated restricted events plus current restrictedAt; recovered accounts retained. Dates reflect recorded events, not necessarily exact onset.",
+    "primaryMilestone": "paid_at (setup payment), not onboarded_at, which can represent an earlier setup milestone.",
+    "followup": "Each 7/14/30/60-day rate only includes records whose milestone occurred at least that many days before extract. No recorded event is not proof of continuous unrestricted access.",
+    "classification": "Recorded account_freshness; not independently verified age. 88 matched accounts have no label.",
+    "caution": "Descriptive association, unequal calendar cohorts and small fresh 30-day sample. Do not infer that delaying payout prevents restrictions or that all payments on restricted accounts were lost."
+  },
+  "proposal": {
+    "userClarification": "One month for newly created LinkedIn accounts, one week for established profiles.",
+    "implemented": false,
+    "finding": "Paid fresh and established accounts have similarly high recorded 30-day restriction rates. Data does not support treating established profiles as low risk after seven days.",
+    "suggestions": [
+      "Pilot a longer qualification period for both groups rather than assume established profiles are safe at day seven.",
+      "Consider prospective staged setup payments tied to verified usable service, while honoring existing commitments.",
+      "Require a fresh health check and resolved restriction evidence before onboarding/payment.",
+      "Measure 30-day restrictions and net usable days after payment by acquisition cohort, actual account age, prior restrictions and operational activity.",
+      "Investigate policy-triggering activity; waiting alone does not establish safe future use."
+    ]
+  }
+}

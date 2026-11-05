@@ -59,3 +59,12 @@ slots on the development engine, with excess work queued; future phases do not
 reserve browser slots. Preserve account restrictions, rental exclusions, shared
 session locks, pacing and confirmed-action deduplication. Never equate a scheduled
 campaign with a browser currently working.
+
+## Restriction-risk review — Samuel, 5 November 2026
+Samuel clarified that the proposed differentiated onboarding hold means one month
+for newly created LinkedIn profiles and one week for established profiles. This
+is a proposal for evidence review, not authorization to change payout promises or
+qualification dates. Current production hold remains seven days. Compare recorded
+restriction timing after setup payment with equal follow-up windows; preserve
+recovered/retired histories and keep unlabeled/ambiguous identities explicit.
+Aggregate audit: docs/restriction-analysis-20261105.json.
