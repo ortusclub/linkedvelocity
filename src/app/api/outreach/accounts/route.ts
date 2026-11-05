@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { categoryResolver } from "@/lib/maturing/programs.mjs";
 import { prisma } from "@/lib/prisma";
 
 // Read-only identity feed for the Ortus Outreach app: which LinkedIn profile
@@ -30,6 +31,8 @@ export async function GET(req: NextRequest) {
     // by the maturing/warm-up engine. Keep them out of the engine feed entirely.
     where: { status: { not: "removed" }, linkedinUrl: { not: null }, inventoryPool: { not: "campaign" } },
     select: {
+      id: true,
+      permanentlyRestricted: true,
       gologinProfileId: true,
       loginEmail: true,
       linkedinName: true,
@@ -45,17 +48,23 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  const [apps,sessions] = await Promise.all([
+    prisma.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true}}),
+    prisma.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}}),
+  ]);
+  const category=categoryResolver(apps,sessions);
   const accounts = rows
     // Showcase/demo accounts are catalogue props, not real LinkedIn profiles.
     .filter((a) => !(a.notes || "").includes("[SHOWCASE]"))
     .filter((a) => a.gologinProfileId || a.loginEmail)
     .map((a) => ({
+      maturingCategory: category(a),
       gologinProfileId: a.gologinProfileId || "",
       loginEmail: (a.loginEmail || "").trim().toLowerCase(),
       name: a.linkedinName,
       linkedinUrl: a.linkedinUrl,
       // Restricted profiles can still be named, but are no use as invite targets.
-      restricted: a.status === "retired" || !!a.restrictedAt,
+      restricted: a.status === "retired" || !!a.restrictedAt || a.permanentlyRestricted,
       // Eligibility only: do not expose renters or rental details to Outreach.
       rented: a.status === "rented" || a.rentals.length > 0,
     }));
