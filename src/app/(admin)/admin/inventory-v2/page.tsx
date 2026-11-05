@@ -1514,8 +1514,11 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
   // composed timeline
   const events = useMemo(() => {
     const ev: { at: string; t: string; s?: string; dot: string }[] = [];
-    if (r.ownerSetupPaidAt) ev.push({ at: r.ownerSetupPaidAt, t: "Setup fee paid", dot: GREEN });
-    if (r.ownerOnboardedAt) ev.push({ at: r.ownerOnboardedAt, t: "Onboarded", dot: BLUE });
+    // "Onboarded" is reserved for setup-fee-paid (the point the account is truly ours). The
+    // ownerOnboardedAt milestone only marks when the owner signed up / we logged in during the
+    // build, which can precede payment, so it's labelled "Signed up" to avoid implying we've paid.
+    if (r.ownerSetupPaidAt) ev.push({ at: r.ownerSetupPaidAt, t: "Onboarded (setup fee paid)", dot: GREEN });
+    if (r.ownerOnboardedAt) ev.push({ at: r.ownerOnboardedAt, t: "Signed up", dot: BLUE });
     for (const e of restr) ev.push({ at: e.at, t: e.event === "restricted" ? "Restricted" : "Recovered", s: e.note || (e.creditedDays ? `+${e.creditedDays}d credit` : undefined), dot: e.event === "restricted" ? RED : GREEN });
     for (const p of (r.connectionHistory || [])) if (p.note) ev.push({ at: p.at, t: p.note === "rented" ? "Rented out" : "Returned", s: `${p.count} connections`, dot: p.note === "rented" ? BLUE : MUT });
     return ev.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);

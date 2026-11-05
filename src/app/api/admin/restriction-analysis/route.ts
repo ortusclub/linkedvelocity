@@ -179,8 +179,12 @@ export async function GET() {
       const restrictedWhileRentedBy = [...rwrSet];
 
       // When this account entered sellable inventory (graduated from the build pipeline).
+      // "Live" = we've PAID the owner's setup fee (paidAt), or a rental has started. Deliberately
+      // NOT verifiedAt: verification happens mid-build, before the setup fee is paid, so an account
+      // can be verified yet still in the pipeline (restrictions then belong to pipeline, not
+      // inventory). This mirrors how payouts gate on setup-fee receipt, not status/verification.
       const app = appForAccount(a.linkedinUrl, a.notes);
-      const liveCandidates = [app?.paidAt?.getTime(), app?.verifiedAt?.getTime(), earliestRentalStart.get(a.id)].filter((x): x is number => x != null);
+      const liveCandidates = [app?.paidAt?.getTime(), earliestRentalStart.get(a.id)].filter((x): x is number => x != null);
       let wentLiveMs: number | null = liveCandidates.length ? Math.min(...liveCandidates) : null;
       if (wentLiveMs == null && !PIPELINE_STATUS.has(a.status) && a.createdAt) wentLiveMs = a.createdAt.getTime();
       const wentLiveAt = wentLiveMs != null ? new Date(wentLiveMs).toISOString() : null;
