@@ -361,9 +361,10 @@ export default function RestrictionAnalysisPage() {
 
         {/* ===== Inventory vs pipeline (Sam's split) ===== */}
         <div style={card}>
-          <div style={{ maxWidth: 720 }}>
+          <div style={{ maxWidth: 760 }}>
             <span style={h3}>Inventory vs pipeline restrictions</span>
-            <p style={sub}>Two separate things. An account is <b>inventory</b> once it has graduated into the sellable/usable fleet (setup paid, verified, or rented) — counted whether rented or not, since inventory accounts also run campaigns. A restriction before that is <b>pipeline</b> (still being built/warmed up). Headline is distinct accounts restricted that month. Inventory rate = those ÷ inventory accounts live by month-end, so a growing book doesn&apos;t inflate it. Click a count for the accounts.</p>
+            <p style={sub}>Two separate things, kept separate. An account is <b>inventory</b> once it has graduated into the sellable/usable fleet — earliest of setup-paid, verified, or first rented — counted whether rented or not, since inventory accounts also run campaigns. A restriction <i>before</i> that is a <b>pipeline</b> restriction (still being built / warmed up).</p>
+            <p style={{ ...sub, marginTop: 6 }}><b>Inventory rate</b> = distinct inventory accounts marked restricted that month ÷ the live inventory fleet by month-end (the whole book, not a count of restrictions). So it reads as &ldquo;what share of our usable accounts we lost that month&rdquo; — and a growing book doesn&apos;t inflate it: adding clean accounts pushes the rate down. An account restricted twice in a month counts once. Click any count for the accounts.</p>
           </div>
           <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
             {/* Inventory */}
@@ -371,7 +372,7 @@ export default function RestrictionAnalysisPage() {
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ width: 9, height: 9, borderRadius: 2, background: "#dc2626" }} />
                 <span style={{ font: `700 12px ${F}`, color: "#0b1220" }}>Inventory restrictions</span>
-                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>bar = % of live inventory · green = retrieved ≤30d</span>
+                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>bar = % of live fleet hit · under it: restricted / fleet · green ↩ = recovered ≤30d</span>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 160, borderBottom: "1px solid #e6e9ee" }}>
                 {invPipe.rows.map((r) => (
@@ -396,7 +397,7 @@ export default function RestrictionAnalysisPage() {
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ width: 9, height: 9, borderRadius: 2, background: "#94a3b8" }} />
                 <span style={{ font: `700 12px ${F}`, color: "#0b1220" }}>Pipeline restrictions</span>
-                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>accounts, during build/warm-up</span>
+                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>count of accounts hit during build — not a %</span>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 160, borderBottom: "1px solid #e6e9ee" }}>
                 {invPipe.rows.map((r) => (
@@ -416,7 +417,7 @@ export default function RestrictionAnalysisPage() {
               </div>
             </div>
           </div>
-          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>* current month is partial. “Went live” uses setup-paid / verified / first-rental dates, falling back to created date for inventory-only accounts with no application — so the split is best-effort where milestone dates are missing.</span>
+          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Pipeline is a count, not a rate: a restricted account stalls in the pipeline (it can&apos;t graduate), so a pipeline % would race toward 100% in a bad month and mislead — the honest read is volume. * current month is partial. &ldquo;Went live&rdquo; uses setup-paid / verified / first-rental dates, falling back to created date for inventory-only accounts with no application, so the split is best-effort where milestone dates are missing. Events come from manual restricted/recovered marking and only go back to ~Mar 2026, so rates are exact going forward and undercount older history.</span>
         </div>
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
