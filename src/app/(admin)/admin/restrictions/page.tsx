@@ -11,12 +11,13 @@ const G = grotesk.style.fontFamily;
 type Episode = { at: string; recovDays: number | null };
 type Acct = {
   id: string; name: string; url: string | null; status: string; verified: boolean;
-  createdAt: string | null; everRestricted: boolean; open: boolean; recovered: boolean; perma: boolean;
+  createdAt: string | null; wentLiveAt: string | null; everRestricted: boolean; open: boolean; recovered: boolean; perma: boolean;
   restrictCount: number; firstRestrictedAt: string | null; lastRestrictedAt: string | null; episodes: Episode[];
   proxyHost: string | null; proxyType: "datacenter" | "residential" | "none"; geo: "match" | "mismatch" | "unknown" | "none";
   ageMonths: number | null; rentedEver: boolean; renters: string[]; restrictedWhileRentedBy: string[]; emailDomain: string | null; cause: string; recoveryPool: boolean;
 };
 type Data = { now: number; recoveryHosts: string[]; accounts: Acct[] };
+type InvPipeRow = { k: string; label: string; partial: boolean; invActive: number; invR: number; invRate: number; invElig: number; invRetr: number | null; pipeActive: number; pipeR: number };
 
 const DAY = 86400000;
 const pct = (x: number | null | undefined, d = 0) => (x == null ? "—" : `${(x * 100).toFixed(d)}%`);
@@ -129,6 +130,43 @@ export default function RestrictionAnalysisPage() {
     return { k: mm.k, label: mm.label, has: elig.length > 0, pending: eps.length > 0 && elig.length === 0, rate: elig.length ? rec / elig.length : 0, n: elig.length };
   }), [monthly, base, now]);
   const maxRec = Math.max(0.0001, ...recovery.filter((r) => r.has).map((r) => r.rate));
+
+  // Inventory vs pipeline, by month (Sam's split). An account is INVENTORY once it has graduated
+  // into the sellable/usable fleet (wentLiveAt: setup paid / verified / first rented) — rented or
+  // not. A restriction before that date is a PIPELINE restriction (still being built/warmed up).
+  // Headline is DISTINCT accounts restricted that month, not events. Inventory rate's denominator
+  // is inventory accounts live by the end of that month, so a growing book doesn't inflate it.
+  const isInvEp = (a: Acct, at: string) => a.wentLiveAt != null && Date.parse(at) >= Date.parse(a.wentLiveAt);
+  const invPipe = useMemo(() => {
+    const created = allAccts.map((a) => a.createdAt).filter((x): x is string => !!x);
+    if (!created.length) return { rows: [] as InvPipeRow[], maxInvRate: 0.0001, maxPipe: 1 };
+    const min = created.reduce((a, b) => (a < b ? a : b));
+    const months: string[] = [];
+    for (let cur = new Date(Date.UTC(+min.slice(0, 4), +min.slice(5, 7) - 1, 1)); cur <= new Date(now); cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1))) months.push(cur.toISOString().slice(0, 7));
+    const nowK = new Date(now).toISOString().slice(0, 7);
+    const rows: InvPipeRow[] = months.map((k) => {
+      const [y, mo] = k.split("-").map(Number);
+      const endMs = Date.UTC(y, mo, 0, 23, 59, 59);
+      let invActive = 0, pipeActive = 0;
+      for (const a of base) {
+        const live = a.wentLiveAt ? Date.parse(a.wentLiveAt) : null;
+        const made = a.createdAt ? Date.parse(a.createdAt) : null;
+        if (live != null && live <= endMs) invActive += 1;
+        else if (made != null && made <= endMs) pipeActive += 1; // created but not yet live by month-end
+      }
+      const invSet = new Set<string>(), pipeSet = new Set<string>();
+      let invElig = 0, invRec = 0;
+      for (const a of base) for (const e of a.episodes) {
+        if (monthKey(e.at) !== k) continue;
+        if (isInvEp(a, e.at)) {
+          invSet.add(a.id);
+          if ((now - Date.parse(e.at)) / DAY >= 30) { invElig += 1; if (e.recovDays != null && e.recovDays <= 30) invRec += 1; }
+        } else pipeSet.add(a.id);
+      }
+      return { k, label: monthLabel(k), partial: k === nowK, invActive, invR: invSet.size, invRate: invActive ? invSet.size / invActive : 0, invElig, invRetr: invElig ? invRec / invElig : null, pipeActive, pipeR: pipeSet.size };
+    });
+    return { rows, maxInvRate: Math.max(0.0001, ...rows.map((r) => r.invRate)), maxPipe: Math.max(1, ...rows.map((r) => r.pipeR)) };
+  }, [base, allAccts, now]);
 
   // Six-month buckets: metric × half, with change.
   const halves = useMemo(() => {
@@ -319,6 +357,67 @@ export default function RestrictionAnalysisPage() {
             })}
             <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>First-month & ever use accounts aged enough; recovery excludes windows still open.</span>
           </div>
+        </div>
+
+        {/* ===== Inventory vs pipeline (Sam's split) ===== */}
+        <div style={card}>
+          <div style={{ maxWidth: 760 }}>
+            <span style={h3}>Inventory vs pipeline restrictions</span>
+            <p style={sub}>Two separate things, kept separate. An account is <b>inventory</b> once it has graduated into the sellable/usable fleet — earliest of setup-paid, verified, or first rented — counted whether rented or not, since inventory accounts also run campaigns. A restriction <i>before</i> that is a <b>pipeline</b> restriction (still being built / warmed up).</p>
+            <p style={{ ...sub, marginTop: 6 }}><b>Inventory rate</b> = distinct inventory accounts marked restricted that month ÷ the live inventory fleet by month-end (the whole book, not a count of restrictions). So it reads as &ldquo;what share of our usable accounts we lost that month&rdquo; — and a growing book doesn&apos;t inflate it: adding clean accounts pushes the rate down. An account restricted twice in a month counts once. Click any count for the accounts.</p>
+          </div>
+          <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+            {/* Inventory */}
+            <div style={{ flex: "2 1 480px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ width: 9, height: 9, borderRadius: 2, background: "#dc2626" }} />
+                <span style={{ font: `700 12px ${F}`, color: "#0b1220" }}>Inventory restrictions</span>
+                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>bar = % of live fleet hit · under it: restricted / fleet · green ↩ = recovered ≤30d</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 160, borderBottom: "1px solid #e6e9ee" }}>
+                {invPipe.rows.map((r) => (
+                  <div key={r.k} style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+                    <span style={{ font: `700 11px ${G}`, color: "#0b1220" }}>{pct(r.invRate, 0)}</span>
+                    <div style={{ width: "100%", maxWidth: 40, height: `${Math.max(2, (r.invRate / invPipe.maxInvRate) * 100)}%`, borderRadius: "6px 6px 0 0", overflow: "hidden", background: r.partial ? "repeating-linear-gradient(135deg,#dc2626 0 6px,rgba(220,38,38,.5) 6px 12px)" : "#dc2626" }} />
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {invPipe.rows.map((r) => (
+                  <div key={r.k} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                    <span style={{ font: `700 11px ${F}`, color: "#0b1220" }}>{r.label}{r.partial && <span style={{ color: "#8a93a3" }}>*</span>}</span>
+                    <button onClick={() => openDrawer(`Inventory restrictions · ${r.label}`, `${r.invR} of ${r.invActive} live inventory accounts`, base.filter((a) => a.episodes.some((e) => monthKey(e.at) === r.k && isInvEp(a, e.at))))} style={{ border: "none", background: "none", padding: 0, font: `600 11px ${F}`, color: "#2563eb", cursor: "pointer" }}>{r.invR}/{r.invActive}</button>
+                    <span style={{ font: `700 10.5px ${F}`, color: r.invElig ? "#0f7a3d" : "#c3cad4" }}>{r.invElig ? `↩ ${pct(r.invRetr, 0)}` : "·"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Pipeline */}
+            <div style={{ flex: "1 1 320px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ width: 9, height: 9, borderRadius: 2, background: "#94a3b8" }} />
+                <span style={{ font: `700 12px ${F}`, color: "#0b1220" }}>Pipeline restrictions</span>
+                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3" }}>count of accounts hit during build — not a %</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 160, borderBottom: "1px solid #e6e9ee" }}>
+                {invPipe.rows.map((r) => (
+                  <div key={r.k} style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+                    <span style={{ font: `700 11px ${G}`, color: r.pipeR ? "#0b1220" : "#c3cad4" }}>{r.pipeR || ""}</span>
+                    <div style={{ width: "100%", maxWidth: 34, height: `${Math.max(r.pipeR ? 3 : 0, (r.pipeR / invPipe.maxPipe) * 100)}%`, borderRadius: "6px 6px 0 0", overflow: "hidden", background: r.partial ? "repeating-linear-gradient(135deg,#94a3b8 0 6px,rgba(148,163,184,.5) 6px 12px)" : "#94a3b8" }} />
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {invPipe.rows.map((r) => (
+                  <div key={r.k} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <span style={{ font: `700 11px ${F}`, color: "#0b1220" }}>{r.label}{r.partial && <span style={{ color: "#8a93a3" }}>*</span>}</span>
+                    <button onClick={() => openDrawer(`Pipeline restrictions · ${r.label}`, `${r.pipeR} accounts restricted during build`, base.filter((a) => a.episodes.some((e) => monthKey(e.at) === r.k && !isInvEp(a, e.at))))} style={{ border: "none", background: "none", padding: 0, font: `600 11px ${F}`, color: r.pipeR ? "#2563eb" : "#c3cad4", cursor: r.pipeR ? "pointer" : "default" }}>{r.pipeR}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Pipeline is a count, not a rate: a restricted account stalls in the pipeline (it can&apos;t graduate), so a pipeline % would race toward 100% in a bad month and mislead — the honest read is volume. * current month is partial. &ldquo;Went live&rdquo; uses setup-paid / verified / first-rental dates, falling back to created date for inventory-only accounts with no application, so the split is best-effort where milestone dates are missing. Events come from manual restricted/recovered marking and only go back to ~Mar 2026, so rates are exact going forward and undercount older history.</span>
         </div>
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
