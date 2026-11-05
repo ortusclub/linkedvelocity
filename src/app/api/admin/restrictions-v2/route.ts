@@ -53,7 +53,7 @@ export async function GET(req: Request) {
 
     // Link each account to its application the way inventory/onboarding do, to borrow the PoC,
     // the pipeline issue flag and the owner's self-report.
-    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true, accountIssue: true, restrictionReport: true, referredBy: true } });
+    const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, email: true, linkedinUrl: true, poc: true, accountIssue: true, restrictionReport: true, referredBy: true, status: true, paidAt: true } });
     const appByAccount = new Map<string, (typeof apps)[number]>();
     for (const a of accounts) { const app = matchApp(apps, a); if (app) appByAccount.set(a.id, app); }
 
@@ -87,14 +87,19 @@ export async function GET(req: Request) {
     const ids = relevant.map((a) => a.id);
     const rentals = ids.length
       ? await prisma.rental.findMany({
-          where: { linkedinAccountId: { in: ids }, status: { in: ["active", "pending_access"] } },
-          select: { linkedinAccountId: true, user: { select: { company: true, fullName: true } } },
+          where: { linkedinAccountId: { in: ids } },
+          select: { linkedinAccountId: true, status: true, user: { select: { company: true, fullName: true } } },
         })
       : [];
     const renterByAccount = new Map<string, string>();
+    // Ever rented (any status) = a hard signal the account was genuinely onboarded/live at some point.
+    const everRented = new Set<string>();
     for (const r of rentals) {
-      const label = r.user?.company || r.user?.fullName || "";
-      if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
+      everRented.add(r.linkedinAccountId);
+      if (r.status === "active" || r.status === "pending_access") {
+        const label = r.user?.company || r.user?.fullName || "";
+        if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
+      }
     }
 
     // Captured LinkedIn appeal / ID / recovery emails (AccountMailEvent) — seed chain steps with
@@ -205,12 +210,17 @@ export async function GET(req: Request) {
       // an account is restricted or its rental is replaced, so a restricted-but-onboarded account
       // shows "P4 · unavailable". Restriction is orthogonal to lifecycle, so prefer the real signals:
       // an active/pending rental → Rented; a restricted live account (status "unavailable") → Onboarded.
-      // Genuinely terminal accounts (retired or written off as lost) keep their phase, so a dead
-      // account with a lingering active rental doesn't read as Rented.
+      // BUT "unavailable" does NOT by itself mean onboarded — an account can be unavailable because it
+      // was restricted DURING the build and never went live (no setup fee, app rejected, never rented,
+      // e.g. a self-service recruit we couldn't verify). Only call it Onboarded with a real onboarded
+      // signal (setup fee paid, ever rented, or app marked onboarded); otherwise it's a build that
+      // stalled → Under construction. Genuinely terminal accounts (retired or written off as lost) keep
+      // their phase, so a dead account with a lingering active rental doesn't read as Rented.
+      const wasOnboarded = everRented.has(a.id) || !!app?.paidAt || app?.status === "onboarded";
       const retiredOrLost = a.status === "retired" || !!d.lostOutcome;
       const phase = retiredOrLost ? d.phase
         : renterByAccount.has(a.id) ? PHASE.rented
-        : a.status === "unavailable" ? PHASE.available
+        : a.status === "unavailable" ? (wasOnboarded ? PHASE.available : PHASE.under_construction)
         : d.phase;
 
       return {
