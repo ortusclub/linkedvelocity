@@ -132,7 +132,7 @@ export default function RestrictionAnalysisPage() {
   const maxRec = Math.max(0.0001, ...recovery.filter((r) => r.has).map((r) => r.rate));
 
   // Inventory vs pipeline, by month (Sam's split). An account is INVENTORY once it has graduated
-  // into the sellable/usable fleet (wentLiveAt: setup paid / verified / first rented) — rented or
+  // into the sellable/usable fleet (wentLiveAt: setup-fee paid / first rented, NOT verified) — rented or
   // not. A restriction before that date is a PIPELINE restriction (still being built/warmed up).
   // Headline is DISTINCT accounts restricted that month, not events. Inventory rate's denominator
   // is inventory accounts live by the end of that month, so a growing book doesn't inflate it.
@@ -363,7 +363,7 @@ export default function RestrictionAnalysisPage() {
         <div style={card}>
           <div style={{ maxWidth: 760 }}>
             <span style={h3}>Inventory vs pipeline restrictions</span>
-            <p style={sub}>Two separate things, kept separate. An account is <b>inventory</b> once it has graduated into the sellable/usable fleet — earliest of setup-paid, verified, or first rented — counted whether rented or not, since inventory accounts also run campaigns. A restriction <i>before</i> that is a <b>pipeline</b> restriction (still being built / warmed up).</p>
+            <p style={sub}>Two separate things, kept separate. An account is <b>inventory</b> once we&apos;ve paid the owner&apos;s setup fee (or it&apos;s been rented) — that&apos;s when it&apos;s truly ours to sell. Counted whether rented or not, since inventory accounts also run campaigns. A restriction <i>before</i> that is a <b>pipeline</b> restriction (still being built / warmed up / verified but not yet paid for).</p>
             <p style={{ ...sub, marginTop: 6 }}><b>Inventory rate</b> = distinct inventory accounts marked restricted that month ÷ the live inventory fleet by month-end (the whole book, not a count of restrictions). So it reads as &ldquo;what share of our usable accounts we lost that month&rdquo; — and a growing book doesn&apos;t inflate it: adding clean accounts pushes the rate down. An account restricted twice in a month counts once. Click any count for the accounts.</p>
           </div>
           <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
@@ -417,7 +417,7 @@ export default function RestrictionAnalysisPage() {
               </div>
             </div>
           </div>
-          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Pipeline is a count, not a rate: a restricted account stalls in the pipeline (it can&apos;t graduate), so a pipeline % would race toward 100% in a bad month and mislead — the honest read is volume. * current month is partial. &ldquo;Went live&rdquo; uses setup-paid / verified / first-rental dates, falling back to created date for inventory-only accounts with no application, so the split is best-effort where milestone dates are missing. Events come from manual restricted/recovered marking and only go back to ~Mar 2026, so rates are exact going forward and undercount older history.</span>
+          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Pipeline is a count, not a rate: a restricted account stalls in the pipeline (it can&apos;t graduate), so a pipeline % would race toward 100% in a bad month and mislead — the honest read is volume. * current month is partial. &ldquo;Went live&rdquo; keys off the setup-fee-paid date (or first-rental date), NOT verification — an account can be verified while still being warmed up in the pipeline, before we&apos;ve paid for it. Falls back to created date for inventory-only accounts with no application, so the split is best-effort where milestone dates are missing. Events come from manual restricted/recovered marking and only go back to ~Mar 2026, so rates are exact going forward and undercount older history.</span>
         </div>
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
