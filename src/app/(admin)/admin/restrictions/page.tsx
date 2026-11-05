@@ -91,6 +91,9 @@ export default function RestrictionAnalysisPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"ov" | "dr" | "cmp" | "coh">("ov");
   const [drawer, setDrawer] = useState<DrawerState>(null);
+  // Drawer sort: default newest-hit-first so rows group by date. Click a header to re-sort; click
+  // the active one again to flip direction.
+  const [drawerSort, setDrawerSort] = useState<{ k: "name" | "status" | "proxy" | "cause" | "hit"; dir: 1 | -1 }>({ k: "hit", dir: -1 });
   const [cmpA, setCmpA] = useState("proxyType:Datacenter (Proxy6)");
   const [cmpB, setCmpB] = useState("proxyType:Residential (proxy-cheap)");
 
@@ -263,7 +266,7 @@ export default function RestrictionAnalysisPage() {
     return [...build(keyer("half"), true), ...build(keyer("month"), false)].sort((a, b) => a.order.localeCompare(b.order) || (a.isHalf === b.isHalf ? 0 : a.isHalf ? -1 : 1));
   }, [base, now]);
 
-  const openDrawer = (title: string, sub2: string, rows: Acct[]) => setDrawer({ title, sub: sub2, rows: rows.slice(0, 400) });
+  const openDrawer = (title: string, sub2: string, rows: Acct[]) => { setDrawerSort({ k: "hit", dir: -1 }); setDrawer({ title, sub: sub2, rows: rows.slice(0, 400) }); };
 
   if (error) return <div style={{ ...card, color: "#b91c1c", fontFamily: F }}>Couldn&apos;t load: {error}</div>;
   if (!data) return <div style={{ fontFamily: F, color: "#8a93a3", padding: 24 }}>Loading restriction analysis…</div>;
@@ -611,9 +614,18 @@ export default function RestrictionAnalysisPage() {
           <div style={{ flex: 1, overflow: "auto" }}>
             <div style={{ minWidth: 680 }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(150px,1.4fr) 110px minmax(130px,1fr) minmax(120px,1fr) 70px", gap: 12, padding: "10px 20px", borderBottom: "1px solid #eef0f4", font: `700 10.5px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3", position: "sticky", top: 0, background: "#fff" }}>
-                <span>Account</span><span>Status</span><span>Proxy</span><span>Cause</span><span>Hit</span>
+                {([["name", "Account"], ["status", "Status"], ["proxy", "Proxy"], ["cause", "Cause"], ["hit", "Hit"]] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setDrawerSort((s) => s.k === k ? { k, dir: (s.dir === 1 ? -1 : 1) as 1 | -1 } : { k, dir: k === "hit" ? -1 : 1 })} style={{ border: "none", background: "none", padding: 0, textAlign: "left", cursor: "pointer", font: "inherit", letterSpacing: "inherit", textTransform: "inherit", color: drawerSort.k === k ? "#2563eb" : "#8a93a3", whiteSpace: "nowrap" }}>{label}{drawerSort.k === k ? (drawerSort.dir === 1 ? " ↑" : " ↓") : ""}</button>
+                ))}
               </div>
-              {drawer.rows.map((a) => (
+              {[...drawer.rows].sort((a, b) => {
+                const dir = drawerSort.dir;
+                if (drawerSort.k === "hit") return dir * ((Date.parse(a.lastRestrictedAt || a.firstRestrictedAt || "") || 0) - (Date.parse(b.lastRestrictedAt || b.firstRestrictedAt || "") || 0));
+                if (drawerSort.k === "status") { const rank = (x: Acct) => x.open ? 0 : x.perma ? 1 : x.everRestricted ? 2 : 3; return dir * (rank(a) - rank(b)); }
+                const sa = drawerSort.k === "name" ? (a.name || "") : drawerSort.k === "proxy" ? (a.proxyHost || "") : (a.cause || "");
+                const sb = drawerSort.k === "name" ? (b.name || "") : drawerSort.k === "proxy" ? (b.proxyHost || "") : (b.cause || "");
+                return dir * sa.localeCompare(sb);
+              }).map((a) => (
                 <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(150px,1.4fr) 110px minmax(130px,1fr) minmax(120px,1fr) 70px", gap: 12, padding: "9px 20px", borderBottom: "1px solid #f0f2f5", alignItems: "center" }}>
                   <span style={{ minWidth: 0, font: `600 13px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.url ? <a href={a.url.startsWith("http") ? a.url : `https://${a.url}`} target="_blank" rel="noreferrer" style={{ color: "#0b1220" }}>{a.name}</a> : a.name}</span>
                   <span style={{ font: `700 10.5px ${F}`, padding: "2px 8px", borderRadius: 999, background: a.open ? "#fef2f2" : a.perma ? "#f1f5f9" : "#ecfdf3", color: a.open ? "#b91c1c" : a.perma ? "#475569" : "#0f7a3d", whiteSpace: "nowrap", justifySelf: "start" }}>{a.open ? "restricted" : a.perma ? "lost" : a.everRestricted ? "recovered" : a.status}</span>
