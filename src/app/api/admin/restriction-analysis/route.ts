@@ -33,18 +33,55 @@ export async function GET() {
     await requireAdmin();
     const now = Date.now();
 
-    const [accounts, rentals, mail] = await Promise.all([
+    const [accounts, rentals, mail, apps] = await Promise.all([
       prisma.linkedInAccount.findMany({
         where: { status: { not: "removed" } },
         select: {
           id: true, linkedinName: true, linkedinUrl: true, status: true, linkedinVerified: true,
           createdAt: true, restrictedAt: true, restrictionLog: true, permanentlyRestricted: true,
           accountAgeMonths: true, loginEmail: true, workEmail: true, proxyHost: true, proxyLocation: true,
+          notes: true,
         },
       }),
       prisma.rental.findMany({ select: { linkedinAccountId: true, startDate: true, accessGrantedAt: true, accessRevokedAt: true, user: { select: { company: true, fullName: true, email: true } } } }),
       prisma.accountMailEvent.findMany({ where: { type: { in: ["id_verification", "appeal_update", "recovery_appeal", "appeal_intake", "restriction"] } }, select: { linkedinAccountId: true, type: true, subject: true, bodyText: true } }),
+      // Onboarding milestones — used to date when each account GRADUATED into sellable inventory
+      // (setup paid / verified), the boundary between "pipeline" and "inventory" restrictions.
+      prisma.ambassadorApplication.findMany({ select: { linkedinUrl: true, email: true, verifiedAt: true, paidAt: true } }),
     ]);
+
+    // "Entered inventory" date per account: when it graduated from the build pipeline into the
+    // sellable/usable fleet. Earliest of setup-paid, verified, or first rental start. For an
+    // inventory-status account with no such milestone (e.g. Ortus/inventory-only rows, no
+    // application) we fall back to createdAt; a still-in-construction account with no milestone
+    // never reached inventory, so it's null and all its restrictions count as pipeline.
+    const normUrl = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
+    const appByUrl = new Map<string, { verifiedAt: Date | null; paidAt: Date | null }>();
+    const appByEmail = new Map<string, { verifiedAt: Date | null; paidAt: Date | null }>();
+    const emailCount = new Map<string, number>();
+    for (const app of apps) {
+      const u = normUrl(app.linkedinUrl);
+      if (u && !appByUrl.has(u)) appByUrl.set(u, { verifiedAt: app.verifiedAt, paidAt: app.paidAt });
+      const e = app.email.toLowerCase();
+      emailCount.set(e, (emailCount.get(e) || 0) + 1);
+      if (!appByEmail.has(e)) appByEmail.set(e, { verifiedAt: app.verifiedAt, paidAt: app.paidAt });
+    }
+    const earliestRentalStart = new Map<string, number>();
+    for (const r of rentals) {
+      const raw = r.startDate ?? r.accessGrantedAt;
+      if (!raw) continue;
+      const t = raw.getTime();
+      const cur = earliestRentalStart.get(r.linkedinAccountId);
+      if (cur == null || t < cur) earliestRentalStart.set(r.linkedinAccountId, t);
+    }
+    const PIPELINE_STATUS = new Set(["under_construction", "construction_immature", "under_review"]);
+    const appForAccount = (url: string | null, notes: string | null) => {
+      const u = normUrl(url);
+      if (u && appByUrl.has(u)) return appByUrl.get(u)!;
+      const owner = (notes || "").match(/Owner:\s*(\S+@\S+)/)?.[1]?.replace(/\.$/, "")?.toLowerCase();
+      if (owner && emailCount.get(owner) === 1) return appByEmail.get(owner) || null;
+      return null;
+    };
 
     // Renters per account (canonical-ish labels), and a rented-ever flag. We also keep each named
     // renter's ALLOCATION WINDOW ([access granted ?? rental start, access revoked ?? now]) so a
@@ -141,9 +178,16 @@ export async function GET() {
       }
       const restrictedWhileRentedBy = [...rwrSet];
 
+      // When this account entered sellable inventory (graduated from the build pipeline).
+      const app = appForAccount(a.linkedinUrl, a.notes);
+      const liveCandidates = [app?.paidAt?.getTime(), app?.verifiedAt?.getTime(), earliestRentalStart.get(a.id)].filter((x): x is number => x != null);
+      let wentLiveMs: number | null = liveCandidates.length ? Math.min(...liveCandidates) : null;
+      if (wentLiveMs == null && !PIPELINE_STATUS.has(a.status) && a.createdAt) wentLiveMs = a.createdAt.getTime();
+      const wentLiveAt = wentLiveMs != null ? new Date(wentLiveMs).toISOString() : null;
+
       return {
         id: a.id, name: a.linkedinName, url: a.linkedinUrl, status: a.status, verified: a.linkedinVerified,
-        createdAt: a.createdAt ? a.createdAt.toISOString() : null,
+        createdAt: a.createdAt ? a.createdAt.toISOString() : null, wentLiveAt,
         everRestricted, open: openNow, recovered: everRestricted && !openNow, perma: !!a.permanentlyRestricted,
         restrictCount, firstRestrictedAt, lastRestrictedAt, episodes,
         proxyHost: host, proxyType, geo, ageMonths: a.accountAgeMonths,
