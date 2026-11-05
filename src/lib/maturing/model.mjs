@@ -80,9 +80,9 @@ export function boardState(c){
 export function accountState(campaigns){
  const g=groupMaturingAccounts(campaigns.map(boardItem))[0];
  if(!g)return {label:'Not started',group:'Not started'};
- const state=g.state;
+ const state=g.state.label==='Starting'?{...g.state,label:'Waiting in queue'}:g.state;
  return {...state,group:state.label==='Finished'?'Finished':state.label==='Restricted'?'Restricted':/Suspected login needed/i.test(state.label)?'Suspected login needed':state.label==='Possible weekly limit'?'Possible weekly limit':'Active'};
 }
-export const nextAction=c=>maturingNextAction(boardItem(c));
+export const nextAction=c=>['queued','pending'].includes(c.status)&&!c.scheduledAt?'Waiting in queue · no worker assigned yet':maturingNextAction(boardItem(c));
 
 export function finishedMetrics(campaigns){const group=groupMaturingAccounts(campaigns.map(boardItem))[0];return group?finishedMaturingMetrics(group):{connections:null,duration:'—'};}

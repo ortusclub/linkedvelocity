@@ -30,7 +30,7 @@ export async function owned(id){
   if(!visible(d.campaign))throw new MaturingError('Maturing plan not found.',404);
   return d;
 }
-export function summary(c){return {id:c.id,name:c.name,status:c.status,profileIds:c.profile_ids||[],createdAt:c.created_at,updatedAt:c.updated_at,live:!!c.live,program:c.config?.maturingProgram||null,kind:c.config?.matureKind||(c.name?.endsWith(' · Cold')?'cold':'warm')};}
+export function summary(c){return {id:c.id,name:c.name,status:c.status,profileIds:c.profile_ids||[],createdAt:c.created_at,updatedAt:c.updated_at,live:!!c.live,scheduledAt:c.scheduled_start_at||null,program:c.config?.maturingProgram||null,kind:c.config?.matureKind||(c.name?.endsWith(' · Cold')?'cold':'warm')};}
 export async function list(){
   // Load our own inventory and the engine's campaigns independently: a cloud-engine
   // outage must not blank the whole page. If the engine fails we still return the
