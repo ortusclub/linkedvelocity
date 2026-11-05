@@ -81,3 +81,8 @@ warm/cold programmes; keep recent restriction history on the gentle ramp and
 preserve rental/restriction/session/provider holds and the global six-browser cap.
 Existing active campaigns retain their saved schedules and recipients; new cycles
 use the category programme. Do not create duplicates to change the display.
+
+## Maturing category discoverability — Samuel, 5 November 2026
+Keep Maturing, Construction and Available visible together as prominent category
+selectors above the account list, with counts. Do not bury subsequent categories
+below a long expanded list. Other/history remains a secondary view.
