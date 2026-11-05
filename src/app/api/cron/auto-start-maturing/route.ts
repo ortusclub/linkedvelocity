@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
   // Level-4 signal lives on the application (verifiedAt set, not onboarded). Resolve
   // each eligible account to its application the same way the pipeline does.
   const apps = await prisma.ambassadorApplication.findMany({
-    select: { id: true, verifiedAt: true, status: true, linkedinUrl: true, email: true },
+    select: { id: true, verifiedAt: true, status: true, linkedinUrl: true, email: true, applicationReceived: true, paidAt: true },
   });
   const verifiedByUrl = new Map<string, boolean>();
   const verifiedByEmail = new Map<string, boolean>();
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
     if (em && live) verifiedByEmail.set(em, true);
   }
   const sessions = await prisma.selfServiceOnboarding.findMany({
-    select: { accountId: true, applicationId: true },
+    select: { accountId: true, applicationId: true, state: true },
   });
   const verifiedBySession = new Map<string, boolean>();
   for (const s of sessions) {
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
     return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
   }
   function isFragile(a: { restrictionLog: unknown; status: string }): boolean {
-    return recentlyRestricted(a) || a.status === "under_construction";
+    return recentlyRestricted(a) || ["under_construction", "construction_immature"].includes(a.status);
   }
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
@@ -199,23 +199,29 @@ export async function POST(req: NextRequest) {
       atLevel4(a),
   );
 
-  // PRIORITY by what the cloud VM can actually run (measured Oct-29 2026 — live vs
-  // cancelled campaigns per account status): `available` accounts run reliably (10 live
-  // / 11 ended) because reaching `available` requires the rental-ready checklist, which
-  // includes a confirmed independent login the cloud can reuse. `unavailable` (3/14) and
-  // `under_construction` (1/12) accounts are usually logged out or have the GoLogin
-  // profile open locally, so a VM picks up their campaign, can't run it, and cancels it
-  // on contact. Feeding those into the (effectively ~1/tick) per-owner launch slots just
-  // starves the accounts that CAN mature. So rank: available → other inventory →
-  // construction LAST; within a tier the LOWEST-connection account leads (needs maturing
-  // most, per the <100-conn priority), then the longest-waiting. The non-available
-  // accounts still get built through the manual warm-up flow, not here.
+  // Pipeline accounts take priority over already-onboarded inventory. Match
+  // the Level-4 bucket: received, QC passed, no setup in progress, not earning
+  // inventory with its setup fee paid. Retain all existing eligibility holds.
+  const byAppId = new Map(apps.map(a => [a.id, a]));
+  const isPipeline = (a: (typeof accounts)[number]) => {
+    const session = sessions.find(s => s.accountId === a.id);
+    const u = norm(a.linkedinUrl);
+    const owner = (a.notes || "").match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
+    const app = (session ? byAppId.get(session.applicationId) : undefined)
+      || (u && urlCount.get(u) === 1 ? apps.find(x => norm(x.linkedinUrl) === u) : undefined)
+      || (owner ? apps.find(x => x.email.toLowerCase() === owner) : undefined);
+    return !!app?.verifiedAt && app.applicationReceived !== false
+      && !["onboarded", "rejected", "unreachable"].includes(app.status)
+      && !sessions.some(s => s.applicationId === app.id && ["reserved", "needs_help", "ready"].includes(s.state))
+      && !(app.paidAt && ["available", "rented", "trial"].includes(a.status));
+  };
   const CONSTRUCTION_STATUS = new Set(["under_construction", "construction_immature"]);
   const inConstruction = (a: { status: string }) => CONSTRUCTION_STATUS.has(a.status);
-  const statusRank = (s: string) => (s === "available" ? 0 : inConstruction({ status: s }) ? 2 : 1);
-  const ordered = [...candidates].sort((a, b) => {
-    const ra = statusRank(a.status), rb = statusRank(b.status);
-    if (ra !== rb) return ra - rb;                                   // available first, construction last
+  // A scoped operator-triggered run can enrol just the visible Level-4 cohort.
+  const pipelineOnly = req.nextUrl.searchParams.get("pipelineOnly") === "true";
+  const ordered = candidates.filter(a => !pipelineOnly || isPipeline(a)).sort((a, b) => {
+    const ra = isPipeline(a) ? 0 : 1, rb = isPipeline(b) ? 0 : 1;
+    if (ra !== rb) return ra - rb;                                   // pipeline first
     const na = a.connectionCount ?? 1e9, nb = b.connectionCount ?? 1e9;
     if (na !== nb) return na - nb;                                   // fewest connections first (<100 need it most)
     return a.createdAt.getTime() - b.createdAt.getTime();            // then longest-waiting
@@ -235,7 +241,7 @@ export async function POST(req: NextRequest) {
         { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? `gentle warm→cold ramp (fragile — ${a.status === "under_construction" ? "still in construction" : "recently restricted"})` : "warm→cold ramp"}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started (Level 4 / passed QC)"} — ${gentle ? `gentle warm→cold ramp (fragile — ${inConstruction(a) ? "still in construction" : "recently restricted"})` : "warm→cold ramp"}`, "system").catch(() => {});
       // Clear any prior start-failure mark now that it launched.
       if (a.maturingStartFailedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: null, maturingStartFailedReason: null } }).catch(() => {});
       if (gentle) gentleStarted++;
@@ -261,7 +267,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: candidates.length, construction: ordered.filter(inConstruction).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, candidates.length - started - errors.length), errors });
+  return NextResponse.json({ ok: true, eligible: ordered.length, construction: ordered.filter(inConstruction).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, ordered.length - started - errors.length), errors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.

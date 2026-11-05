@@ -50,3 +50,12 @@ For future read-only balance investigations, the existing checkout `/Users/samue
 ## Central gas implementation
 
 See `docs/usdc-gas-sponsor.md` for USDC-only ERC-3009 sweeps, dedicated sponsor configuration, manual activation, fee limits, and pending-journal recovery. The sponsor feature defaults off. Do not enable it or submit real transfers as a verification step.
+
+## Pipeline maturing — Samuel, 5 November 2026
+Enrol eligible Level 4 · Maturing accounts in warm-then-cold connection campaigns
+and verify them under Admin → Account Maturing. Pipeline accounts take priority
+over established inventory. All maturing browser activity shares six concurrent
+slots on the development engine, with excess work queued; future phases do not
+reserve browser slots. Preserve account restrictions, rental exclusions, shared
+session locks, pacing and confirmed-action deduplication. Never equate a scheduled
+campaign with a browser currently working.
