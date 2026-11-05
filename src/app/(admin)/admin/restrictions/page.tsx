@@ -123,7 +123,6 @@ export default function RestrictionAnalysisPage() {
       return { k, label: monthLabel(k), active, total, rate: active ? total / active : 0, partial: k === nowK };
     });
   }, [base, allAccts, now]);
-  const maxRate = Math.max(0.0001, ...monthly.map((x) => x.rate));
 
   // Recovery within 30 days, by month restricted.
   const recovery = useMemo(() => monthly.map((mm) => {
@@ -311,30 +310,6 @@ export default function RestrictionAnalysisPage() {
         </div>
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
-          {/* Monthly trend */}
-          <div style={{ ...card, flex: "2 1 560px", minWidth: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div><span style={h3}>Restricted each month</span><p style={sub}>Restrictions ÷ accounts live by then, so a growing book doesn&apos;t inflate the trend. Click a count to see the accounts.</p></div>
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", height: 190, borderBottom: "1px solid #e6e9ee" }}>
-              {monthly.map((mm) => (
-                <div key={mm.k} style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", gap: 5 }}>
-                  <span style={{ font: `700 11.5px ${G}`, color: "#0b1220" }}>{pct(mm.rate, 0)}</span>
-                  <div style={{ width: "100%", maxWidth: 44, height: `${Math.max(2, (mm.rate / maxRate) * 100)}%`, borderRadius: "6px 6px 0 0", overflow: "hidden", background: mm.partial ? "repeating-linear-gradient(135deg,#dc2626 0 6px,rgba(220,38,38,.5) 6px 12px)" : "#dc2626" }} />
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              {monthly.map((mm) => (
-                <div key={mm.k} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  <span style={{ font: `700 11.5px ${F}`, color: "#0b1220" }}>{mm.label}{mm.partial && <span style={{ color: "#8a93a3" }}>*</span>}</span>
-                  <button onClick={() => openDrawer(`Restricted in ${mm.label}`, `${mm.total} restrictions`, base.filter((a) => a.episodes.some((e) => monthKey(e.at) === mm.k)))} style={{ border: "none", background: "none", padding: 0, font: `600 11px ${F}`, color: "#2563eb", cursor: "pointer" }}>{mm.total}</button>
-                </div>
-              ))}
-            </div>
-            <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>* current month is partial. A one-off infra event (e.g. a dead proxy) can spike a single month — read spikes alongside the drivers below.</span>
-          </div>
-
           {/* Six-month buckets */}
           <div style={{ ...card, flex: "1 1 340px", minWidth: 0 }}>
             <div><span style={h3}>Six-month buckets</span><p style={sub}>Before and after, half-year by half-year.</p></div>
