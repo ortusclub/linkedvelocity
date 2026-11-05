@@ -10,8 +10,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const admin = await requireAdmin();
     const { id } = await params;
-    const { key, done } = (await req.json()) as { key?: string; done?: boolean };
-    if (!key || !KNOWN.has(key)) return NextResponse.json({ error: "unknown item" }, { status: 400 });
+    // One item (key) or several at once (keys) — the "mark housekeeping done & list" one-tap sends keys.
+    const { key, keys, done } = (await req.json()) as { key?: string; keys?: string[]; done?: boolean };
+    const toSet = Array.isArray(keys) && keys.length ? keys : key ? [key] : [];
+    if (!toSet.length || toSet.some((k) => !KNOWN.has(k))) return NextResponse.json({ error: "unknown item" }, { status: 400 });
 
     const acc = await prisma.linkedInAccount.findUnique({
       where: { id },
@@ -20,7 +22,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!acc) return NextResponse.json({ error: "not found" }, { status: 404 });
 
     const checklist: ChecklistState = { ...((acc.rentalReadyChecklist as ChecklistState) || {}) };
-    checklist[key] = done ? { done: true, by: admin.fullName || admin.email, at: new Date().toISOString() } : { done: false };
+    const stamp = done ? { done: true, by: admin.fullName || admin.email, at: new Date().toISOString() } : { done: false };
+    for (const k of toSet) checklist[k] = stamp;
 
     await prisma.linkedInAccount.update({ where: { id }, data: { rentalReadyChecklist: checklist } });
     const shareRows = await prisma.rental.findMany({ where: { linkedinAccountId: id }, select: { gologinShareIds: true } });

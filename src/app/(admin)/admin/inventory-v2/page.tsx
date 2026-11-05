@@ -344,6 +344,10 @@ export default function InventoryV2Page() {
   const [hideDone, setHideDone] = useState(false);
   const [connDraft, setConnDraft] = useState<Record<string, string>>({});
   const [editConn, setEditConn] = useState<string | null>(null); // row whose connections are being quick-edited (outside daily-check)
+  // Per-row reason an Available flip was refused (the server gates it on the rental-ready checklist /
+  // 2FA / setup fee). Shown inline on the row instead of a transient alert, with a one-tap fix when
+  // the only thing missing is the manual housekeeping checklist.
+  const [blocked, setBlocked] = useState<Record<string, { msg: string; missing: string[]; autoFail: { key: string; reason: string }[] }>>({});
   const [bannerOpen, setBannerOpen] = useState(true);
   const [sheetFormula, setSheetFormula] = useState<string | null>(null);
   const [copiedFormula, setCopiedFormula] = useState(false);
@@ -455,15 +459,31 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
   const setStatus = async (a: Account, status: string) => {
     const prev = a.status;
     const now = new Date().toISOString();
+    setBlocked((b) => { if (!b[a.id]) return b; const n = { ...b }; delete n[a.id]; return n; });
     setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, status, updatedAt: now, listed: status === "available" ? x.listed : false } : x)));
     const res = await patch(a.id, { status }, false);
     // The server gates a flip into Available on the rental-ready checklist (and 2FA/setup fee).
-    // On a block, revert the optimistic change and surface why.
+    // On a block, revert the optimistic change and surface why — inline on the row, not a transient
+    // alert — so the team sees it snap back AND why. The rental-ready 409 carries rentalReady.missing
+    // (manual housekeeping) + autoFail (restricted / no proxy / 2FA / live GoLogin share).
     if (res && !res.ok) {
-      const d = await res.json().catch(() => ({} as { error?: string }));
+      const d = await res.json().catch(() => ({} as { error?: string; rentalReady?: { missing?: string[]; autoFail?: { key: string; reason: string }[] } }));
       setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, status: prev } : x)));
-      alert(d.error || "Couldn't change the status.");
+      setBlocked((b) => ({ ...b, [a.id]: { msg: d.error || "Couldn't change the status.", missing: d.rentalReady?.missing || [], autoFail: d.rentalReady?.autoFail || [] } }));
     }
+  };
+  // One tap: mark the manual housekeeping items (sessions out / automation off / inbox cleared) done,
+  // then retry the flip to Available. If an auto condition (restricted / proxy / 2FA / share) still
+  // blocks it, setStatus re-populates the inline reason with just that.
+  const clearHousekeeping = async (a: Account, missing: string[]) => {
+    if (!missing.length) return;
+    setBusy(a.id);
+    try {
+      const res = await fetch(`/api/admin/accounts/${a.id}/rental-ready`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys: missing, done: true }) });
+      if (!res.ok) { const d = await res.json().catch(() => ({} as { error?: string })); alert(d.error || "Couldn't update the checklist."); return; }
+      setAccounts((p) => p.map((x) => (x.id === a.id ? { ...x, rentalReady: (x.restrictedAt || x.permanentlyRestricted || x.twoFactorResetNeeded || !x.proxyHost || x.gologinStillShared) ? x.rentalReady : true } : x)));
+    } finally { setBusy(null); }
+    await setStatus(a, "available");
   };
   // Reserve/hold an account (1 or 2 days) so it drops out of every catalogue while held.
   const hold = async (a: Account, days: number, heldFor: string) => {
@@ -990,12 +1010,20 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                             </>) : r.shadowRenter ? (<>
                               <span style={{ font: `600 13px ${F}`, color: BLUE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{shadowName(r.shadowRenter)}</span>
                               <span style={{ font: `600 11px ${F}`, color: MUT, whiteSpace: "nowrap" }}>shadow · yields on rent</span>
-                            </>) : (
-                              <select value={r.status} onClick={(e) => e.stopPropagation()} onChange={(e) => setStatus(r, e.target.value)} title="Account status — change to move it between groups" style={{ maxWidth: "100%", border: "1px solid #dde1e8", background: "#fff", borderRadius: 8, padding: "4px 6px", font: `600 12px ${F}`, color: INK, outline: "none", cursor: "pointer" }}>
+                            </>) : (<>
+                              <select value={r.status} onClick={(e) => e.stopPropagation()} onChange={(e) => setStatus(r, e.target.value)} title="Account status — change to move it between groups" style={{ maxWidth: "100%", border: `1px solid ${blocked[r.id] ? RED : "#dde1e8"}`, background: "#fff", borderRadius: 8, padding: "4px 6px", font: `600 12px ${F}`, color: INK, outline: "none", cursor: "pointer" }}>
                                 {!STATUS_OPTS.some(([v]) => v === r.status) && <option value={r.status}>{r.status}</option>}
                                 {STATUS_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                               </select>
-                            )}
+                              {blocked[r.id] && (
+                                <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3, maxWidth: "100%" }}>
+                                  <span title={blocked[r.id].msg} style={{ font: `600 10.5px ${F}`, color: REDD, lineHeight: 1.3, whiteSpace: "normal" }}>⚠ {blocked[r.id].msg}</span>
+                                  {blocked[r.id].missing.length > 0 && (
+                                    <button disabled={busy === r.id} onClick={() => clearHousekeeping(r, blocked[r.id].missing)} title="Mark the housekeeping checklist (no other sessions · automation off · inbox cleared) done, then list" style={{ alignSelf: "flex-start", border: `1.5px solid ${GREEN}`, background: busy === r.id ? "#f1f3f6" : "#fff", color: GREEND, borderRadius: 7, padding: "3px 8px", font: `700 11px ${F}`, cursor: busy === r.id ? "default" : "pointer", whiteSpace: "nowrap" }}>{busy === r.id ? "…" : "✓ Mark housekeeping done & list"}</button>
+                                  )}
+                                </div>
+                              )}
+                            </>)}
                           </div>
                           {/* poc */}
                           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
