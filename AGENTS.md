@@ -8,6 +8,10 @@ Read [docs/wise.md](docs/wise.md) before working with Wise. It records setup, ex
 
 Use `npm run wise -- --help` and `npm run test:wise`. Update the handoff status after real connection verification. Do not copy customer payment data or local session transcripts into documentation.
 
+## Dashboard rental search — Samuel, 5 November 2026
+
+Show a search field above Accounts I'm Renting when there are more than three current accounts. Filter by account name or email, case-insensitively.
+
 ## Project map
 
 - Next.js App Router, React, TypeScript; Prisma/PostgreSQL.

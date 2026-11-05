@@ -821,6 +821,7 @@ function DashboardContent() {
   const [meetingSubmissionId, setMeetingSubmissionId] = useState<string | null>(null);
   const isArmy = typeof window !== "undefined" && window.location.hostname.includes("linkedarmy");
   const [rentals, setRentals] = useState<Rental[]>([]);
+  const [rentalSearch, setRentalSearch] = useState("");
   const [openCredsId, setOpenCredsId] = useState<string | null>(null);
   const [openLinkId, setOpenLinkId] = useState<string | null>(null);
   // Client-side "I'll wait" choice for restricted accounts past the recovery hold (hides the
@@ -1121,6 +1122,12 @@ function DashboardContent() {
   // v2: restricted accounts stay inline in the main table, sorted to the top (then active, then preparing).
   const rentalRank = (r: Rental) => (r.linkedinAccount.restrictedAt ? 0 : isRentalBeingPrepared(r) ? 2 : 1);
   const sortedRentals = [...currentRentals].sort((a, b) => rentalRank(a) - rentalRank(b));
+  const showRentalSearch = currentRentals.length > 3;
+  const rentalQuery = showRentalSearch ? rentalSearch.trim().toLowerCase() : "";
+  const visibleRentals = sortedRentals.filter(({ linkedinAccount }) =>
+    !rentalQuery || [linkedinAccount.linkedinName, linkedinAccount.accountEmail]
+      .some((value) => value?.toLowerCase().includes(rentalQuery))
+  );
   const restrictedCount = currentRentals.filter((r) => !!r.linkedinAccount.restrictedAt).length;
   // Payment problems float to the very top so the renter can fix billing before anything renews.
   const paymentIssueRentals = currentRentals.filter((r) => r.status === "payment_failed");
@@ -1679,6 +1686,22 @@ function DashboardContent() {
           <span style={{ fontWeight: 600, fontSize: 13, color: V.faint, whiteSpace: "nowrap", marginTop: 2 }}>{currentRentals.length} {currentRentals.length === 1 ? "account" : "accounts"}</span>
         </div>
 
+        {showRentalSearch && (
+          <div className="mb-4">
+            <label htmlFor="rental-search" className="sr-only">Search rented accounts by name or email</label>
+            <Input
+              id="rental-search"
+              type="search"
+              placeholder="Search accounts by name or email…"
+              value={rentalSearch}
+              onChange={(event) => setRentalSearch(event.target.value)}
+              aria-controls="rented-accounts"
+              className="max-w-md bg-white"
+            />
+            {rentalQuery && <p role="status" className="mt-2 text-sm text-gray-500">{visibleRentals.length} of {currentRentals.length} accounts</p>}
+          </div>
+        )}
+
         {restrictedCount > 0 && (
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "11px 14px", background: V.warnBg, border: `1px solid ${V.warnBorder}`, borderRadius: 11, fontWeight: 500, fontSize: 13, lineHeight: 1.5, color: "#7c2d12", marginBottom: 12 }}>
             <span style={{ flex: "none", width: 18, height: 18, borderRadius: "50%", background: V.orange, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 11, marginTop: 1 }}>!</span>
@@ -1691,9 +1714,15 @@ function DashboardContent() {
             {isArmy ? "You haven't hired any operators yet. " : "You're not renting any accounts yet. "}<Link href="/catalogue" style={{ color: V.blue, fontWeight: 600 }}>{isArmy ? "Browse operators →" : "Browse accounts to rent →"}</Link>
           </div>
         ) : (
-          <div style={{ background: "#fff", border: `1px solid ${V.border}`, borderRadius: 14, overflowX: "auto" }}>
+          <div id="rented-accounts" style={{ background: "#fff", border: `1px solid ${V.border}`, borderRadius: 14, overflowX: "auto" }}>
+            {visibleRentals.length === 0 && (
+              <div className="p-6 text-center text-sm text-gray-500">
+                No accounts match your search.
+                <button type="button" onClick={() => setRentalSearch("")} className="ml-2 font-semibold text-blue-600">Clear search</button>
+              </div>
+            )}
             <div style={{ minWidth: 820 }}>
-              {sortedRentals.map((rental, i) => {
+              {visibleRentals.map((rental, i) => {
                 const acct = rental.linkedinAccount;
                 const R = !!acct.restrictedAt;
                 const prep = isRentalBeingPrepared(rental);
