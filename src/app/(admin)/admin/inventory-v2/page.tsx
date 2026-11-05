@@ -28,6 +28,18 @@ import AccountEditForm from "@/components/admin/account-edit-form";
 type Touch = { ch: string; text: string; by: string; at: string; [k: string]: unknown };
 type ConnPoint = { at: string; count: number; note?: "rented" | "returned" | string };
 type RestrictEvent = { at: string; event: "restricted" | "recovered"; note?: string; creditedDays?: number };
+// Count restriction EPISODES, not raw events: consecutive "restricted" events with no "recovered"
+// between them are one episode (e.g. a restriction that later escalates to perma logs a second
+// "restricted", but it's the same event). An episode opens on the first restricted and closes on a
+// recovered.
+function restrictionEpisodes(log: RestrictEvent[]): number {
+  let n = 0, open = false;
+  for (const e of [...log].sort((a, b) => a.at.localeCompare(b.at))) {
+    if (e.event === "restricted") { if (!open) { n++; open = true; } }
+    else if (e.event === "recovered") { open = false; }
+  }
+  return n;
+}
 
 interface Account {
   id: string;
@@ -1362,7 +1374,7 @@ function RestrictionHistory({ accountId, log, onSaved }: { accountId: string; lo
   const [rows, setRows] = useState<RhRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-  const rCnt = log.filter((e) => e.event === "restricted").length;
+  const rCnt = restrictionEpisodes(log);
   const newestFirst = log.slice().sort((a, b) => b.at.localeCompare(a.at));
   const display = newestFirst.slice(0, 10);
 
@@ -1496,7 +1508,7 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
   };
   const hist = Array.isArray(r.connectionHistory) ? r.connectionHistory.filter((p) => typeof p.count === "number" && !p.note) : [];
   const restr = Array.isArray(r.restrictionLog) ? r.restrictionLog : [];
-  const rCnt = restr.filter((e) => e.event === "restricted").length;
+  const rCnt = restrictionEpisodes(restr);
   // sparkline from the last up-to-12 points
   const pts = hist.slice(-12);
   const spark = (() => {
