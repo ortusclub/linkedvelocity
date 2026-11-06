@@ -91,6 +91,10 @@ model User {
   // the GoLogin share. Default OFF = GoLogin-only, as it has always been. Admin-toggled
   // per renter in /admin/customers; each toggle is logged.
   credentialAccess  Boolean    @default(false) @map("credential_access")
+  // Show the account's proxy (host/port/user/pass/location) in the renter's Sign-in panel so
+  // they can match the location in tools like HeyReach. Only takes effect alongside
+  // credentialAccess. Default OFF — opt a specific renter in from the admin renters page.
+  showProxy         Boolean    @default(false) @map("show_proxy")
   reengageNudgeAt    DateTime? @map("reengage_nudge_at")    // dormant-signup re-engagement email 1 sent
   reengageFollowupAt DateTime? @map("reengage_followup_at") // dormant-signup re-engagement email 2 sent
   createdAt         DateTime   @default(now()) @map("created_at")

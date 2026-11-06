@@ -119,6 +119,7 @@ export async function GET() {
         paymentMethod: (u && fundingByUser.get(u.id)) || null,
         paymentFailed: rentals.some((r) => r.status === "payment_failed"),
         signInAccess: u?.credentialAccess ?? false,
+        showProxy: u?.showProxy ?? false,
         dailyCap: u?.dailyRentalLimit ?? 5,
         isTest: u ? u.isTest : p.isTest,
         notes: p.notes,
@@ -190,11 +191,13 @@ export async function PATCH(req: Request) {
       const udata: Record<string, unknown> = {};
       if (typeof b.vetting === "string" && VET_TO_REVIEW[b.vetting]) udata.vettingReview = VET_TO_REVIEW[b.vetting];
       if (typeof b.signInAccess === "boolean") udata.credentialAccess = b.signInAccess;
+      if (typeof b.showProxy === "boolean") udata.showProxy = b.showProxy;
       if (typeof b.dailyCap === "number" && Number.isFinite(b.dailyCap)) udata.dailyRentalLimit = Math.max(1, Math.min(50, Math.round(b.dailyCap)));
       if (typeof b.isTest === "boolean") udata.isTest = b.isTest;
       if (Object.keys(udata).length) {
         await prisma.user.update({ where: { id: person.userId }, data: udata });
         if ("credentialAccess" in udata) console.log(`[cred-access] ${admin.email} set credential access ${udata.credentialAccess ? "ON" : "OFF"} for user ${person.userId}`);
+        if ("showProxy" in udata) console.log(`[show-proxy] ${admin.email} set show-proxy ${udata.showProxy ? "ON" : "OFF"} for user ${person.userId}`);
       }
     } else if (typeof b.isTest === "boolean") {
       await prisma.person.update({ where: { id }, data: { isTest: b.isTest } });
