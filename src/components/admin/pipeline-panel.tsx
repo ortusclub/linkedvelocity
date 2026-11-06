@@ -195,8 +195,10 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
   const railRestrictedAts = (r.accountRestrictionLog || []).filter((e) => e.event === "restricted").map((e) => e.at).filter(Boolean).sort();
   const railLastRestrictedAt = railRestrictedAts.length ? railRestrictedAts[railRestrictedAts.length - 1] : (r.accountRestrictedAt || null);
   const restrictedBeforeSetup = !setupPaid(r) && !!railLastRestrictedAt;
+  // Compact flag: a red dot meaning "restricted before this (still-unpaid) setup fee —
+  // i.e. it went through recovery before we paid". Date is on hover.
   const restrictClue = restrictedBeforeSetup
-    ? <div style={{ font: `600 11px ${F_SANS}`, color: "var(--warn-badge-text,#b7791f)", lineHeight: 1.4 }}>⚠ Account was restricted {fmtDate(railLastRestrictedAt)} — before this setup fee</div>
+    ? <span title={`Restricted ${fmtDate(railLastRestrictedAt)} — before the setup fee (recovered since)`} style={{ fontSize: 12, cursor: "help" }}>🔴</span>
     : null;
 
   const qcState = useQcChecks(r.id, r.qcChecks);
@@ -295,13 +297,12 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
         : r.status === "onboarded"
           ? doneBadge("Onboarded — live")
           : !matured
-            ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>maturing · 1 week hold…</span>
-                {restrictClue}
-              </div>
+            ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, font: `500 11px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>maturing · 1 week hold… {restrictClue}</span>
             : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {restrictClue}
-                <div style={{ font: `700 10px ${F_SANS}`, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted2,#9aa0a6)" }}>Security check before onboarding</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ font: `700 10px ${F_SANS}`, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted2,#9aa0a6)" }}>Security check before onboarding</div>
+                  {restrictClue}
+                </div>
                 {secItems.map(([key, lbl]) => (
                   <label key={key} style={{ display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", font: `500 12px ${F_SANS}`, color: "var(--fg,#333)", lineHeight: 1.35 }}>
                     <input type="checkbox" checked={!!qc[key]} onChange={e => qcState.toggle(key, e.target.checked)} style={{ width: 15, height: 15, marginTop: 1, accentColor: "var(--st-active-fg,#188038)", flex: "none", cursor: "pointer" }} />
@@ -863,14 +864,11 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
 
           <PanelCard title="Payments" right={<span style={{ font: `500 12px ${F_SANS}`, color: "var(--muted,#5b6779)" }}>Total paid <b style={{ font: `700 13px ${F_GRO}`, color: "var(--st-active-fg,#15803d)" }}>{formatMoney(totalPaid(r), cfg.currency)}</b></span>}>
             {payRow(
-              `Setup fee · ${formatMoney(cfg.setupAmount, cfg.currency)}`,
-              setupDone ? `Paid ${fmtDate(setupPay?.paidAt || r.paidAt)}` : live ? "Owed now that they're onboarded" : "Owed once they're onboarded",
+              `Setup fee · ${formatMoney(cfg.setupAmount, cfg.currency)}${restrictedBeforeSetup ? " 🔴" : ""}`,
+              setupDone ? `Paid ${fmtDate(setupPay?.paidAt || r.paidAt)}`
+                : restrictedBeforeSetup ? `Restricted ${fmtDate(lastRestrictedAt)} — before payout (recovered since)`
+                : live ? "Owed now that they're onboarded" : "Owed once they're onboarded",
               <span style={pill(setupDone ? "✓ Paid" : live ? "Due" : "After onboarding", setupDone)}>{setupDone ? "✓ Paid" : live ? "Due" : "After onboarding"}</span>
-            )}
-            {restrictedBeforeSetup && (
-              <div style={{ marginTop: -6, font: `600 11px ${F_SANS}`, color: "var(--warn-badge-text,#b7791f)" }}>
-                ⚠ Account was restricted {fmtDate(lastRestrictedAt)} — before this setup fee
-              </div>
             )}
             {payRow(
               `Monthly · ${formatMoney(monthlyAmt(r), cfg.currency)}/mo`,
