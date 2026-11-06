@@ -83,6 +83,19 @@ export default function PipelineOverview({ rows }: { rows: Row[] }) {
   useEffect(() => { const on = () => setW(window.innerWidth); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, []);
   const narrow = w < 960;
 
+  // Referrer origin (existing/former/outside) matched server-side at request time — see
+  // /api/admin/referrer-origins. Null until it loads; the memo falls back to the in-rows
+  // asReferrer heuristic meanwhile so the section is never blank.
+  const [originMap, setOriginMap] = useState<Record<string, "existing" | "former" | "outside"> | null>(null);
+  useEffect(() => {
+    let off = false;
+    fetch("/api/admin/referrer-origins", { cache: "no-store" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!off && d?.origins) setOriginMap(d.origins); })
+      .catch(() => {});
+    return () => { off = true; };
+  }, []);
+
   const v = useMemo(() => {
     const k = K[range];
     const curWeekStart = startOfWeek(new Date());
@@ -214,7 +227,11 @@ export default function PipelineOverview({ rows }: { rows: Row[] }) {
     // ── referrers ──────────────────────────────────────────────────────────────
     const refAny = new Set<string>(), refLive = new Set<string>();
     for (const r of U) { const s = r.asReferrer?.slug; if (!s) continue; refAny.add(s); if (levelOf(r) === 5) refLive.add(s); }
-    const originOf = (slug: string | null) => { const s = (slug || "").toLowerCase(); return refLive.has(s) ? "existing" : refAny.has(s) ? "former" : "outside"; };
+    const originOf = (slug: string | null) => {
+      const s = (slug || "").toLowerCase();
+      if (originMap && originMap[s]) return originMap[s];            // server match (email/phone → account)
+      return refLive.has(s) ? "existing" : refAny.has(s) ? "former" : "outside"; // fallback until it loads
+    };
     const OC: Record<string, { name: string; c: string; bg: string; fg: string }> = {
       existing: { name: "Existing ambassador", c: "#12a150", bg: "#e7f7ee", fg: "#0f7a3d" },
       former: { name: "Former ambassador", c: "#d97706", bg: "#fffbeb", fg: "#92400e" },
@@ -275,7 +292,7 @@ export default function PipelineOverview({ rows }: { rows: Row[] }) {
       medOnb: medOnb != null ? medOnb.toFixed(1) : "—", overallConv: pct(curOnb.length, curApps.length),
       rangeLabel, prevLabel,
     };
-  }, [rows, range]);
+  }, [rows, range, originMap]);
 
   // ── styles ──────────────────────────────────────────────────────────────────
   const th: CSSProperties = { font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: FAINT };
