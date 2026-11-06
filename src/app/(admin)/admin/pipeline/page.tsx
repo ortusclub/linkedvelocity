@@ -9,6 +9,7 @@ import { formatMoney } from "@/lib/referral-currency";
 import { formatName } from "@/lib/utils";
 import { isLikelyTestEmail } from "@/lib/test-mode";
 import { CardDetail, AccountOnlyCard } from "@/components/admin/pipeline-panel";
+import PipelineOverview from "@/components/admin/pipeline-overview";
 import {
   type Row, type Status, type Turn, F_SANS, F_GRO, labelCss, inputCss,
   applicationType, effectiveType, effectiveTypeKey, APPLICATION_TYPES, levelOf, levelKey, LEVEL_CHIP, LEVEL_GROUPS,
@@ -55,6 +56,19 @@ export default function PipelineNewPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState(false);
   const [me, setMe] = useState<string>("");
+  const [view, setView] = useState<"queue" | "overview">("queue");
+  // Remember the last view per user: URL ?view= wins on load, else the saved choice.
+  useEffect(() => {
+    const url = new URLSearchParams(window.location.search).get("view");
+    const saved = localStorage.getItem("lv_pipeline_view");
+    const v = url === "overview" || url === "queue" ? url : saved === "overview" ? "overview" : "queue";
+    setView(v);
+  }, []);
+  const chooseView = (v: "queue" | "overview") => {
+    setView(v);
+    try { localStorage.setItem("lv_pipeline_view", v); } catch {}
+    const u = new URL(window.location.href); u.searchParams.set("view", v); window.history.replaceState(null, "", u);
+  };
   const [turnF, setTurnF] = useState<Turn | "all">("all");
   const [whoF, setWhoF] = useState<string>("all"); // "all" | "__me" | "__unassigned" | <poc>
   const [levelF, setLevelF] = useState<number | "all">("all");
@@ -510,6 +524,16 @@ export default function PipelineNewPage() {
         </div>
       </div>
 
+      {/* Queue | Overview switch */}
+      <div style={{ display: "inline-flex", gap: 3, background: "var(--band,#eef0f4)", borderRadius: 10, padding: 3, marginBottom: 16 }}>
+        {([["queue", "Queue"], ["overview", "Overview"]] as const).map(([k, label]) => {
+          const on = view === k;
+          return <button key={k} onClick={() => chooseView(k)} aria-pressed={on} style={{ border: "none", cursor: "pointer", borderRadius: 8, padding: "7px 18px", font: `700 13px ${F_SANS}`, background: on ? "var(--card,#fff)" : "transparent", color: on ? "var(--fg,#0b1220)" : "var(--muted,#5b6779)", boxShadow: on ? "0 1px 2px rgba(11,18,32,.08)" : "none" }}>{label}</button>;
+        })}
+      </div>
+
+      {view === "overview" ? <PipelineOverview rows={rows || []} /> : <>
+
       {/* turn tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
         {TURN_ORDER.map((k) => {
@@ -631,6 +655,7 @@ export default function PipelineNewPage() {
           {!groups.length && <div style={{ padding: 40, textAlign: "center", font: `600 14px ${F_SANS}`, color: "var(--muted,#777)" }}>Nothing here.</div>}
         </div>
       )}
+      </>}
     </div>
   );
 }
