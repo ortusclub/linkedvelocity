@@ -53,6 +53,7 @@ interface Row {
   blocked: boolean;
   overdue: boolean;
   daysLate: number;
+  wasRestrictedAt: string | null;
   ownerName: string | null;
   ownerEmail: string | null;
   referredBy: string | null;
@@ -259,6 +260,11 @@ function AccountRow({ r, onMarkPaid, onUpdatePayout, onHold }: { r: Row; onMarkP
             <span>Total: <b style={{ color: "var(--fg,#444)" }}>{ownerMoney(r.totalPaid, r.payoutCurrency)}</b></span>
             <span>Method: <b style={{ color: r.paymentMethod ? "var(--fg,#444)" : "var(--st-cancel-fg,#c0392b)" }}>{r.paymentMethod || "not set"}</b>{r.payoutName ? <> · <b style={{ color: "var(--fg,#444)" }}>{r.payoutName}</b></> : ""}</span>
           </div>
+          {r.bucket === "setup" && r.wasRestrictedAt && (
+            <div style={{ marginTop: 4, font: `600 12px ${F_SANS}`, color: "var(--warn-badge-text,#b7791f)" }}>
+              ⚠ Account was restricted {fmtDate(r.wasRestrictedAt)} — before this setup fee
+            </div>
+          )}
         </div>
         {r.bucket === "setup"
           ? <span style={{ font: `600 13px ${F_SANS}`, color: "var(--fg,#333)" }}>{`${r.payoutCurrency === "USD" ? "$" : "₱"}${r.setupAmount}`} one-time</span>

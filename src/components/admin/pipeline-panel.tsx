@@ -189,6 +189,15 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
   const matureDue = matureStartMs !== null ? matureStartMs + holdDays(r) * 86400000 : null;
   const matured = matureDue !== null && matureDaysLeft(matureDue) <= 0;
   const gated = false;
+  // Clue, before we pay: was this account ever restricted while it's maturing toward the
+  // (still-unpaid) setup fee? restrictionLog is append-only and survives recovery
+  // (restrictedAt is wiped on recover), so a now-recovered account still carries the record.
+  const railRestrictedAts = (r.accountRestrictionLog || []).filter((e) => e.event === "restricted").map((e) => e.at).filter(Boolean).sort();
+  const railLastRestrictedAt = railRestrictedAts.length ? railRestrictedAts[railRestrictedAts.length - 1] : (r.accountRestrictedAt || null);
+  const restrictedBeforeSetup = !setupPaid(r) && !!railLastRestrictedAt;
+  const restrictClue = restrictedBeforeSetup
+    ? <div style={{ font: `600 11px ${F_SANS}`, color: "var(--warn-badge-text,#b7791f)", lineHeight: 1.4 }}>⚠ Account was restricted {fmtDate(railLastRestrictedAt)} — before this setup fee</div>
+    : null;
 
   const qcState = useQcChecks(r.id, r.qcChecks);
   const qc = qcState.checks;
@@ -286,8 +295,12 @@ export function WorkflowRail({ r, busy, workflow, setStage, verifySignin }: { r:
         : r.status === "onboarded"
           ? doneBadge("Onboarded — live")
           : !matured
-            ? <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>maturing · 1 week hold…</span>
+            ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ font: `500 11px ${F_SANS}`, color: "var(--muted2,#9aa0a6)" }}>maturing · 1 week hold…</span>
+                {restrictClue}
+              </div>
             : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {restrictClue}
                 <div style={{ font: `700 10px ${F_SANS}`, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted2,#9aa0a6)" }}>Security check before onboarding</div>
                 {secItems.map(([key, lbl]) => (
                   <label key={key} style={{ display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", font: `500 12px ${F_SANS}`, color: "var(--fg,#333)", lineHeight: 1.35 }}>
@@ -696,6 +709,13 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
   const setupDone = setupPaid(r);
   const setupPay = (r.monthlyPayouts || []).find((p) => p.kind === "setup");
   const monthlyStarted = (r.monthlyPayouts || []).some((p) => p.kind === "monthly");
+  // Clue, before we pay: was this account ever restricted while the setup fee is still
+  // unpaid? restrictionLog is append-only and survives recovery (restrictedAt is wiped on
+  // recover), so it's the durable record. Falls back to the current open restriction for
+  // older accounts with no log. A heads-up next to the setup fee, not a gate.
+  const restrictedAts = (r.accountRestrictionLog || []).filter((e) => e.event === "restricted").map((e) => e.at).filter(Boolean).sort();
+  const lastRestrictedAt = restrictedAts.length ? restrictedAts[restrictedAts.length - 1] : (r.accountRestrictedAt || null);
+  const restrictedBeforeSetup = !setupDone && !!lastRestrictedAt;
   const pill = (text: string, green?: boolean): CSSProperties => ({ font: `700 11px ${F_SANS}`, padding: "4px 10px", borderRadius: 999, whiteSpace: "nowrap", flex: "none", background: green ? "var(--st-active-bg,#dcfce7)" : "var(--band,#f1f3f6)", color: green ? "var(--st-active-fg,#15803d)" : "var(--muted,#5b6779)" });
   const payRow = (title: string, sub: string, pillNode: ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -846,6 +866,11 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
               `Setup fee · ${formatMoney(cfg.setupAmount, cfg.currency)}`,
               setupDone ? `Paid ${fmtDate(setupPay?.paidAt || r.paidAt)}` : live ? "Owed now that they're onboarded" : "Owed once they're onboarded",
               <span style={pill(setupDone ? "✓ Paid" : live ? "Due" : "After onboarding", setupDone)}>{setupDone ? "✓ Paid" : live ? "Due" : "After onboarding"}</span>
+            )}
+            {restrictedBeforeSetup && (
+              <div style={{ marginTop: -6, font: `600 11px ${F_SANS}`, color: "var(--warn-badge-text,#b7791f)" }}>
+                ⚠ Account was restricted {fmtDate(lastRestrictedAt)} — before this setup fee
+              </div>
             )}
             {payRow(
               `Monthly · ${formatMoney(monthlyAmt(r), cfg.currency)}/mo`,

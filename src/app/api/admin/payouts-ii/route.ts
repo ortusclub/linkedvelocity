@@ -38,7 +38,7 @@ export async function GET() {
         location: true, connectionCount: true, accountAgeMonths: true,
         loginEmail: true, accountPassword: true, twoFactor: true, twoFactorResetNeeded: true,
         gologinProfileId: true, gologinShareLink: true,
-        status: true, restrictedAt: true, payoutHoldReason: true, monthlyPrice: true, ambassadorPayment: true,
+        status: true, restrictedAt: true, restrictionLog: true, payoutHoldReason: true, monthlyPrice: true, ambassadorPayment: true,
         notes: true,
       },
     });
@@ -222,6 +222,14 @@ export async function GET() {
 
       const daysLate = overdue && dueISO ? Math.max(0, Math.ceil((now - new Date(dueISO).getTime()) / 86400000)) : 0;
 
+      // Clue, before we pay: was this account ever restricted while the setup fee is still
+      // outstanding? restrictionLog is append-only and survives recovery (restrictedAt is
+      // wiped on recover), so a now-available account that recovered from a restriction still
+      // carries the record. Falls back to the current open restriction for older accounts.
+      const restrictLog = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string; event?: string }[]) : [];
+      const restrictedDates = restrictLog.filter((e) => e?.event === "restricted" && e?.at).map((e) => e.at!).sort();
+      const wasRestrictedAt = restrictedDates.length ? restrictedDates[restrictedDates.length - 1] : (a.restrictedAt ? a.restrictedAt.toISOString() : null);
+
       return {
         id: a.id,
         linkedinName: a.linkedinName,
@@ -245,6 +253,7 @@ export async function GET() {
         blocked,
         overdue,
         daysLate,
+        wasRestrictedAt,
         ownerName,
         ownerEmail: ownerEmail || null,
         referredBy: (app?.referredBy || "").trim() || null,
