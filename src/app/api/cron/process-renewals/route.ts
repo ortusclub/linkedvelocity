@@ -15,6 +15,7 @@ import {
   sendPaymentFailedEmail,
   sendTopUpConfirmation,
 } from "@/services/email";
+import { monthlyRentalPrice } from "@/lib/account-pricing";
 
 const DAY = 24 * 60 * 60 * 1000;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
@@ -150,10 +151,10 @@ export async function POST(req: NextRequest) {
       const u = rentals[0].user;
       const items = rentals.map((r) => ({
         account: r.linkedinAccount.linkedinName,
-        amount: `$${Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice).toFixed(0)}`,
+        amount: `$${Number(r.lockedPrice ?? monthlyRentalPrice(r.linkedinAccount)).toFixed(0)}`,
         date: fmtDate(new Date(r.currentPeriodEnd!)),
       }));
-      const total = `$${rentals.reduce((s, r) => s + Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice), 0).toFixed(0)}`;
+      const total = `$${rentals.reduce((s, r) => s + Number(r.lockedPrice ?? monthlyRentalPrice(r.linkedinAccount)), 0).toFixed(0)}`;
       try {
         if (items.length === 1) {
           await sendRenewalHeadsUp(u.email, firstNameOf(u.fullName), items[0].date, items[0].amount, u.cardLast4);
@@ -181,7 +182,10 @@ export async function POST(req: NextRequest) {
       include: { user: true, linkedinAccount: true },
     });
     for (const r of dueUsdc) {
-      const price = r.lockedPrice ?? r.linkedinAccount.monthlyPrice;
+      // Fall back to the LIVE grid price (not the vestigial stored monthly_price column, which is
+      // $0 for unpriced placeholders and stale elsewhere — see #662). A null lockedPrice means
+      // "charge the current listed price", so compute it.
+      const price = r.lockedPrice ?? new Prisma.Decimal(monthlyRentalPrice(r.linkedinAccount));
       const base = r.currentPeriodEnd && r.currentPeriodEnd > now ? new Date(r.currentPeriodEnd) : now;
       const nextPeriodEnd = new Date(base.getFullYear(), base.getMonth() + 1, base.getDate());
       let renewed = false;
@@ -317,7 +321,7 @@ export async function POST(req: NextRequest) {
       if (!r.currentPeriodEnd) continue;
       const end = new Date(r.currentPeriodEnd);
       const sent = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
-      const amount = `$${Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice).toFixed(0)}`;
+      const amount = `$${Number(r.lockedPrice ?? monthlyRentalPrice(r.linkedinAccount)).toFixed(0)}`;
       const account = r.linkedinAccount.linkedinName;
 
       // Reminder — within 3 days before the end date.
