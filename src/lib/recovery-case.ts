@@ -264,7 +264,13 @@ export function deriveCase(
   const lastRecovered = [...log].reverse().find((e) => e.event === "recovered");
   // Recovered = LinkedIn restored it. The case STAYS OPEN through the post-recovery workflow
   // (secure → warm-up → relist/hand-back); stored.resolvedAt marks it even before the log is read.
-  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRecovered ? Date.parse(lastRecovered.at) : null);
+  const resolvedRaw = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRecovered ? Date.parse(lastRecovered.at) : null);
+  // ...but if the account is restricted AGAIN after that recovery (openSince is newer than the
+  // resolved date), that recovery is stale: the post-recovery securing workflow is moot and this is
+  // a fresh restriction. Null it out so the next step restarts the restriction chain ("Send
+  // restriction email") instead of stalling on "Log in on GoLogin + reset password" with no current
+  // episode steps. buildCase already scopes the step list to the new episode the same way.
+  const resolvedAt = resolvedRaw != null && openSince != null && openSince > resolvedRaw ? null : resolvedRaw;
   // An explicit admin mark wins; otherwise backtrack "permanently restricted" from the account
   // status (retired), the pipeline issue flag, or a note — unless the case was explicitly reopened.
   // Perma applies even with no open restrictedAt (a retired account may have had it cleared).
