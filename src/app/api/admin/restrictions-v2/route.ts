@@ -16,6 +16,14 @@ const RECOVERED_WINDOW_MS = 30 * 86400000;
 
 const asLog = (v: unknown): RestrictionEvent[] => (Array.isArray(v) ? (v as RestrictionEvent[]) : []);
 const dayMs = 86400000;
+// Some accounts are stored ALL-CAPS ("SUNSHINE LASALA") or all-lowercase ("jocelyn cristobal").
+// Title-case only those uniform-case names so the tracker reads consistently; leave intentionally
+// mixed-case names ("Rovelyn De Felix", "Ma. Avril Yeban") exactly as the team typed them.
+function displayName(raw: string | null): string {
+  const s = (raw || "").trim();
+  if (!s || (s !== s.toUpperCase() && s !== s.toLowerCase())) return s;
+  return s.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (_, p: string, ch: string) => p + ch.toUpperCase());
+}
 // A LinkedIn reply that could REOPEN an already-closed case: a reinstatement / "your identity is
 // verified" / "restriction removed" signal. On a terminal (lost/done) case, only such a positive
 // reply counts as "needs action" — a repeat rejection that re-confirms the closed outcome does not.
@@ -225,7 +233,7 @@ export async function GET(req: Request) {
 
       return {
         lastTouchAt: lastTouch ? lastTouch[0] : null, lastTouchLabel: lastTouch ? lastTouch[1] : "",
-        id: a.id, name: a.linkedinName, email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
+        id: a.id, name: displayName(a.linkedinName), email: a.loginEmail, status: a.status, verified: a.linkedinVerified,
         linkedinUrl: a.linkedinUrl, poc: pocResolved, referrerName: referrerNameFor(app?.referredBy), phase,
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
