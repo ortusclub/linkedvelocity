@@ -5,9 +5,12 @@ import { scheduleShadowHandover } from "@/lib/shadow-handover";
 // account's tier/Sales Nav/verified price. Each shadow email has its OWN rate.
 // Override via env SHADOW_RENTER_RATES="email:rate,email:rate".
 export const SHADOW_RENTER_RATES: Record<string, number> = (() => {
-  // Apex (info@apexstrategy.io) was removed Oct 2026 — Sam moved them to a normal
-  // full-price rental (holds accounts, out of catalogue, no yield). Ortus stays shadow.
-  const out: Record<string, number> = { "info@ortus.solutions": 25 };
+  // Apex (info@apexstrategy.io) removed Oct 2026, Ortus (info@ortus.solutions) removed
+  // Nov 2026 — both moved to normal rentals that firmly hold their accounts (out of
+  // catalogue, never yielded). Ortus keeps a $25/account locked price via lockedPrice on
+  // each rental, so no flat shadow rate is needed here. No shadow renters remain; the
+  // shadow mechanic below stays dormant unless an email is re-added (e.g. via env).
+  const out: Record<string, number> = {};
   const raw = process.env.SHADOW_RENTER_RATES;
   if (raw) {
     for (const pair of raw.split(",")) {
