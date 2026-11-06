@@ -74,7 +74,7 @@ type Person = {
   role: string | null; source: string | null; pocOwner: "Ardi" | "Milee" | "Sam" | null;
   followUp: string | null; leadStage: "warm" | "cold" | null; statusOverride: "renting" | "dormant" | null;
   vetting: keyof typeof VET; paymentMethod: "Card" | "Crypto Wallet" | null; paymentFailed: boolean;
-  signInAccess: boolean; dailyCap: number; isTest: boolean; notes: string | null;
+  signInAccess: boolean; showProxy: boolean; dailyCap: number; isTest: boolean; notes: string | null;
   liveRentals: number; totalRentals: number; autoRenewOn: number; mrr: number; txnCount: number; paidTotal: number;
   replacementCount: number; discount: string | null; joinedAt: string; lastActivityAt: string;
   companyId: string | null; companyDomain: string | null; vettingReviewRaw: string | null;
@@ -299,6 +299,11 @@ export default function RentersV3Page() {
     const v = !p.signInAccess; patchLocal(p.id, { signInAccess: v }); setDraft((d) => ({ ...d, signInAccess: v }));
     if (!p.userId) { flash("Sign-in access needs an account"); return; }
     await patchPerson(p.id, { signInAccess: v });
+  }
+  async function toggleShowProxy(p: Person) {
+    const v = !p.showProxy; patchLocal(p.id, { showProxy: v }); setDraft((d) => ({ ...d, showProxy: v }));
+    if (!p.userId) { flash("Show proxy needs an account"); return; }
+    await patchPerson(p.id, { showProxy: v });
   }
   async function setCap(p: Person, cap: number) {
     const v = Math.max(1, Math.min(50, cap)); patchLocal(p.id, { dailyCap: v }); setDraft((d) => ({ ...d, dailyCap: v }));
@@ -545,7 +550,7 @@ export default function RentersV3Page() {
         dupe={dupePartner.get(cur.id)} noteText={noteText} setNoteText={setNoteText} noteType={noteType} setNoteType={setNoteType}
         confirmDel={confirmDel}
         onClose={() => setOpenPerson(null)} onSave={() => saveDetails(cur)}
-        onVet={(l) => setVetting(cur, l)} onSignin={() => toggleSignin(cur)} onCap={(c) => setCap(cur, c)}
+        onVet={(l) => setVetting(cur, l)} onSignin={() => toggleSignin(cur)} onShowProxy={() => toggleShowProxy(cur)} onCap={(c) => setCap(cur, c)}
         onTest={() => toggleTest(cur)} onDel={() => del(cur)} onAddConv={() => addConversation(cur)}
         onMerge={() => { const d = dupePartner.get(cur.id); if (d) mergeInto(cur.id, d.other.id); }}
         onGroup={() => { const d = dupePartner.get(cur.id); if (d) groupDupe(cur.id, d.other.id); }}
@@ -576,7 +581,7 @@ function PersonDrawer(props: {
   p: Person; draft: Partial<Person>; setDraft: (f: (d: Partial<Person>) => Partial<Person>) => void;
   companies: Company[]; companyById: Map<string, Company>; dupe?: { other: Person; why: string; dupeId: string };
   noteText: string; setNoteText: (v: string) => void; noteType: string; setNoteType: (v: string) => void; confirmDel: boolean;
-  onClose: () => void; onSave: () => void; onVet: (l: keyof typeof VET) => void; onSignin: () => void; onCap: (c: number) => void;
+  onClose: () => void; onSave: () => void; onVet: (l: keyof typeof VET) => void; onSignin: () => void; onShowProxy: () => void; onCap: (c: number) => void;
   onTest: () => void; onDel: () => void; onAddConv: () => void; onViewAs: () => void;
   onMerge: () => void; onGroup: () => void; onDismiss: () => void;
 }) {
@@ -720,6 +725,10 @@ function PersonDrawer(props: {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: `1px solid ${LINE2}` }}>
                 <div><div style={{ font: `600 13px ${F}`, color: INK }}>Sign-in access</div><div style={{ font: `500 11.5px ${F}`, color: MUT }}>Can log in to rented profiles directly</div></div>
                 <button onClick={props.onSignin} style={{ flex: "none", width: 38, height: 22, border: "none", borderRadius: 999, background: p.signInAccess ? "#0f7a3d" : "#c6ccd6", position: "relative", cursor: "pointer", padding: 0 }}><span style={{ position: "absolute", top: 3, left: p.signInAccess ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .15s" }} /></button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: `1px solid ${LINE2}`, opacity: p.signInAccess ? 1 : 0.55 }}>
+                <div><div style={{ font: `600 13px ${F}`, color: INK }}>Show proxy</div><div style={{ font: `500 11.5px ${F}`, color: MUT }}>Reveal the proxy in Sign-in (for HeyReach etc.)</div></div>
+                <button onClick={props.onShowProxy} style={{ flex: "none", width: 38, height: 22, border: "none", borderRadius: 999, background: p.showProxy ? "#0f7a3d" : "#c6ccd6", position: "relative", cursor: "pointer", padding: 0 }}><span style={{ position: "absolute", top: 3, left: p.showProxy ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .15s" }} /></button>
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px" }}>
                 <div><div style={{ font: `600 13px ${F}`, color: INK }}>Daily cap</div><div style={{ font: `500 11.5px ${F}`, color: MUT }}>Max rentals started per day</div></div>

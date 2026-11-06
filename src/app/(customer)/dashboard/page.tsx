@@ -73,6 +73,7 @@ function RentalCredentials({ rental }: { rental: Rental }) {
   const acct = rental.linkedinAccount;
   const [showPass, setShowPass] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  const [showProxyPass, setShowProxyPass] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [codeExp, setCodeExp] = useState<number | null>(null);
@@ -170,6 +171,46 @@ function RentalCredentials({ rental }: { rental: Rental }) {
             <span className="min-w-0 flex-1 break-all font-mono text-[13px] text-gray-900">{showSecret ? acct.twoFactorSecret : "••••••••••••••••••••••••••••••••"}</span>
             <button onClick={() => setShowSecret((v) => !v)} className="shrink-0 rounded-md border border-gray-300 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-white hover:text-blue-700 cursor-pointer">{showSecret ? "Hide" : "Show"}</button>
             <CopyBtn val={acct.twoFactorSecret} id="secret" />
+          </div>
+        </div>
+      )}
+      {/* Proxy — only present for a credential-access renter with showProxy on. Use the same proxy
+          as the account's GoLogin profile in tools like HeyReach so the location matches. */}
+      {rental.proxy && (
+        <div className="mt-4 border-t border-gray-200 pt-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold text-gray-900">Proxy</h4>
+            <span className="rounded-full bg-[#e7f7ee] px-2 py-0.5 text-[11px] font-semibold text-[#0f7a3d]">{rental.proxy.type}</span>
+            <button
+              onClick={() => copy(`${rental.proxy!.host}:${rental.proxy!.port}:${rental.proxy!.username}:${rental.proxy!.password}`, "proxy-all")}
+              className="ml-auto shrink-0 rounded-md border border-gray-300 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-white hover:text-blue-700 cursor-pointer whitespace-nowrap">
+              {copied === "proxy-all" ? "Copied" : "Copy all"}
+            </button>
+          </div>
+          <p className="mb-2.5 text-[12px] leading-snug text-gray-500">Use this proxy when connecting the account to other tools like HeyReach, so the location matches.</p>
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {([["Host", rental.proxy.host, "proxy-host"], ["Port", rental.proxy.port, "proxy-port"], ["Username", rental.proxy.username, "proxy-user"], ["Location", rental.proxy.location || "—", "proxy-loc"]] as const).map(([label, val, id]) => (
+              <div key={id} className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500">{label}</p>
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 break-all font-mono text-[13px] text-gray-900">{val || "—"}</span>
+                  {label !== "Location" && val && val !== "—" && <CopyBtn val={val} id={id} />}
+                </div>
+              </div>
+            ))}
+            {/* password — masked with Show/Hide, like the account password */}
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500">Password</p>
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 break-all font-mono text-[13px] text-gray-900">{rental.proxy.password ? (showProxyPass ? rental.proxy.password : "••••••••••••") : "—"}</span>
+                {rental.proxy.password && (
+                  <>
+                    <button onClick={() => setShowProxyPass((v) => !v)} className="shrink-0 rounded-md border border-gray-300 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-white hover:text-blue-700 cursor-pointer">{showProxyPass ? "Hide" : "Show"}</button>
+                    <CopyBtn val={rental.proxy.password} id="proxy-pass" />
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -712,6 +753,9 @@ interface Rental {
   // Tiered credential access: true when this renter is flagged to see sign-in details
   // (login email, password, live 2FA) for the accounts they rent. Default false.
   credentialAccess?: boolean;
+  // The account's proxy — only present for a credential-access renter with showProxy on, so they
+  // can match the location in tools like HeyReach. Returned through the same gated path as creds.
+  proxy?: { type: string; host: string; port: string; username: string; password: string; location: string } | null;
   // Self-serve replacement: set on a NEW rental that replaced a restricted one (points to
   // the old rental's id). The old rental carries status "replaced".
   replacesRentalId?: string | null;

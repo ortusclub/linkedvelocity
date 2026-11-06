@@ -34,6 +34,12 @@ export async function GET(req: NextRequest) {
             permanentlyRestricted: true,
             restrictionLog: true,
             twoFactorResetNeeded: true,
+            // Proxy (shown in the Sign-in panel to credential-access renters with showProxy on):
+            proxyHost: true,
+            proxyPort: true,
+            proxyUsername: true,
+            proxyPassword: true,
+            proxyLocation: true,
           },
         },
       },
@@ -111,10 +117,45 @@ export async function GET(req: NextRequest) {
     // Only hand back the password for accounts they CURRENTLY rent — never for an expired or
     // cancelled rental still in the list.
     const current = new Set(["active", "pending_access", "payment_failed"]);
+
+    // Proxy reveal (Sign-in panel): same gate as sign-in creds, plus the per-renter showProxy
+    // flag (default on). We prefetch the proxy TYPE for each account's (host,port) in one query
+    // so the type pill ("Residential · HTTP") is real, not guessed — never inside the per-rental map.
+    const showProxyUser = user.showProxy === true;
+    const proxyTypeByHostPort = new Map<string, string>();
+    if (credAccess && showProxyUser) {
+      const pairs = rentals
+        .map((r) => r.linkedinAccount)
+        .filter((a) => a.proxyHost && a.proxyPort != null)
+        .map((a) => ({ host: a.proxyHost as string, port: a.proxyPort as number }));
+      if (pairs.length) {
+        const proxies = await prisma.proxy.findMany({
+          where: { OR: pairs.map((p) => ({ host: p.host, port: p.port })) },
+          select: { host: true, port: true, type: true },
+        });
+        for (const p of proxies) proxyTypeByHostPort.set(`${p.host}:${p.port}`, p.type || "residential");
+      }
+    }
+
     const shaped = rentals.map((r) => {
-      const { loginEmail, accountPassword, twoFactor, accountAgeMonths, hasSalesNav, restrictionLog, ...account } = r.linkedinAccount;
+      const { loginEmail, accountPassword, twoFactor, accountAgeMonths, hasSalesNav, restrictionLog,
+        proxyHost, proxyPort, proxyUsername, proxyPassword, proxyLocation, ...account } = r.linkedinAccount;
       const ready = canShowRentalShareLink(r);
       const showCreds = credAccess && current.has(r.status);
+      // Proxy block: only for a credential-access renter (current rental) with showProxy on, and
+      // only when the account actually has proxy auth. Creds never leave here for anyone else —
+      // the proxy fields are destructured OUT of the generic `account` returned to every renter.
+      const showProxy = showCreds && showProxyUser && !!proxyHost && proxyPort != null && !!proxyUsername;
+      const proxy = showProxy
+        ? {
+            type: `${(proxyTypeByHostPort.get(`${proxyHost}:${proxyPort}`) || "residential").toLowerCase() === "datacenter" ? "Datacenter" : "Residential"} · HTTP`,
+            host: proxyHost as string,
+            port: String(proxyPort),
+            username: proxyUsername || "",
+            password: proxyPassword || "",
+            location: proxyLocation || "",
+          }
+        : null;
       // The 2FA secret key (TOTP seed) — e.g. to paste into HeyReach so it can answer LinkedIn's
       // 2-step checks itself. Only exposed to credential-access renters, and only if it's a
       // usable base32 seed (same validity check as the live-code route).
@@ -144,6 +185,7 @@ export async function GET(req: NextRequest) {
         gologinShareLinkId: undefined,
         gologinShareLinkUrl: ready ? r.gologinShareLinkUrl : null,
         credentialAccess: showCreds,
+        proxy,
         price,
         recovery,
         // The exact email this renter must use to set up GoLogin — the address we share the

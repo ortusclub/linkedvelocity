@@ -69,6 +69,7 @@ export async function GET() {
       vettingReview: c.vettingReview,
       dailyRentalLimit: c.dailyRentalLimit,
       credentialAccess: c.credentialAccess,
+      showProxy: c.showProxy,
     }));
 
     return NextResponse.json({ customers: result });
@@ -136,7 +137,7 @@ export async function PATCH(req: Request) {
   try {
     const admin = await requireAdmin();
 
-    const { email, paymentMethod, paymentDetails, id, isTest, vettingReview, dailyRentalLimit, credentialAccess } = await req.json();
+    const { email, paymentMethod, paymentDetails, id, isTest, vettingReview, dailyRentalLimit, credentialAccess, showProxy } = await req.json();
 
     // Toggle a customer's test flag (by id) — keeps them out of / in live dashboard numbers.
     if (id && typeof isTest === "boolean") {
@@ -162,6 +163,13 @@ export async function PATCH(req: Request) {
     if (id && typeof credentialAccess === "boolean") {
       await prisma.user.update({ where: { id }, data: { credentialAccess } });
       console.log(`[cred-access] ${admin.email} turned credential access ${credentialAccess ? "ON" : "OFF"} for user ${id}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Per-renter proxy reveal in the Sign-in panel (default on; only matters with credentialAccess).
+    if (id && typeof showProxy === "boolean") {
+      await prisma.user.update({ where: { id }, data: { showProxy } });
+      console.log(`[show-proxy] ${admin.email} turned show-proxy ${showProxy ? "ON" : "OFF"} for user ${id}`);
       return NextResponse.json({ ok: true });
     }
 
