@@ -1204,12 +1204,20 @@ function DashboardContent() {
   };
   const restrictedCount = currentRentals.filter((r) => !!r.linkedinAccount.restrictedAt).length;
   // Payment problems float to the very top so the renter can fix billing before anything renews.
-  const paymentIssueRentals = currentRentals.filter((r) => r.status === "payment_failed");
+  // "Payment due" = anything the renter must settle to keep the account: a failed charge, or an
+  // active rental now past its renew date. Restricted accounts are on downtime credit (billing
+  // paused), so they're excluded — we don't dun an account we're crediting.
+  const isPaymentDue = (r: Rental) =>
+    !r.linkedinAccount.restrictedAt && !r.paused &&
+    (r.status === "payment_failed" ||
+      (r.status === "active" && !!r.currentPeriodEnd && new Date(r.currentPeriodEnd).getTime() < nowTick));
+  const paymentIssueRentals = currentRentals.filter(isPaymentDue);
   const paymentIssueTotal = paymentIssueRentals.reduce((t, r) => t + (r.price || 0), 0);
-  // Earliest renewal date among the failing rentals — the deadline to fix things.
+  // Deadline shown only when it's still in the future — a past renew date would read oddly as a
+  // "pay before <past date>" deadline.
   const paymentIssueDueDate = paymentIssueRentals
     .map((r) => r.currentPeriodEnd)
-    .filter((d): d is string => !!d)
+    .filter((d): d is string => !!d && new Date(d).getTime() > nowTick)
     .sort((a, b) => a.localeCompare(b))[0];
   const openWalletToFix = () => {
     setShowTopUp(true);
@@ -1876,6 +1884,10 @@ function DashboardContent() {
                 else if (pendingSetup) { sc = V.blue; sl = "Setting up access"; ss = "Finish GoLogin setup to go live"; }
                 else if (ready) {
                   if (rental.status === "pending_access") { sc = V.blue; sl = "Setting up access"; ss = "Open it in GoLogin now"; }
+                  // Active but past its renew date = payment is due (we'll charge the card on the next
+                  // renewal run). Show it clearly instead of a green "Active". Restricted + payment_failed
+                  // are handled above, so this only catches a live rental that's simply overdue.
+                  else if (rental.currentPeriodEnd && new Date(rental.currentPeriodEnd).getTime() < Date.now()) { sc = V.orangeDeep; sl = "Payment due"; ss = "Renewal is past due — we'll charge your card shortly"; }
                   else { sc = V.green; sl = "Active"; ss = "Ready in GoLogin"; }
                 }
                 else { sc = V.faint; sl = "Awaiting access"; ss = "Share link not available yet"; }
