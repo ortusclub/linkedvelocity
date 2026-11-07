@@ -14,10 +14,14 @@ import {
   sendAccessRevokedEmail,
   sendPaymentFailedEmail,
   sendTopUpConfirmation,
+  sendBillingActionsDigest,
 } from "@/services/email";
 
 const DAY = 24 * 60 * 60 * 1000;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
+// Where the end-of-run billing digest goes — the team inbox, so nothing the cron did
+// (a failed renewal, access cut, an account released) happens silently.
+const TEAM_ALERT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "info@linkedvelocity.com";
 const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 const firstNameOf = (full: string | null) => (full || "").trim().split(" ")[0] || "";
 
@@ -33,6 +37,9 @@ export async function POST(req: NextRequest) {
 
   const now = new Date();
   const result = { renewed: 0, cardRenewed: 0, recharged: 0, failed: 0, graced: 0, reminded: 0, graceNoticed: 0, lapsed: 0, winBack: 0, headsUp: 0, released: 0 };
+  // Actions worth the team's awareness this run — one consolidated digest is emailed at the end
+  // (renters already get their own notices; this is the internal "here's what the cron did" trigger).
+  const teamEvents: { kind: "grace" | "revoked" | "lapsed" | "released"; renter: string; account: string; note?: string }[] = [];
 
   // Reclaim window: after a rental ends, hold the profile this many days so the same
   // renter can re-pay and keep it, before it's released to others.
@@ -281,11 +288,13 @@ export async function POST(req: NextRequest) {
           // so a renter who re-pays regains access on grant without a fresh link.
           try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
           try { await sendAccessRevokedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`, fmtDate(graceCutoff), r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
+          teamEvents.push({ kind: "revoked", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `unpaid since ${fmtDate(periodEnd)}` });
           result.failed++;
         } else {
           if (!sent.includes("payment_hiccup")) {
             try { await sendPaymentFailedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`); } catch (e) { console.error(e); }
             await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "payment_hiccup"] as unknown as Prisma.InputJsonValue } });
+            teamEvents.push({ kind: "grace", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `retrying, grace to ${fmtDate(graceCutoff)}` });
           }
           result.graced++;
         }
@@ -337,6 +346,7 @@ export async function POST(req: NextRequest) {
         // Pause (not delete) the public link — account is held for the reclaim window.
         try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on lapse", r.id, e); }
         enqueue(r, "access_revoked", { account }, { releaseDate: fmtDate(new Date(end.getTime() + RECLAIM_DAYS * DAY)) });
+        teamEvents.push({ kind: "lapsed", renter: r.user.fullName || r.user.email, account, note: `reset ${fmtDate(new Date(end.getTime() + RECLAIM_DAYS * DAY))} if still unpaid` });
         result.lapsed++;
         continue;
       }
@@ -373,7 +383,7 @@ export async function POST(req: NextRequest) {
         currentPeriodEnd: { lte: new Date(now.getTime() - RECLAIM_DAYS * DAY) },
         linkedinAccount: { status: "rented" },
       },
-      include: { linkedinAccount: true },
+      include: { linkedinAccount: true, user: true },
     });
     for (const r of heldOut) {
       const sent = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
@@ -404,7 +414,15 @@ export async function POST(req: NextRequest) {
         data: { status: "under_construction", listed: false, rentalReadyChecklist: {} },
       });
       await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "released"] as unknown as Prisma.InputJsonValue } });
+      teamEvents.push({ kind: "released", renter: r.user?.fullName || r.user?.email || "unknown", account: r.linkedinAccount.linkedinName, note: "pulled to after-rental reset (hidden); re-lists after housekeeping" });
       result.released++;
+    }
+
+    // Internal trigger: one consolidated email of everything the run did that the team should
+    // know about (failed renewals, access cuts, releases). Sent only when there's something to
+    // report; renewals that went through cleanly are a count, not a line. Best-effort.
+    if (teamEvents.length) {
+      try { await sendBillingActionsDigest(TEAM_ALERT_EMAIL, { renewed: result.renewed, events: teamEvents }); } catch (e) { console.error("billing digest email failed", e); }
     }
 
     return NextResponse.json({ ok: true, ...result });
