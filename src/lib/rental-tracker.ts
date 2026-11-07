@@ -10,6 +10,7 @@ export interface TrackerRental {
   accessGrantedAt?: string | Date | null;
   accessRevokedAt?: string | Date | null;
   gologinShareIds?: unknown;
+  currentPeriodEnd?: string | Date | null;
 }
 
 // True when access was granted but the system has no stored GoLogin share to
@@ -27,8 +28,16 @@ export function paymentMethod(r: TrackerRental): "USDC" | "Stripe" {
 // Money state: did they pay, are we waiting, or is it overdue/ended?
 export function paymentStatus(r: TrackerRental): "Paid" | "Pending" | "Overdue" | "Expired" | "Cancelled" {
   switch (r.status) {
-    case "active":
+    case "active": {
+      // Active but past its billing date = payment is actually overdue (the account is
+      // parked / the renewal hasn't been collected yet), NOT "Paid". Date-aware so the
+      // dashboard reflects what's really owed instead of showing green on an unpaid rental.
+      // Weekly off-platform rentals carry no currentPeriodEnd, so they stay "Paid" here and
+      // are flagged separately by the weekly-due logic.
+      const end = r.currentPeriodEnd ? new Date(r.currentPeriodEnd) : null;
+      if (end && !isNaN(end.getTime()) && end.getTime() < Date.now()) return "Overdue";
       return "Paid";
+    }
     case "pending_access":
       return "Pending";
     case "payment_failed":
