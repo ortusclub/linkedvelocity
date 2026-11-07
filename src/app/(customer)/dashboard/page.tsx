@@ -1207,10 +1207,20 @@ function DashboardContent() {
   // "Payment due" = anything the renter must settle to keep the account: a failed charge, or an
   // active rental now past its renew date. Restricted accounts are on downtime credit (billing
   // paused), so they're excluded — we don't dun an account we're crediting.
+  // Due is judged by the DAY, not the exact timestamp: an account whose renew date is today or
+  // earlier counts as due all day (so two accounts both dated "Nov 7" behave the same regardless
+  // of the hour on the clock). Compares calendar days in the viewer's local time.
+  const pastDueByDay = (d?: string | null) => {
+    if (!d) return false;
+    const e = new Date(d), n = new Date(nowTick);
+    const endDay = new Date(e.getFullYear(), e.getMonth(), e.getDate()).getTime();
+    const today = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+    return endDay <= today;
+  };
   const isPaymentDue = (r: Rental) =>
     !r.linkedinAccount.restrictedAt && !r.paused &&
     (r.status === "payment_failed" ||
-      (r.status === "active" && !!r.currentPeriodEnd && new Date(r.currentPeriodEnd).getTime() < nowTick));
+      (r.status === "active" && pastDueByDay(r.currentPeriodEnd)));
   const paymentIssueRentals = currentRentals.filter(isPaymentDue);
   const paymentIssueTotal = paymentIssueRentals.reduce((t, r) => t + (r.price || 0), 0);
   // Deadline shown only when it's still in the future — a past renew date would read oddly as a
@@ -1887,7 +1897,7 @@ function DashboardContent() {
                   // Active but past its renew date = payment is due (we'll charge the card on the next
                   // renewal run). Show it clearly instead of a green "Active". Restricted + payment_failed
                   // are handled above, so this only catches a live rental that's simply overdue.
-                  else if (rental.currentPeriodEnd && new Date(rental.currentPeriodEnd).getTime() < Date.now()) { sc = V.orangeDeep; sl = "Payment due"; ss = "Renewal is past due — we'll charge your card shortly"; }
+                  else if (pastDueByDay(rental.currentPeriodEnd)) { sc = V.orangeDeep; sl = "Payment due"; ss = "Renewal is past due — we'll charge your card shortly"; }
                   else { sc = V.green; sl = "Active"; ss = "Ready in GoLogin"; }
                 }
                 else { sc = V.faint; sl = "Awaiting access"; ss = "Share link not available yet"; }
