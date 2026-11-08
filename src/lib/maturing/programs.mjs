@@ -1,4 +1,8 @@
-// One classification for the board and automatic enrolment. Pipeline wins overlaps.
+// One classification for the board and automatic enrolment. Inventory status wins:
+// an account under construction is Construction and an available one is Available
+// whatever its application says; Pipeline is for everything else with a live
+// Level-4 application (Sam, 2026-11-08 — "if they are in construction they go in
+// the Construction section").
 export const PROGRAMS = {
  pipeline: {label:'Pipeline Maturing', description:'Gentle warm ramp, followed by cold connections.'},
  construction: {label:'Construction', description:'Build connections with a stronger warm ramp, then introduce cold connections.'},
@@ -18,7 +22,9 @@ export function categoryResolver(apps, sessions) {
    && !['onboarded','rejected','unreachable'].includes(app.status)
    && !sessions.some(s=>s.applicationId===app.id&&['reserved','needs_help','ready'].includes(s.state))
    && !(app.paidAt&&['available','rented','trial'].includes(a.status));
-  return pipeline?'pipeline':['under_construction','construction_immature'].includes(a.status)?'construction':a.status==='available'?'available':'other';
+  if(['under_construction','construction_immature'].includes(a.status))return 'construction';
+  if(a.status==='available')return 'available';
+  return pipeline?'pipeline':'other';
  };
 }
 const stage=(id,fromDay,toDay,warmDaily,coldDaily)=>({id,name:id,fromDay,toDay,warmDaily,coldDaily,likesDaily:0});
