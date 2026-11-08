@@ -9,7 +9,9 @@ test('inventory status wins: construction stays construction even with a live ap
  assert.equal(classify({id:'four',status:'unavailable'}),'other');
  assert.equal(classify({id:'two',status:'under_construction'}),'other'); // no owner application and not onboarded → inventory shows Initial
  assert.equal(classify({id:'three',status:'available'}),'available');
- assert.equal(categoryResolver([{...app,paidAt:'2026-10-05'}],[{accountId:'one',applicationId:'a'}])({id:'one',status:'available'}),'available');
+ // Inventory page: an owner application that has not onboarded makes the account Construction even when its status is available.
+ assert.equal(categoryResolver([{...app,paidAt:'2026-10-05'}],[{accountId:'one',applicationId:'a'}])({id:'one',status:'available'}),'construction');
+ assert.equal(categoryResolver([{...app,paidAt:'2026-10-05',status:'onboarded'}],[{accountId:'one',applicationId:'a'}])({id:'one',status:'available'}),'available');
 });
 test('ambiguous identity does not infer a pipeline application',()=>{
  const apps=['a','b'].map(id=>({id,linkedinUrl:'https://linkedin.com/in/one',verifiedAt:'2026-10-01'}));
