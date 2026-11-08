@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { categoryResolver } from "@/lib/maturing/programs.mjs";
+import { categoryResolver, categoriesResolver } from "@/lib/maturing/programs.mjs";
 import { prisma } from "@/lib/prisma";
 
 // Read-only identity feed for the Ortus Outreach app: which LinkedIn profile
@@ -53,12 +53,14 @@ export async function GET(req: NextRequest) {
     prisma.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}}),
   ]);
   const category=categoryResolver(apps,sessions);
+  const categories=categoriesResolver(apps,sessions);
   const accounts = rows
     // Showcase/demo accounts are catalogue props, not real LinkedIn profiles.
     .filter((a) => !(a.notes || "").includes("[SHOWCASE]"))
     .filter((a) => a.gologinProfileId || a.loginEmail)
     .map((a) => ({
       maturingCategory: category(a),
+      maturingCategories: categories(a),
       gologinProfileId: a.gologinProfileId || "",
       loginEmail: (a.loginEmail || "").trim().toLowerCase(),
       name: a.linkedinName,
