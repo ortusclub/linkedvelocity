@@ -27,6 +27,22 @@ export function categoryResolver(apps, sessions) {
   return pipeline?'pipeline':'other';
  };
 }
+// Every category an account belongs to. The Outreach board lists an account under
+// each: a construction account whose application is in the pipeline hold shows in
+// Pipeline Maturing AND Construction, so the Pipeline section matches the Admin
+// "Maturing" card and Construction matches the inventory (Sam, 2026-11-08).
+export function categoriesResolver(apps, sessions) {
+ const primary=categoryResolver(apps,sessions);
+ const resolvedPipeline=categoryResolver(apps,sessions);
+ return a => {
+  const out=new Set();
+  const p=primary(a); if(p!=='other')out.add(p);
+  // Pipeline membership regardless of status: re-run the resolver as if the
+  // account had no inventory status, so only the application rule decides.
+  if(resolvedPipeline({...a,status:'__none__'})==='pipeline')out.add('pipeline');
+  return out.size?[...out]:['other'];
+ };
+}
 const stage=(id,fromDay,toDay,warmDaily,coldDaily)=>({id,name:id,fromDay,toDay,warmDaily,coldDaily,likesDaily:0});
 export function programStages(category, recentlyRestricted=false) {
  if(recentlyRestricted||category==='pipeline')return [stage('Warm',1,4,2,0),stage('Warm ramp',5,9,5,0),stage('Warm build',10,14,8,0),stage('Introduce cold',15,21,5,4),stage('Cold ramp',22,35,3,8)];

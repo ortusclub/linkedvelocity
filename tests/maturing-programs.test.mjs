@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {categoryResolver,programStages} from '../src/lib/maturing/programs.mjs';
+import {categoryResolver,categoriesResolver,programStages} from '../src/lib/maturing/programs.mjs';
 test('inventory status wins: construction stays construction even with a live application (Sam, 2026-11-08)',()=>{
  const app={id:'a',verifiedAt:'2026-10-01',applicationReceived:true,status:'verified',email:'owner@example.com'};
  const classify=categoryResolver([app],[{accountId:'one',applicationId:'a',state:'complete'}]);
@@ -24,4 +24,13 @@ test('three programmes have consecutive stages and recent restrictions override 
  assert.ok(programStages('construction')[0].warmDaily>programStages('pipeline')[0].warmDaily);
  assert.ok(programStages('available')[0].warmDaily>programStages('construction')[0].warmDaily);
  assert.deepEqual(programStages('available',true),programStages('pipeline'));
+});
+
+test('an account can belong to Pipeline and Construction at once; status alone never implies pipeline',()=>{
+ const app={id:'a',verifiedAt:'2026-10-01',applicationReceived:true,status:'verified',email:'owner@example.com'};
+ const both=categoriesResolver([app],[{accountId:'one',applicationId:'a',state:'complete'}]);
+ assert.deepEqual(both({id:'one',status:'under_construction'}).sort(),['construction','pipeline']);
+ assert.deepEqual(both({id:'two',status:'under_construction'}),['construction']);
+ assert.deepEqual(both({id:'one',status:'unavailable'}),['pipeline']);
+ assert.deepEqual(both({id:'three',status:'unavailable'}),['other']);
 });
