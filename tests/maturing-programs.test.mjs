@@ -1,10 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {categoryResolver,programStages} from '../src/lib/maturing/programs.mjs';
-test('pipeline takes precedence; paid available inventory has its own programme',()=>{
+test('inventory status wins: construction stays construction even with a live application (Sam, 2026-11-08)',()=>{
  const app={id:'a',verifiedAt:'2026-10-01',applicationReceived:true,status:'verified',email:'owner@example.com'};
  const classify=categoryResolver([app],[{accountId:'one',applicationId:'a',state:'complete'}]);
- assert.equal(classify({id:'one',status:'under_construction'}),'pipeline');
+ assert.equal(classify({id:'one',status:'under_construction'}),'construction');
+ assert.equal(classify({id:'one',status:'unavailable'}),'pipeline');
+ assert.equal(classify({id:'four',status:'unavailable'}),'other');
  assert.equal(classify({id:'two',status:'under_construction'}),'construction');
  assert.equal(classify({id:'three',status:'available'}),'available');
  assert.equal(categoryResolver([{...app,paidAt:'2026-10-05'}],[{accountId:'one',applicationId:'a'}])({id:'one',status:'available'}),'available');
