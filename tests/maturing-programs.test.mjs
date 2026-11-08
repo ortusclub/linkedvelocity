@@ -7,7 +7,7 @@ test('inventory status wins: construction stays construction even with a live ap
  assert.equal(classify({id:'one',status:'under_construction'}),'construction');
  assert.equal(classify({id:'one',status:'unavailable'}),'construction'); // inventory: unavailable + owner not onboarded = Construction
  assert.equal(classify({id:'four',status:'unavailable'}),'other');
- assert.equal(classify({id:'two',status:'under_construction'}),'construction');
+ assert.equal(classify({id:'two',status:'under_construction'}),'other'); // no owner application and not onboarded → inventory shows Initial
  assert.equal(classify({id:'three',status:'available'}),'available');
  assert.equal(categoryResolver([{...app,paidAt:'2026-10-05'}],[{accountId:'one',applicationId:'a'}])({id:'one',status:'available'}),'available');
 });
@@ -30,7 +30,7 @@ test('an account can belong to Pipeline and Construction at once; status alone n
  const app={id:'a',verifiedAt:'2026-10-01',applicationReceived:true,status:'verified',email:'owner@example.com',paidAt:'2026-10-05'};
  const both=categoriesResolver([app],[{accountId:'one',applicationId:'a',state:'complete'}]);
  assert.deepEqual(both({id:'one',status:'under_construction'}).sort(),['construction','pipeline']);
- assert.deepEqual(both({id:'two',status:'under_construction'}),['construction']);
+ assert.deepEqual(both({id:'two',status:'under_construction'}),['other']);
  assert.deepEqual(both({id:'one',status:'unavailable'}).sort(),['construction','pipeline']);
  assert.deepEqual(both({id:'three',status:'unavailable'}),['other']);
 });
