@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
       restrictedAt: true,
       notes: true,
       twoFactorResetNeeded: true,
+      maturingStartFailedAt: true,
+      maturingStartFailedReason: true,
       accountPassword: true, // only reduced to hasPassword below; never sent
       rentals: {
         where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false },
@@ -64,6 +66,10 @@ export async function GET(req: NextRequest) {
     .map((a) => ({
       maturingCategory: category(a),
       maturingCategories: categories(a),
+      // Why auto-start last failed to launch this account, so the Outreach board can
+      // say it under a stopped row (Sam, 2026-11-08). Cleared on a successful start.
+      maturingStartFailedAt: a.maturingStartFailedAt || null,
+      maturingStartFailedReason: a.maturingStartFailedReason || "",
       gologinProfileId: a.gologinProfileId || "",
       loginEmail: (a.loginEmail || "").trim().toLowerCase(),
       name: a.linkedinName,

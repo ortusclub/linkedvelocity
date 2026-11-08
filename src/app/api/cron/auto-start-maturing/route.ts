@@ -68,7 +68,15 @@ export async function POST(req: NextRequest) {
   const RETRY_COOLDOWN_MS = Math.max(1, Number(process.env.MATURING_RETRY_COOLDOWN_H) || 24) * 3600000;
   const running = new Set<string>(); // non-terminal campaign — never disturb
   const lastEndedAt = new Map<string, number>(); // profile → newest ended-campaign time
+  // A plan start() rolled back seconds after creating it (second campaign refused,
+  // e.g. engine queue full) is not a run that ended — it never ran. Counting it
+  // put the account on a 24h retry cooldown for a capacity blip (2026-11-08:
+  // princes.salvador, sheilamae.omblero).
+  const ROLLBACK_WINDOW_MS = 5 * 60000;
+  const instantRollback = (c: { status?: string; createdAt?: string; updatedAt?: string }) =>
+    c.status === "cancelled" && Date.parse(c.updatedAt || "") - Date.parse(c.createdAt || "") < ROLLBACK_WINDOW_MS;
   for (const c of data.campaigns) {
+    if (instantRollback(c)) continue;
     const ended = TERMINAL.has(c.status || "");
     const t = Date.parse(c.updatedAt || c.createdAt || "") || 0;
     for (const pid of c.profileIds || []) {
