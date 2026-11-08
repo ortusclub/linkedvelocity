@@ -165,6 +165,36 @@ export async function POST(req: NextRequest) {
     return !a.maturingStartFailedAt || Date.now() - a.maturingStartFailedAt.getTime() >= STARTFAIL_COOLDOWN_MS;
   }
 
+  // ?explain=<login email>: say which check excludes one account, start nothing.
+  // Added when the job answered "eligible: 0" for accounts every outside model
+  // said were eligible (Sam, 2026-11-08).
+  const explain = (req.nextUrl.searchParams.get("explain") || "").trim().toLowerCase();
+  if (explain) {
+    const raw = await prisma.linkedInAccount.findFirst({
+      where: { loginEmail: { equals: explain, mode: "insensitive" } },
+      select: { id: true, gologinProfileId: true, status: true, inventoryPool: true, restrictedAt: true, permanentlyRestricted: true, notes: true, maturingStartFailedAt: true, maturingStartFailedReason: true,
+        rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] } }, select: { id: true, status: true } } },
+    });
+    if (!raw) return NextResponse.json({ explain, found: false });
+    const inQuery = accounts.find((a) => a.id === raw.id) || null;
+    const gid = raw.gologinProfileId || "";
+    const checks = {
+      hasGoLoginProfile: !!gid,
+      statusAllowed: !["removed", "rented", "retired", "maintenance"].includes(raw.status),
+      notCampaignPool: raw.inventoryPool !== "campaign",
+      noRestrictionMark: !raw.restrictedAt && !raw.permanentlyRestricted,
+      noActiveRental: raw.rentals.length === 0,
+      noRunningCampaign: !gid || !running.has(gid),
+      retryCooldownOver: !gid || !lastEndedAt.has(gid) || Date.now() - (lastEndedAt.get(gid) || 0) >= RETRY_COOLDOWN_MS,
+      startFailCooldownOver: startFailOk(raw),
+      level4OrInventoryStatus: inQuery ? (atLevel4(inQuery) || ["under_construction", "construction_immature", "available"].includes(raw.status)) : ["under_construction", "construction_immature", "available"].includes(raw.status),
+      notShowcase: !(raw.notes || "").includes("[SHOWCASE]"),
+    };
+    const failing = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
+    return NextResponse.json({ explain, found: true, eligible: failing.length === 0, failing, checks, status: raw.status, gologinProfileId: gid,
+      lastEndedAt: gid && lastEndedAt.has(gid) ? new Date(lastEndedAt.get(gid)!).toISOString() : null, runningOnEngine: !!gid && running.has(gid),
+      startFailedAt: raw.maturingStartFailedAt, startFailedReason: raw.maturingStartFailedReason, engineCampaigns: data.campaigns.length });
+  }
   const candidates = accounts.filter(
     (a) =>
       !!a.gologinProfileId &&
