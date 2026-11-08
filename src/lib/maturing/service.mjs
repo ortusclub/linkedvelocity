@@ -118,8 +118,18 @@ export async function start(input, actor){
 let sourceCache=null;
 export async function poolSources(inventory,force=false){
  if(!force&&sourceCache&&Date.now()-sourceCache.at<60000)return {...sourceCache.value,lvAccounts:inventory};
- const [ortus,lv,soo]=await Promise.all([workspaceProfiles('ortus'),workspaceProfiles('linkedvelocity'),engine('/api/soo-status')]);
- const value={profiles:[...ortus,...lv],sooAccounts:soo.accounts||[],lvAccounts:inventory};
+ // Maturing warm pools are LinkedVelocity-owned profiles only (linkedVelocityWarmPool
+ // keeps account==='linkedvelocity'), so the LinkedVelocity workspace is required and
+ // the Ortus workspace is best-effort. An expired Ortus token made every auto-start
+ // fail with "Could not load the ortus browser workspace" although none of those
+ // accounts live there (Sam, 2026-11-08).
+ const [ortusResult,lv,soo]=await Promise.all([
+  workspaceProfiles('ortus').then(profiles=>({profiles}),error=>({profiles:[],error})),
+  workspaceProfiles('linkedvelocity'),
+  engine('/api/soo-status'),
+ ]);
+ if(ortusResult.error)console.warn(`[maturing] Ortus browser workspace unavailable, continuing with LinkedVelocity profiles only: ${ortusResult.error instanceof Error?ortusResult.error.message:String(ortusResult.error)}`);
+ const value={profiles:[...ortusResult.profiles,...lv],sooAccounts:soo.accounts||[],lvAccounts:inventory,ortusWorkspaceError:ortusResult.error?String(ortusResult.error.message||ortusResult.error):''};
  sourceCache={at:Date.now(),value};return value;
 }
 export async function desktop(path,params){
