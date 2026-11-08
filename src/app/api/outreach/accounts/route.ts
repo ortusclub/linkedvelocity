@@ -40,6 +40,8 @@ export async function GET(req: NextRequest) {
       status: true,
       restrictedAt: true,
       notes: true,
+      twoFactorResetNeeded: true,
+      accountPassword: true, // only reduced to hasPassword below; never sent
       rentals: {
         where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false },
         select: { id: true },
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
   });
 
   const [apps,sessions] = await Promise.all([
-    prisma.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true}}),
+    prisma.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true,onboardedAt:true}}),
     prisma.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}}),
   ]);
   const category=categoryResolver(apps,sessions);
@@ -58,6 +60,7 @@ export async function GET(req: NextRequest) {
     // Showcase/demo accounts are catalogue props, not real LinkedIn profiles.
     .filter((a) => !(a.notes || "").includes("[SHOWCASE]"))
     .filter((a) => a.gologinProfileId || a.loginEmail)
+    .map((raw) => ({ ...raw, hasPassword: !!raw.accountPassword, accountPassword: undefined }))
     .map((a) => ({
       maturingCategory: category(a),
       maturingCategories: categories(a),
