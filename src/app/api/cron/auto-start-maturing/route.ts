@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
   // Level-4 signal lives on the application (verifiedAt set, not onboarded). Resolve
   // each eligible account to its application the same way the pipeline does.
   const apps = await prisma.ambassadorApplication.findMany({
-    select: { id: true, verifiedAt: true, status: true, linkedinUrl: true, email: true, applicationReceived: true, paidAt: true },
+    select: { id: true, verifiedAt: true, status: true, linkedinUrl: true, email: true, applicationReceived: true, paidAt: true, onboardedAt: true },
   });
   const verifiedByUrl = new Map<string, boolean>();
   const verifiedByEmail = new Map<string, boolean>();
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
       permanentlyRestricted: false,
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true, twoFactorResetNeeded: true, restrictedAt: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360): the renter is using the account, so it must not fire its own
       // connection requests. Shadow rentals keep status "available", so they'd slip
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
       noRunningCampaign: !gid || !running.has(gid),
       retryCooldownOver: !gid || !lastEndedAt.has(gid) || Date.now() - (lastEndedAt.get(gid) || 0) >= RETRY_COOLDOWN_MS,
       startFailCooldownOver: startFailOk(raw),
-      level4OrInventoryStatus: inQuery ? (atLevel4(inQuery) || ["under_construction", "construction_immature", "available"].includes(raw.status)) : ["under_construction", "construction_immature", "available"].includes(raw.status),
+      level4OrInventoryStatus: (inQuery ? atLevel4(inQuery) : false) || ["construction", "available"].includes(categoryResolver(apps, sessions)(inQuery || raw)),
       notShowcase: !(raw.notes || "").includes("[SHOWCASE]"),
     };
     const failing = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
@@ -195,20 +195,22 @@ export async function POST(req: NextRequest) {
       lastEndedAt: gid && lastEndedAt.has(gid) ? new Date(lastEndedAt.get(gid)!).toISOString() : null, runningOnEngine: !!gid && running.has(gid),
       startFailedAt: raw.maturingStartFailedAt, startFailedReason: raw.maturingStartFailedReason, engineCampaigns: data.campaigns.length });
   }
+  const category = categoryResolver(apps, sessions);
   const candidates = accounts.filter(
     (a) =>
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
       campaignOk(a.gologinProfileId) &&
       startFailOk(a) &&
-      (atLevel4(a) || ["under_construction", "construction_immature", "available"].includes(a.status)) &&
+      // Inventory grouping decides, not the raw status: an 'unavailable' account whose
+      // owner has not onboarded is Construction in the inventory and must mature.
+      (atLevel4(a) || ["construction", "available"].includes(category(a))) &&
       !(a.notes || "").includes("[SHOWCASE]"),
   );
 
   // Pipeline accounts take priority over already-onboarded inventory. Match
   // the Level-4 bucket: received, QC passed, no setup in progress, not earning
   // inventory with its setup fee paid. Retain all existing eligibility holds.
-  const category = categoryResolver(apps, sessions);
   const isPipeline = (a: (typeof accounts)[number]) => category(a) === "pipeline";
   const CONSTRUCTION_STATUS = new Set(["under_construction", "construction_immature"]);
   const inConstruction = (a: { status: string }) => CONSTRUCTION_STATUS.has(a.status);

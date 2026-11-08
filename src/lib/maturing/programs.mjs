@@ -10,7 +10,32 @@ export const PROGRAMS = {
  other: {label:'Other / Previous programmes', description:'Existing campaigns outside the three current inventory categories.'},
 };
 const norm = v => String(v || '').split('?')[0].replace(/\/+$/, '').trim().toLowerCase();
-export function categoryResolver(apps, sessions) {
+// Internal mailbox domains (mirror of src/lib/company.ts INTERNAL_DOMAINS; this file is
+// plain JS shared with the Outreach feed, so it cannot import the TS helper).
+const INTERNAL_DOMAINS=['ortus.solutions','linkedvelocity.com','ortusclub.com','klabber.co','lotuspost.fyi','lotuspost.co.uk','harbourpost.co.uk','northgatemail.co.uk','oakfieldmail.co.uk','industrial-renaissance-summit.com','islandcorrespondence.lol'];
+const companyEmail = e => { const v=String(e||'').toLowerCase(); return INTERNAL_DOMAINS.some(d=>v.endsWith('@'+d)); };
+// The inventory page's grouping (admin/inventory-v2 canonicalStatus), so the
+// maturing categories agree with the Construction / Available groups the operator
+// sees there. An account with status 'unavailable' whose owner has not onboarded
+// is Construction in the inventory, and must be Construction here too (Sam,
+// 2026-11-08: "all of these accounts are in construction of inventory").
+export function inventoryGroup(a, app) {
+ const onboarded = !!app && (app.status === 'onboarded' || !!app.onboardedAt);
+ if (a.status === 'retired' || a.status === 'removed') return 'Inaccessible';
+ if (a.status !== 'rented' && app && !app.paidAt) return 'Initial';
+ if (a.restrictedAt || a.status === 'maintenance') return 'Maintenance';
+ if (a.status === 'rented') return 'Rented';
+ if (app && !onboarded) return 'Construction';
+ if (a.status === 'construction_immature' || a.status === 'under_construction') return onboarded ? 'Construction' : 'Initial';
+ if (a.status === 'available') return a.twoFactorResetNeeded ? 'Maintenance' : 'Available';
+ if (a.status === 'trial') return 'Trial';
+ if (!a.loginEmail || !companyEmail(a.loginEmail) || (a.hasPassword === false)) return 'Initial';
+ return onboarded ? 'Construction' : 'Initial';
+}
+// Level 4 · Maturing in the pipeline (pipeline-model levelOf === 4): QC passed
+// (verifiedAt), application received, not onboarded/rejected/unreachable, no setup
+// session in progress, and not already earning inventory with its setup fee paid.
+export function pipelineMatcher(apps, sessions) {
  const byId = new Map(apps.map(a=>[a.id,a]));
  const unique = (key,value) => { const found=apps.filter(a=>key(a)===value); return value && found.length===1?found[0]:null; };
  return a => {
@@ -22,24 +47,33 @@ export function categoryResolver(apps, sessions) {
    && !['onboarded','rejected','unreachable'].includes(app.status)
    && !sessions.some(s=>s.applicationId===app.id&&['reserved','needs_help','ready'].includes(s.state))
    && !(app.paidAt&&['available','rented','trial'].includes(a.status));
-  if(['under_construction','construction_immature'].includes(a.status))return 'construction';
-  if(a.status==='available')return 'available';
+  return {app:app||null,pipeline};
+ };
+}
+// Primary category (one value): the inventory group first, then the pipeline.
+export function categoryResolver(apps, sessions) {
+ const match=pipelineMatcher(apps,sessions);
+ return a => {
+  const {app,pipeline}=match(a);
+  const group=inventoryGroup(a,app);
+  if(group==='Construction')return 'construction';
+  if(group==='Available')return 'available';
   return pipeline?'pipeline':'other';
  };
 }
 // Every category an account belongs to. The Outreach board lists an account under
 // each: a construction account whose application is in the pipeline hold shows in
 // Pipeline Maturing AND Construction, so the Pipeline section matches the Admin
-// "Maturing" card and Construction matches the inventory (Sam, 2026-11-08).
+// "Level 4 · Maturing" list and Construction matches the inventory (Sam, 2026-11-08).
 export function categoriesResolver(apps, sessions) {
- const primary=categoryResolver(apps,sessions);
- const resolvedPipeline=categoryResolver(apps,sessions);
+ const match=pipelineMatcher(apps,sessions);
  return a => {
+  const {app,pipeline}=match(a);
   const out=new Set();
-  const p=primary(a); if(p!=='other')out.add(p);
-  // Pipeline membership regardless of status: re-run the resolver as if the
-  // account had no inventory status, so only the application rule decides.
-  if(resolvedPipeline({...a,status:'__none__'})==='pipeline')out.add('pipeline');
+  const group=inventoryGroup(a,app);
+  if(group==='Construction')out.add('construction');
+  if(group==='Available')out.add('available');
+  if(pipeline)out.add('pipeline');
   return out.size?[...out]:['other'];
  };
 }
