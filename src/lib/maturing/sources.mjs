@@ -99,7 +99,13 @@ export async function workspaceProfiles(account){
  const profiles=[];
  for(let page=1;page<=100;page++){
   const response=await fetch(`https://api.gologin.com/browser/v2?page=${page}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000),cache:'no-store'});
-  if(!response.ok)throw Error(`Could not load the ${account} browser workspace.`);
+  if(!response.ok){
+   // Name the refusal. The bare message hid whether GoLogin said 401 (bad token),
+   // 403 (plan or workspace membership) or 429 (rate limit), so 17 accounts sat in
+   // start-failed cooldown with no way to tell which (Sam, 2026-11-08).
+   const body=(await response.text().catch(()=>'')).replace(/\s+/g,' ').trim().slice(0,120);
+   throw Error(`Could not load the ${account} browser workspace (GoLogin HTTP ${response.status}${body?`: ${body}`:''}).`);
+  }
   const data=await response.json();
   if(!Array.isArray(data.profiles))throw Error('Browser workspace returned an invalid account list.');
   profiles.push(...data.profiles.map(p=>({id:p.id,name:p.name||'',account,available:true})));
