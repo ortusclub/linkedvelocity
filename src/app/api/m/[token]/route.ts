@@ -26,16 +26,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
   const me = await prisma.referrer.findUnique({ where: { token } });
   if (!me) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const [referrers, apps, accounts, payouts] = await Promise.all([
+  const [referrers, apps, accounts, payouts, queueCount] = await Promise.all([
     prisma.referrer.findMany({ select: { slug: true, name: true } }),
     prisma.ambassadorApplication.findMany({
       orderBy: { createdAt: "desc" },
-      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, withdrawnAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, selfServiceOnboarding: { select: { state: true, id: true } } },
+      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, withdrawnAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, selfServiceOnboarding: { select: { state: true, id: true } }, scheduledMeeting: { select: { startsAt: true } } },
     }),
     // For surfacing an active LinkedIn restriction to the referrer we need the linked
     // account's live restriction flag. Match the same way the admin does (below).
     prisma.linkedInAccount.findMany({ select: { id: true, linkedinUrl: true, notes: true, restrictedAt: true, status: true, restrictionLog: true } }),
     prisma.payout.findMany({ where: { referrerId: me.id }, orderBy: { createdAt: "desc" } }),
+    // The LV team's onboarding backlog — form signups awaiting onboarding (not yet onboarded/paid,
+    // not self-service, no session). Shown on the form card to nudge the referrer to onboard the
+    // person themselves rather than wait. A global number, the same for every referrer.
+    prisma.ambassadorApplication.count({ where: { onboardedAt: null, paidAt: null, withdrawnAt: null, status: { notIn: ["rejected", "onboarded"] }, referralSource: { not: "self-service" }, selfServiceOnboarding: { is: null } } }),
   ]);
 
   // Application → account matching, mirroring src/app/api/admin/onboarding/route.ts:
@@ -173,7 +177,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         line = "Left off mid-onboarding"; sub = "Pick up where you left off while they're still with you."; fee = range(t.phone.base, t.computer.verified);
       } else {
         kind = "action"; pill = { text: "No call booked", tone: "amber" }; progress = 1; action = "onboard";
-        line = "Form in — not onboarded yet"; sub = "They filled your form. Onboard them now, or get a call booked."; fee = money(t.referral);
+        line = "Form in, call not booked"; sub = "They filled in your form but haven't booked a call. Our team's onboarding queue is long, so they could wait a while. Onboard them yourself today and earn up to double."; fee = money(t.referral);
       }
       // Restriction takes visual priority: whatever the lifecycle stage, a currently
       // restricted account reads as "Restricted" so the referrer can help clear it. The
@@ -325,7 +329,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // without walking the wizard. Codes flow only while forwarding is live — from reserve
       // through hand-off — and stop once the session is confirmed or the account onboarded/paid.
       const codeSessionId = a.selfServiceOnboarding?.id && !onboarded && !paid && state !== "confirmed" ? a.selfServiceOnboarding.id : null;
-      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide };
+      // A booked setup call gates the "onboard them yourself" CTA — the team is already lined up
+      // to onboard this person, so the referrer shouldn't also start it.
+      const callBookedAt = a.scheduledMeeting?.startsAt ? new Date(a.scheduledMeeting.startsAt).toISOString() : null;
+      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide, callBookedAt };
     });
 
   // Show EVERY signup the referrer owns — no cap. Any cap (the old one was the 25 most recent
@@ -364,6 +371,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     board,
     activity,
     signups,
+    queueCount,
     payouts: payouts.map((p) => ({
       id: p.id,
       type: p.type,

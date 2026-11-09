@@ -9,7 +9,7 @@ import UnlockGuide, { type ScreenId } from "./unlock-guide";
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
 interface Activity { kind: string; name: string; referrer: string | null; mine: boolean; date: string; }
 type FixIssue = "application_incomplete" | "email_added" | "email_primary" | "twofa" | "password";
-interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; }
+interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; callBookedAt: string | null; }
 interface Payout { id: string; type: string; description: string | null; amount: number; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; }
 interface Tier { base: number; verified: number; }
 interface Config { currency: string; symbol: string; offer: { setup: string; monthly: string }; referralTiers: { referral: number; phone: Tier; computer: Tier }; payoutMethods: string[]; defaultPayoutMethod: string; }
@@ -20,6 +20,7 @@ interface Data {
   board: BoardRow[];
   activity: Activity[];
   signups: Signup[];
+  queueCount: number;
   payouts: Payout[];
 }
 
@@ -306,7 +307,7 @@ export default function Portal({ token }: { token: string }) {
     </div>
   );
 
-  const { me, stats, board, activity, signups, payouts, config } = data;
+  const { me, stats, board, activity, signups, payouts, config, queueCount } = data;
   const actualCurrency = config.currency === "USD" ? "USD" : "PHP";
   const money = (n: number) => balancePair(n, actualCurrency, preference.currency);
   const offerMoney = (n: number) => configuredOffer(n, actualCurrency, preference.currency);
@@ -314,11 +315,16 @@ export default function Portal({ token }: { token: string }) {
   // The locked referral payout for a restricted signup, by how it's being onboarded: computer pays
   // the top tier, phone the hand-off tier; each pays more when the account is ID-verified. Formatted
   // through moneyText so it follows the referrer's USD/PHP display toggle like every other amount.
+  const fmtAmt = (n: number) => moneyText(`${config.symbol}${n.toLocaleString("en-US")}`);
   const lockTier = (method: Signup["method"]) => {
     const tier = method === "phone" ? config.referralTiers.phone : config.referralTiers.computer;
-    const fmt = (n: number) => moneyText(`${config.symbol}${n.toLocaleString("en-US")}`);
-    return { amt: fmt(tier.base), up: fmt(tier.verified) };
+    return { amt: fmtAmt(tier.base), up: fmtAmt(tier.verified) };
   };
+  // Form-card rates: base = the plain form referral, top = the best "you ran it" tier (computer +
+  // verified). The right-hand "onboard yourself" card advertises the uplift between them.
+  const formBase = config.referralTiers.referral;
+  const formTop = config.referralTiers.computer.verified;
+  const queueText = queueCount >= 100 ? "100+" : String(queueCount);
   const setupOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].setupAmount, actualCurrency, preference.currency);
   const monthlyOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].monthlyAmount, actualCurrency, preference.currency);
   const firstName = me.name.split(" ")[0];
@@ -661,11 +667,34 @@ export default function Portal({ token }: { token: string }) {
                       {s.pay.sub && <div style={{ font: `500 11px/1.4 ${JAK}`, color: C.slate, marginTop: 2 }}>{s.pay.sub}</div>}
                     </div>
                   )}
-                  {(!s.restricted || s.withdrawn) && (
+                  {(!s.restricted || s.withdrawn) && s.action !== "onboard" && (
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.line2}` }}>
                       <span style={{ font: `500 11.5px ${JAK}`, color: C.muted }}>{s.path}</span>
                       {s.liUrl && <a href={s.liUrl} target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${JAK}`, color: "#2563eb", textDecoration: "none", whiteSpace: "nowrap" }}>View on LinkedIn ↗</a>}
                       <span style={{ marginLeft: "auto", font: `700 12.5px ${GRO}`, color: C.ink, textAlign: "right" }}>{moneyText(s.fee)}</span>
+                    </div>
+                  )}
+                  {/* Form-only, un-onboarded signup: nudge the referrer to onboard the person
+                      themselves (earns more, and skips the team's queue). */}
+                  {s.action === "onboard" && !s.restricted && !s.withdrawn && (
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8, marginTop: 12 }}>
+                      <div style={{ background: "#f6f7f9", border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 12px" }}>
+                        <div style={{ font: `700 9.5px ${JAK}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Wait for our team</div>
+                        <div style={{ font: `600 20px ${GRO}`, color: C.slate, fontVariantNumeric: "tabular-nums", margin: "3px 0 5px" }}>{fmtAmt(formBase)}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: "#d97706", flex: "none" }} />
+                          <span style={{ font: `600 11.5px ${JAK}`, color: C.warn }}>{queueText} in the queue</span>
+                        </div>
+                      </div>
+                      <div style={{ position: "relative", background: C.softGreen, border: `1.5px solid ${C.green}`, borderRadius: 12, padding: "11px 12px" }}>
+                        <span style={{ position: "absolute", top: -9, right: 10, font: `700 10px ${GRO}`, color: "#fff", background: "#12a150", borderRadius: 999, padding: "2px 8px" }}>+{fmtAmt(formTop - formBase)}</span>
+                        <div style={{ font: `700 9.5px ${JAK}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.greenDk }}>Onboard them yourself</div>
+                        <div style={{ margin: "3px 0 5px" }}>
+                          <span style={{ font: `600 11px ${JAK}`, color: C.greenDk }}>up to </span>
+                          <span style={{ font: `600 20px ${GRO}`, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtAmt(formTop)}</span>
+                        </div>
+                        <div style={{ font: `600 11.5px ${JAK}`, color: C.greenDk }}>Today · about 10 min</div>
+                      </div>
                     </div>
                   )}
                   {s.restricted && !s.withdrawn && lt && (
@@ -718,7 +747,13 @@ export default function Portal({ token }: { token: string }) {
                         : <button onClick={() => void markFixed(s.id)} disabled={fixingId === s.id} style={{ width: "100%", marginTop: 4, font: `700 13px ${JAK}`, color: "#fff", background: C.warn, border: "none", padding: 12, borderRadius: 10, cursor: "pointer" }}>{fixingId === s.id ? "Saving…" : "I've fixed it"}</button>}
                     </div>
                   )}
-                  {s.action ? (
+                  {s.action === "onboard" ? (
+                    s.callBookedAt ? (
+                      <div style={{ width: "100%", marginTop: 12, textAlign: "center", font: `700 13px ${JAK}`, color: C.muted, background: C.inputBg, border: `1px solid ${C.inputBorder}`, padding: 13, borderRadius: 11 }}>Call booked for {fmtDate(s.callBookedAt)} — our team will onboard them</div>
+                    ) : (
+                      <a href={`/m/${token}/onboarding?adopt=${encodeURIComponent(s.id)}`} style={{ display: "block", width: "100%", minHeight: 44, boxSizing: "border-box", marginTop: 12, textAlign: "center", font: `700 13.5px ${JAK}`, color: "#fff", background: C.dark, padding: "13px 14px", borderRadius: 11, textDecoration: "none" }}>Onboard them now — earn up to {fmtAmt(formTop)}</a>
+                    )
+                  ) : s.action ? (
                     <a href={s.action === "resume" && s.resumeSessionId ? `/m/${token}/onboarding?session=${encodeURIComponent(s.resumeSessionId)}` : `/m/${token}/onboarding?adopt=${encodeURIComponent(s.id)}`} style={{ display: "block", width: "100%", marginTop: 12, textAlign: "center", font: `700 13.5px ${JAK}`, color: "#fff", background: C.dark, padding: 13, borderRadius: 11, textDecoration: "none" }}>{s.action === "resume" ? "Resume onboarding" : "Onboard them now"}</a>
                   ) : null}
                   {/* Get the latest LinkedIn sign-in code for this person, without walking the
