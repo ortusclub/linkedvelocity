@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { CurrencySelector, useDisplayCurrency } from "@/components/display-currency";
 import { balancePair, configuredText, configuredOffer, offerPair, offerRange } from "@/lib/display-currency";
 import { CURRENCY_CONFIG } from "@/lib/referral-currency";
+import UnlockGuide, { type ScreenId } from "./unlock-guide";
 
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
 interface Activity { kind: string; name: string; referrer: string | null; mine: boolean; date: string; }
 type FixIssue = "application_incomplete" | "email_added" | "email_primary" | "twofa" | "password";
-interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; }
+interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; }
 interface Payout { id: string; type: string; description: string | null; amount: number; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; }
 interface Tier { base: number; verified: number; }
 interface Config { currency: string; symbol: string; offer: { setup: string; monthly: string }; referralTiers: { referral: number; phone: Tier; computer: Tier }; payoutMethods: string[]; defaultPayoutMethod: string; }
@@ -137,12 +138,22 @@ const FIX_INFO: Record<FixIssue, { title: string; how: string }> = {
 };
 
 // The owner clears a LinkedIn restriction themselves on their own phone — steps for the sheet.
-const LOCK_STEPS = [
-  { t: "They open LinkedIn on their own phone", s: "The lock screen appears as soon as they try to use the account." },
-  { t: "They follow the check LinkedIn asks for", s: "Usually scanning a QR code, sometimes a selfie or an ID photo." },
-  { t: "Wait for the confirmation", s: "Minutes for a QR scan, up to a day or two for an ID review." },
-  { t: "Come back and finish the sign-in", s: "Nothing you entered is lost — the onboarding resumes where it stopped." },
-];
+function LockGlyph({ size = 16, color = "#b91c1c" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "none" }}>
+      <rect x="4" y="10" width="16" height="11" rx="2" stroke={color} strokeWidth="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" stroke={color} strokeWidth="2" />
+    </svg>
+  );
+}
+function LockOpenGlyph({ size = 14, color = "#fff" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "none" }}>
+      <rect x="4" y="10" width="16" height="11" rx="2" stroke={color} strokeWidth="2" />
+      <path d="M8 10V7a4 4 0 0 1 7.5-1.8" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export default function Portal({ token }: { token: string }) {
   const [data, setData] = useState<Data | null>(null);
@@ -156,7 +167,9 @@ export default function Portal({ token }: { token: string }) {
   const [readyOpen, setReadyOpen] = useState(false);
   const [jobFilter, setJobFilter] = useState<JobFilter>("all");
   const [jobQuery, setJobQuery] = useState("");
-  const [lockName, setLockName] = useState<string | null>(null);
+  // The restricted signup whose guided "unlock" sheet is open, plus which screen + back-stack it
+  // resumes at.
+  const [unlock, setUnlock] = useState<{ id: string; start: ScreenId; history: ScreenId[] } | null>(null);
   const [fixingId, setFixingId] = useState<string | null>(null);
   const [reportingId, setReportingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -174,11 +187,6 @@ export default function Portal({ token }: { token: string }) {
   // referrer can grab one without walking the wizard.
   const [codeOpenId, setCodeOpenId] = useState<string | null>(null);
   const [codeInfo, setCodeInfo] = useState<{ code: string | null; at: string | null; loading: boolean; error: string; copied: boolean }>({ code: null, at: null, loading: false, error: "", copied: false });
-  // The authenticator (2FA) code for a restricted referred account — the TOTP the owner needs to
-  // sign in and run LinkedIn's identity check. Separate from the emailed code panel above.
-  const [authOpenId, setAuthOpenId] = useState<string | null>(null);
-  const [authCode, setAuthCode] = useState<{ code: string | null; loading: boolean; error: string; copied: boolean }>({ code: null, loading: false, error: "", copied: false });
-
   useEffect(() => {
     fetch(`/api/m/${token}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -220,7 +228,6 @@ export default function Portal({ token }: { token: string }) {
     try {
       await fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "restrictionReport", applicationId, type }) });
       setData((d) => d && ({ ...d, signups: d.signups.map((s) => s.id === applicationId ? { ...s, restrictionReport: { type, at: new Date().toISOString() } } : s) }));
-      setLockName(null);
     } finally { setReportingId(null); }
   };
   // Delete one of the referrer's own signups (only offered before onboarding finishes /
@@ -265,23 +272,6 @@ export default function Portal({ token }: { token: string }) {
     setCodeOpenId(signupId);
     void loadCode(sessionId);
   };
-  // Generate the live authenticator code for a restricted referred account (TOTP from the saved key).
-  const loadAuthCode = async (applicationId: string) => {
-    setAuthCode((c) => ({ ...c, loading: true, error: "", copied: false }));
-    try {
-      const r = await fetch(`/api/m/${token}/code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ applicationId }) });
-      const b = await r.json().catch(() => ({}));
-      if (!r.ok) { setAuthCode({ code: null, loading: false, error: b.error || "Couldn't get the code. Please try again.", copied: false }); return; }
-      setAuthCode({ code: b.code ?? null, loading: false, error: "", copied: false });
-    } catch {
-      setAuthCode({ code: null, loading: false, error: "Check your connection and try again.", copied: false });
-    }
-  };
-  const toggleAuth = (applicationId: string) => {
-    if (authOpenId === applicationId) { setAuthOpenId(null); return; }
-    setAuthOpenId(applicationId);
-    void loadAuthCode(applicationId);
-  };
   const toggleFaq = (k: string) => setFaqOpen((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const go = (t: Tab) => { setTab(t); if (typeof window !== "undefined") window.scrollTo({ top: 0 }); };
 
@@ -321,6 +311,14 @@ export default function Portal({ token }: { token: string }) {
   const money = (n: number) => balancePair(n, actualCurrency, preference.currency);
   const offerMoney = (n: number) => configuredOffer(n, actualCurrency, preference.currency);
   const moneyText = (text: string) => configuredText(text, preference.currency);
+  // The locked referral payout for a restricted signup, by how it's being onboarded: computer pays
+  // the top tier, phone the hand-off tier; each pays more when the account is ID-verified. Formatted
+  // through moneyText so it follows the referrer's USD/PHP display toggle like every other amount.
+  const lockTier = (method: Signup["method"]) => {
+    const tier = method === "phone" ? config.referralTiers.phone : config.referralTiers.computer;
+    const fmt = (n: number) => moneyText(`${config.symbol}${n.toLocaleString("en-US")}`);
+    return { amt: fmt(tier.base), up: fmt(tier.verified) };
+  };
   const setupOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].setupAmount, actualCurrency, preference.currency);
   const monthlyOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].monthlyAmount, actualCurrency, preference.currency);
   const firstName = me.name.split(" ")[0];
@@ -614,6 +612,19 @@ export default function Portal({ token }: { token: string }) {
               const fg = { green: C.greenDk, blue: "#2563eb", amber: "#c2410c", red: C.red, grey: "#64748b" }[s.pill.tone];
               const bg = { green: C.softGreen, blue: "#eef4ff", amber: C.warnBg, red: C.redBg, grey: "#f1f5f9" }[s.pill.tone];
               const bd = { green: C.softGreenBorder, blue: "#c7d7fe", amber: C.warnBorder, red: C.redBorder, grey: "#e2e8f0" }[s.pill.tone];
+              const lt = s.restricted ? lockTier(s.method) : null;
+              const sFirst = (s.name || "").trim().split(/\s+/)[0] || "they";
+              // Resume the guided-unlock sheet where the referrer left off: any saved screen except
+              // a finished (`done`) or fresh (`ready`) one, which both start over at `ready`.
+              const g = s.recoveryGuide;
+              const savedStep: ScreenId | null = g?.step && g.step !== "done" && g.step !== "ready" ? (g.step as ScreenId) : null;
+              const unlockStart: ScreenId = savedStep ?? "ready";
+              const unlockHistory: ScreenId[] = (savedStep ? (g?.history ?? []) : []) as ScreenId[];
+              const unlockLabel = !lt ? "" :
+                !savedStep ? `Unlock ${lt.amt} — show them how` :
+                savedStep === "waiting" ? "Waiting on LinkedIn — check status" :
+                (savedStep === "help" || savedStep === "appeal") ? "Continue — finish the LinkedIn form" :
+                `Continue unlocking ${lt.amt}`;
               return (
                 <div key={i} style={card}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -644,59 +655,54 @@ export default function Portal({ token }: { token: string }) {
                       ))}
                     </div>
                   )}
-                  {s.pay && (
+                  {s.pay && !s.restricted && (
                     <div style={{ marginTop: 9, padding: "8px 10px", background: C.blueBg, border: `1px solid ${C.blueBorder}`, borderRadius: 9 }}>
                       <div style={{ font: `700 11.5px ${JAK}`, color: C.blueInk }}>📅 {s.pay.text}</div>
                       {s.pay.sub && <div style={{ font: `500 11px/1.4 ${JAK}`, color: C.slate, marginTop: 2 }}>{s.pay.sub}</div>}
                     </div>
                   )}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.line2}` }}>
-                    <span style={{ font: `500 11.5px ${JAK}`, color: C.muted }}>{s.path}</span>
-                    {s.liUrl && !s.restricted && <a href={s.liUrl} target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${JAK}`, color: "#2563eb", textDecoration: "none", whiteSpace: "nowrap" }}>View on LinkedIn ↗</a>}
-                    <span style={{ marginLeft: "auto", font: `700 12.5px ${GRO}`, color: C.ink, textAlign: "right" }}>{moneyText(s.fee)}</span>
-                  </div>
-                  {s.restricted && (
-                    <div style={{ marginTop: 12, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: 12, padding: 13 }}>
-                      <div style={{ font: `700 12.5px ${JAK}`, color: C.red, marginBottom: 4 }}>⚠ Account restricted</div>
-                      <div style={{ font: `500 11.5px/1.45 ${JAK}`, color: "#8a2b2b" }}>LinkedIn has locked this account. The owner clears it on their <strong>own phone</strong> — usually scanning a QR code, sometimes a selfie or ID photo. You can&apos;t clear it for them.</div>
-                      {s.liUrl && <a href={s.liUrl} target="_blank" rel="noopener noreferrer" style={{ display: "block", textAlign: "center", width: "100%", marginTop: 10, font: `700 12.5px ${JAK}`, color: "#fff", background: C.dark, padding: 11, borderRadius: 10, textDecoration: "none" }}>Open LinkedIn to check it ↗</a>}
-                      <button onClick={() => setLockName(s.name)} style={{ width: "100%", marginTop: 8, font: `700 12.5px ${JAK}`, color: C.red, background: "#fff", border: `1px solid ${C.redBorder}`, padding: 11, borderRadius: 10, cursor: "pointer" }}>See the steps to clear it</button>
-                      <div style={{ font: `500 11.5px/1.45 ${JAK}`, color: "#8a2b2b", marginTop: 10 }}>To sign in and start LinkedIn&apos;s check, the owner needs the 6-digit code:</div>
-                      {authOpenId === s.id ? (
-                        <div style={{ marginTop: 8, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, padding: 12 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ font: `700 10.5px ${JAK}`, letterSpacing: ".08em", color: C.greenDk, textTransform: "uppercase" }}>Authenticator code</span>
-                            <button onClick={() => setAuthOpenId(null)} style={{ font: `600 11px ${JAK}`, color: C.muted, background: "none", border: "none", cursor: "pointer" }}>Hide</button>
-                          </div>
-                          {authCode.loading ? (
-                            <div style={{ font: `600 13px ${JAK}`, color: C.muted, marginTop: 8 }}>Getting code…</div>
-                          ) : authCode.error ? (
-                            <div style={{ font: `600 12.5px ${JAK}`, color: C.red, marginTop: 8 }}>{authCode.error}</div>
-                          ) : authCode.code ? (<>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-                              <span style={{ font: `700 26px ${GRO}`, letterSpacing: ".16em", color: "#0b1220" }}>{authCode.code}</span>
-                              <button onClick={() => { navigator.clipboard?.writeText(authCode.code!); setAuthCode((c) => ({ ...c, copied: true })); }} style={{ font: `700 12px ${JAK}`, color: "#0b1220", background: "#a7f3d0", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer" }}>{authCode.copied ? "Copied" : "Copy"}</button>
-                              <button onClick={() => void loadAuthCode(s.id)} style={{ font: `700 12px ${JAK}`, color: C.greenDk, background: "none", border: "none", cursor: "pointer" }}>Refresh</button>
-                            </div>
-                            <div style={{ font: `500 11px/1.45 ${JAK}`, color: "#5b7a68", marginTop: 8 }}>Enter this where LinkedIn asks for the 6-digit code. It changes every 30 seconds — tap Refresh for a fresh one.</div>
-                          </>) : (
-                            <div style={{ font: `600 12.5px/1.5 ${JAK}`, color: "#5b7a68", marginTop: 8 }}>No code available right now. Ask the team.</div>
-                          )}
-                        </div>
-                      ) : (
-                        <button onClick={() => toggleAuth(s.id)} style={{ width: "100%", marginTop: 8, font: `700 12.5px ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, padding: 11, borderRadius: 10, cursor: "pointer" }}>Get authenticator code</button>
-                      )}
-                      {s.restrictionReport ? (
-                        <div style={{ font: `700 11.5px/1.4 ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, borderRadius: 9, padding: "9px 11px", marginTop: 8 }}>
-                          ✓ {s.restrictionReport.type === "recovered" ? "You told us it's unrestricted" : "You told us the check is done"} — the team is verifying it now.
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                          <button onClick={() => void reportRestriction(s.id, "qr_done")} disabled={reportingId === s.id} style={{ flex: 1, font: `700 12px ${JAK}`, color: C.ink, background: C.line2, border: `1px solid ${C.inputBorder}`, padding: 11, borderRadius: 10, cursor: "pointer" }}>{reportingId === s.id ? "Saving…" : "They did the QR check"}</button>
-                          <button onClick={() => void reportRestriction(s.id, "recovered")} disabled={reportingId === s.id} style={{ flex: 1, font: `700 12px ${JAK}`, color: "#fff", background: C.greenDk, border: "none", padding: 11, borderRadius: 10, cursor: "pointer" }}>{reportingId === s.id ? "Saving…" : "It's unrestricted now"}</button>
-                        </div>
-                      )}
+                  {(!s.restricted || s.withdrawn) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.line2}` }}>
+                      <span style={{ font: `500 11.5px ${JAK}`, color: C.muted }}>{s.path}</span>
+                      {s.liUrl && <a href={s.liUrl} target="_blank" rel="noopener noreferrer" style={{ font: `600 11.5px ${JAK}`, color: "#2563eb", textDecoration: "none", whiteSpace: "nowrap" }}>View on LinkedIn ↗</a>}
+                      <span style={{ marginLeft: "auto", font: `700 12.5px ${GRO}`, color: C.ink, textAlign: "right" }}>{moneyText(s.fee)}</span>
                     </div>
+                  )}
+                  {s.restricted && !s.withdrawn && lt && (
+                    <>
+                      {/* Payout-locked panel — replaces the usual path · fee footer */}
+                      <div style={{ marginTop: 12, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: 12, padding: "12px 13px", display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 38, height: 38, flex: "none", borderRadius: 10, background: "#fff", border: `1px solid ${C.redBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}><LockGlyph size={16} color={C.red} /></div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ font: `700 10px ${JAK}`, letterSpacing: ".07em", textTransform: "uppercase", color: C.red }}>Payout locked</div>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
+                            <span style={{ font: `600 24px ${GRO}`, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{lt.amt}</span>
+                            <span style={{ font: `600 11.5px ${JAK}`, color: C.slate }}>up to {lt.up} if ID-verified</span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flex: "none" }}>
+                          <div style={{ font: `700 12px ${JAK}`, color: C.ink }}>1 step left</div>
+                          <div style={{ font: `500 11px ${JAK}`, color: C.muted }}>{s.path}</div>
+                        </div>
+                      </div>
+                      <button onClick={() => setUnlock({ id: s.id, start: unlockStart, history: unlockHistory })} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, minHeight: 44, borderRadius: 11, background: C.red, color: "#fff", border: "none", font: `700 13.5px ${JAK}`, cursor: "pointer" }}><LockOpenGlyph size={14} color="#fff" /> {unlockLabel}</button>
+                      <a href="https://www.linkedin.com/login" target="_blank" rel="noopener noreferrer" style={{ display: "block", textAlign: "center", width: "100%", boxSizing: "border-box", marginTop: 8, minHeight: 44, borderRadius: 11, background: C.dark, color: "#fff", font: `700 14px ${JAK}`, padding: "12px 14px", textDecoration: "none" }}>Open LinkedIn to check it ↗</a>
+                      {s.restrictionReport && (
+                        <div style={{ font: `700 11.5px/1.4 ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, borderRadius: 9, padding: "9px 11px", marginTop: 8 }}>✓ You told us it&apos;s unrestricted — the team is verifying it now.</div>
+                      )}
+                      {withdrawId === s.id ? (
+                        <div style={{ marginTop: 10, background: "#f6f7f9", border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
+                          <div style={{ font: `700 13px ${JAK}`, color: C.ink }}>Withdraw {sFirst}&apos;s signup?</div>
+                          <div style={{ font: `500 12px/1.45 ${JAK}`, color: C.slate, marginTop: 3 }}>Only if they can&apos;t or won&apos;t clear the check. It comes off your list and won&apos;t pay out.</div>
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button onClick={() => setWithdrawId(null)} style={{ flex: 1, minHeight: 44, borderRadius: 10, background: "#fff", border: `1px solid ${C.inputBorder}`, color: C.ink, font: `700 13px ${JAK}`, cursor: "pointer" }}>Keep trying</button>
+                            <button onClick={() => void withdrawApplication(s.id, "withdraw")} disabled={withdrawingId === s.id} style={{ flex: 1, minHeight: 44, borderRadius: 10, background: "#fff", border: `1px solid ${C.redBorder}`, color: C.red, font: `700 13px ${JAK}`, cursor: "pointer" }}>{withdrawingId === s.id ? "Withdrawing…" : "Withdraw"}</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => setWithdrawId(s.id)} style={{ display: "block", margin: "10px auto 0", font: `600 12.5px ${JAK}`, color: C.muted2, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>Withdraw this signup</button>
+                      )}
+                    </>
                   )}
                   {s.fix && (
                     <div style={{ marginTop: 12, background: C.warnBg, border: `1px solid ${C.warnBorder}`, borderRadius: 12, padding: 13 }}>
@@ -712,9 +718,7 @@ export default function Portal({ token }: { token: string }) {
                         : <button onClick={() => void markFixed(s.id)} disabled={fixingId === s.id} style={{ width: "100%", marginTop: 4, font: `700 13px ${JAK}`, color: "#fff", background: C.warn, border: "none", padding: 12, borderRadius: 10, cursor: "pointer" }}>{fixingId === s.id ? "Saving…" : "I've fixed it"}</button>}
                     </div>
                   )}
-                  {s.action === "clear" ? (
-                    <button onClick={() => setLockName(s.name)} style={{ display: "block", width: "100%", marginTop: 12, font: `700 13.5px ${JAK}`, color: "#fff", background: C.red, border: "none", padding: 13, borderRadius: 11, cursor: "pointer" }}>See how to clear it</button>
-                  ) : s.action ? (
+                  {s.action ? (
                     <a href={s.action === "resume" && s.resumeSessionId ? `/m/${token}/onboarding?session=${encodeURIComponent(s.resumeSessionId)}` : `/m/${token}/onboarding?adopt=${encodeURIComponent(s.id)}`} style={{ display: "block", width: "100%", marginTop: 12, textAlign: "center", font: `700 13.5px ${JAK}`, color: "#fff", background: C.dark, padding: 13, borderRadius: 11, textDecoration: "none" }}>{s.action === "resume" ? "Resume onboarding" : "Onboard them now"}</a>
                   ) : null}
                   {/* Get the latest LinkedIn sign-in code for this person, without walking the
@@ -757,8 +761,9 @@ export default function Portal({ token }: { token: string }) {
                   ) : (
                     <button onClick={() => setDeleteId(s.id)} style={{ display: "block", margin: "10px auto 0", font: `600 11.5px ${JAK}`, color: C.muted, background: "none", border: "none", padding: 4, cursor: "pointer", textDecoration: "underline" }}>Delete this signup</button>
                   ))}
-                  {/* Withdraw — soft-hide for signups too far along to delete (keeps the record). */}
-                  {s.withdrawable && (withdrawId === s.id ? (
+                  {/* Withdraw — soft-hide for signups too far along to delete (keeps the record).
+                      Restricted cards carry their own withdraw control in the payout panel. */}
+                  {s.withdrawable && !s.restricted && (withdrawId === s.id ? (
                     <div style={{ marginTop: 10, padding: "11px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 11 }}>
                       <div style={{ font: `700 12px ${JAK}`, color: "#475569" }}>Withdraw {s.name}&apos;s signup?</div>
                       <div style={{ font: `500 11.5px/1.45 ${JAK}`, color: "#64748b", marginTop: 2 }}>It&apos;s hidden from your active list but kept in our records. You can restore it anytime.</div>
@@ -1202,29 +1207,27 @@ export default function Portal({ token }: { token: string }) {
           </div>
         )}
 
-        {/* Restricted / "how to clear it" sheet */}
-        {lockName !== null && (
-          <div onClick={() => setLockName(null)} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(9,17,12,.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: "22px 22px 0 0", padding: "22px 20px 26px" }}>
-              <div style={{ width: 38, height: 4, borderRadius: 999, background: C.inputBorder, margin: "0 auto 16px" }} />
-              <div style={{ font: `600 19px ${GRO}`, color: C.ink, marginBottom: 5 }}>Clearing a LinkedIn lock</div>
-              <p style={{ font: `500 12.5px/1.5 ${JAK}`, color: C.slate, margin: "0 0 14px" }}>Common on newer accounts, and almost always temporary. <strong>They</strong> do this on their own phone — you can&apos;t clear it for them.</p>
-              {LOCK_STEPS.map((l, i) => (
-                <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 0", borderTop: `1px solid ${C.line2}` }}>
-                  <span style={{ width: 20, height: 20, borderRadius: 999, flex: "none", display: "flex", alignItems: "center", justifyContent: "center", font: `700 10px ${GRO}`, background: C.dark, color: "#fff" }}>{i + 1}</span>
-                  <div>
-                    <div style={{ font: `600 13px ${JAK}`, color: C.ink }}>{l.t}</div>
-                    <div style={{ font: `500 12px/1.45 ${JAK}`, color: C.muted, marginTop: 2 }}>{l.s}</div>
-                  </div>
-                </div>
-              ))}
-              <div style={{ background: C.warnBg, border: `1px solid ${C.warnBorder}`, borderRadius: 12, padding: 13, marginTop: 13, font: `500 12.5px/1.5 ${JAK}`, color: C.warn }}>If it needs an ID check, they photograph their own ID in LinkedIn&apos;s screen. We never see it and never ask for a copy.</div>
-              <a href="https://linkedvelocity.com/restriction-guide" target="_blank" rel="noreferrer" style={{ display: "block", textAlign: "center", marginTop: 13, font: `700 13px ${JAK}`, color: "#0a66c2", textDecoration: "none" }}>Open the full step-by-step guide ↗</a>
-              <a href={`/m/${token}/onboarding`} style={{ display: "block", textAlign: "center", marginTop: 14, font: `700 13.5px ${JAK}`, color: C.ink, background: C.line2, border: `1px solid ${C.inputBorder}`, padding: 14, borderRadius: 13, textDecoration: "none" }}>It&apos;s cleared — resume the onboarding</a>
-              <button onClick={() => setLockName(null)} style={{ width: "100%", marginTop: 8, font: `700 13.5px ${JAK}`, color: C.slate, background: "none", border: "none", padding: 11, cursor: "pointer" }}>Close</button>
-            </div>
-          </div>
-        )}
+        {/* Guided "unlock a restricted account" sheet */}
+        {(() => {
+          if (!unlock) return null;
+          const su = signups.find((x) => x.id === unlock.id);
+          if (!su) return null;
+          const t = lockTier(su.method);
+          const resumeHref = su.resumeSessionId ? `/m/${token}/onboarding?session=${encodeURIComponent(su.resumeSessionId)}` : `/m/${token}/onboarding?adopt=${encodeURIComponent(su.id)}`;
+          return (
+            <UnlockGuide
+              token={token}
+              applicationId={su.id}
+              firstName={(su.name || "").trim().split(/\s+/)[0] || "they"}
+              lockAmt={t.amt}
+              resumeHref={resumeHref}
+              startStep={unlock.start}
+              startHistory={unlock.history}
+              onBackIn={() => void reportRestriction(su.id, "recovered")}
+              onClose={() => setUnlock(null)}
+            />
+          );
+        })()}
 
         {/* QR modal */}
         {qrOpen && (
