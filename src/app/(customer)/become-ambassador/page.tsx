@@ -326,6 +326,12 @@ export default function BecomeAmbassadorPage() {
       setSubmitting(false);
       return;
     }
+    if (!form.linkedinUrl.trim() || !/linkedin\.com/i.test(form.linkedinUrl)) {
+      setError("Please add your LinkedIn profile URL (e.g. linkedin.com/in/yourprofile)");
+      submittingRef.current = false;
+      setSubmitting(false);
+      return;
+    }
     const hasUrl = !!form.linkedinUrl.trim();
 
     // Create ambassador application immediately so it appears in admin, and capture
@@ -888,6 +894,7 @@ export default function BecomeAmbassadorPage() {
                   // — no valuation, no separate register form. Same clean ending as a completed signup.
                   setError("");
                   if (!form.fullName || !form.email || !form.contactHandle) { setError("Please add your name, email and contact so we can reach you."); return; }
+                  if (!form.linkedinUrl.trim() || !/linkedin\.com/i.test(form.linkedinUrl)) { setError("Please add your LinkedIn profile URL (e.g. linkedin.com/in/yourprofile)."); return; }
                   try {
                     await fetch("/api/ambassador/apply", {
                       method: "POST",
@@ -955,7 +962,7 @@ export default function BecomeAmbassadorPage() {
 
                   <div style={{ marginBottom: form.linkedinUrl.trim() ? 16 : 6 }}>
                     <label style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "#37424F", marginBottom: 7 }}>LinkedIn profile URL <span style={{ fontWeight: 400, color: "#96A0AD" }}>(optional)</span></label>
-                    <input className="ambf-in" type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="linkedin.com/in/yourprofile" value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} />
+                    <input className="ambf-in" type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="linkedin.com/in/yourprofile" value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} required />
                     <div style={{ fontSize: 12.5, color: "#5A6473", marginTop: 6 }}>Have your profile link? Add it for an instant valuation. No account yet? Leave it blank — we&apos;ll help you get set up.</div>
                     <div style={{ fontSize: 12.5, color: "#5A6473", marginTop: 6 }}>Have more than one account? All payments still go to you — just add the rest after signup.</div>
                   </div>

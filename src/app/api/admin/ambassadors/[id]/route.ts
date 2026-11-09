@@ -120,6 +120,31 @@ export async function PATCH(
       return NextResponse.json({ error: "Application not found" }, { status: 404 });
     }
 
+    // LinkedIn URL is required before an application can enter the pipeline (be accepted /
+    // start onboarding / be onboarded) — it's what we match the inventory account on. Block
+    // the transition that would otherwise create a URL-less offline account. A walk-up lead
+    // stored with an empty linkedinUrl ("") counts as missing. Skip if an account is already
+    // linked by the owner note (it was created earlier, with its own URL). Runs BEFORE the
+    // update so a block never leaves the status changed with no account.
+    const willEnterPipeline =
+      (rest.status === "approved" && currentApp.status !== "approved") ||
+      (rest.status === "onboarding" && currentApp.status !== "onboarding") ||
+      (onboardingStartedAt !== undefined && !!onboardingStartedAt && !currentApp.onboardingStartedAt) ||
+      (rest.status === "onboarded" && currentApp.status !== "onboarded") ||
+      (onboardedAt !== undefined && !!onboardedAt && !currentApp.onboardedAt);
+    if (willEnterPipeline) {
+      const effectiveUrl = ((rest.linkedinUrl ?? currentApp.linkedinUrl) || "").trim();
+      if (!effectiveUrl) {
+        const already = await prisma.linkedInAccount.findFirst({
+          where: { status: { notIn: ["removed", "retired"] }, notes: { contains: `Owner: ${currentApp.email}` } },
+          select: { id: true },
+        });
+        if (!already) {
+          return NextResponse.json({ error: "Add the applicant's LinkedIn URL before onboarding — it's required to create their account." }, { status: 400 });
+        }
+      }
+    }
+
     const updateData: Prisma.AmbassadorApplicationUpdateInput = { ...rest };
     if (nextFollowUp !== undefined) updateData.nextFollowUp = nextFollowUp ? new Date(nextFollowUp) : null;
     if (onboardingStartedAt !== undefined) updateData.onboardingStartedAt = onboardingStartedAt ? new Date(onboardingStartedAt) : null;

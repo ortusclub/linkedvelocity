@@ -13,7 +13,7 @@ const applySchema = z.object({
   email: z.string().email(),
   linkedinEmail: z.string().email().optional(),
   contactNumber: z.string().optional(),
-  linkedinUrl: z.string().optional(),
+  linkedinUrl: z.string().trim().min(1, "A LinkedIn profile URL is required").refine((u) => /linkedin\.com/i.test(u), "Enter a valid LinkedIn profile URL (linkedin.com/in/…)"),
   connectionCount: z.number().int().optional(),
   industry: z.string().optional(),
   location: z.string().optional(),
