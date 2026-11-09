@@ -141,7 +141,7 @@ export async function GET(req: Request) {
       const acct: CaseAccount = {
         ...a, renterName: renterByAccount.get(a.id) || null, poc: pocResolved,
         accountIssue: app?.accountIssue || null,
-        restrictionReport: (app?.restrictionReport as { type?: "qr_done" | "recovered"; at?: string } | null) || null,
+        restrictionReport: (app?.restrictionReport as CaseAccount["restrictionReport"]) || null,
         outreachEmailAt: outreachEmailAtFor(app?.id),
         mailEvents,
       };
