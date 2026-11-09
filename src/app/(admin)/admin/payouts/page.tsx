@@ -718,8 +718,8 @@ function WiseCell({ r, wiseEnabled, onResume }: { r: Row; wiseEnabled: boolean; 
     {r.receipt && <a href={r.receipt} target="_blank" rel="noreferrer" style={link}>Receipt ↗</a>}
     {r.confirmed ? <span style={{ font: `500 12px ${SANS}`, color: C.faint }}>payee confirmed</span> : <span style={{ font: `500 12px ${SANS}`, color: C.faint }}>✉ emailed</span>}
   </>;
-  if (r.state === "needs_details") return <><Pill tone="neutral">No payment details</Pill><a href="/admin/payouts-ii" style={link}>Add details →</a></>;
-  if (r.state === "manual") return <><Pill tone="neutral">Not on Wise</Pill><a href="/admin/payouts-ii" style={link}>Pay manually →</a></>;
+  if (r.state === "needs_details") return <><Pill tone="neutral">No payment details</Pill><a href="/admin/referrals" style={link}>Add details →</a></>;
+  if (r.state === "manual") return <><Pill tone="neutral">Not on Wise</Pill><span style={{ font: `500 12px ${SANS}`, color: C.faint }}>pay manually, then mark paid below</span></>;
   if (r.state === "hold") return <>
     <Pill tone={r.paused && reasonIsRestricted(r.paused.reason) ? "red" : "orange"}>{r.paused ? reasonLabel(r.paused.reason) : "On hold"}</Pill>
     {r.paused
