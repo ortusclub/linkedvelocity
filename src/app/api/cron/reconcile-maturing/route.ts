@@ -24,6 +24,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Self-heal split-state restrictions. Some marking paths — notably the maturing engine when it
+  // catches a restriction during warm-up — append the "restricted" event to restriction_log (and
+  // notify owner/referrer) but DON'T set the restricted_at flag that drives the "Restricted" status.
+  // The account then silently reads "Active" and never enters the recovery queue. Here we reconcile
+  // the flag to the log: if the log's most recent event is "restricted" and the flag is null (and
+  // the account isn't perma/retired), set restricted_at from that event's own timestamp. Pure DB, so
+  // it runs even when the engine is unreachable; idempotent (no-ops once the flag is set).
+  let reflagged = 0;
+  try {
+    reflagged = await prisma.$executeRawUnsafe(`
+      update linkedin_accounts
+         set restricted_at = ((restriction_log -> (jsonb_array_length(restriction_log) - 1)) ->> 'at')::timestamp
+       where restricted_at is null
+         and not permanently_restricted
+         and status not in ('retired','removed')
+         and jsonb_typeof(restriction_log) = 'array'
+         and jsonb_array_length(restriction_log) > 0
+         and ((restriction_log -> (jsonb_array_length(restriction_log) - 1)) ->> 'event') = 'restricted'`);
+  } catch (e) {
+    console.error("restricted_at reconcile failed", e);
+  }
+
   // If the engine is unreachable, do NOTHING. A transient engine outage must
   // never clear everyone's maturing flag — we only ever write on a real flip.
   // list() soft-fails (returns engineError instead of throwing), so check both.
@@ -32,12 +54,12 @@ export async function POST(req: NextRequest) {
     data = (await list()) as typeof data;
   } catch (e) {
     return NextResponse.json(
-      { ok: false, skipped: "engine_unavailable", error: e instanceof Error ? e.message : String(e) },
+      { ok: false, skipped: "engine_unavailable", reflagged, error: e instanceof Error ? e.message : String(e) },
       { status: 200 },
     );
   }
   if (data.engineError) {
-    return NextResponse.json({ ok: false, skipped: "engine_unavailable", error: data.engineError }, { status: 200 });
+    return NextResponse.json({ ok: false, skipped: "engine_unavailable", reflagged, error: data.engineError }, { status: 200 });
   }
 
   // A non-terminal campaign is NOT automatically "healthily maturing". Some states mean
@@ -178,7 +200,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, maturing: byProfile.size, stalled: stalledByProfile.size, started, ended, corrected, stopped, stalledFlagged });
+  return NextResponse.json({ ok: true, maturing: byProfile.size, stalled: stalledByProfile.size, started, ended, corrected, stopped, stalledFlagged, reflagged });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
