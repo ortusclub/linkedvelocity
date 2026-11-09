@@ -549,6 +549,7 @@ export default function RestrictionsV2Page() {
   const [filter, setFilter] = useState("action");
   const [phaseF, setPhaseF] = useState("all");
   const [touchSort, setTouchSort] = useState<"asc" | "desc" | null>(null);
+  const [restSort, setRestSort] = useState<"asc" | "desc" | null>(null);
   const [pocF, setPocF] = useState("all");
   const [refF, setRefF] = useState("all");
   const [q, setQ] = useState("");
@@ -613,11 +614,18 @@ export default function RestrictionsV2Page() {
     if (bv == null) return touchDir === "asc" ? 1 : -1;
     return touchDir === "asc" ? av - bv : bv - av;
   };
+  // "Restricted for" sort (explicit only, no implicit default) — by how long it's been restricted.
+  // Takes precedence over Last touch when set; the two headers are mutually exclusive.
+  const restDir: "asc" | "desc" | null = restSort;
+  const restDur = (r: Row) => now - sinceMs(r); // ms since it was restricted (or resolved)
+  const byRest = (a: Row, b: Row) => (restDir === "asc" ? restDur(a) - restDur(b) : restDur(b) - restDur(a));
   // Referrer-reported open cases float above everything else that's open (but below closed, which
   // stays at the bottom) so a "verify this" never gets buried.
   const reportPr = (r: Row) => (reported(r) ? 0 : 1);
   const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef)
-    .sort((a, b) => touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b)) : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
+    .sort((a, b) => restDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byRest(a, b))
+      : touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b))
+      : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
 
   const openCases = all.filter(isOpenCase);
   const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
@@ -706,8 +714,9 @@ export default function RestrictionsV2Page() {
         <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, overflowX: "auto" }}>
           <div style={{ minWidth: 1210 }}>
             <div style={{ display: "grid", gridTemplateColumns: colTpl, gap: 14, padding: "11px 18px", borderBottom: "1px solid #eef0f4", font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>
-              <span>Account</span><span>Restricted for</span>
-              <span onClick={() => setTouchSort(touchDir === "asc" ? "desc" : "asc")} title="Most recent activity by the team. Click to flip; open tabs show stalest first." style={{ cursor: "pointer", color: touchSort || openTab ? "#334155" : "#8a93a3", userSelect: "none" }}>Last touch {touchDir === "asc" ? "▲" : touchDir === "desc" ? "▼" : "⇅"}</span>
+              <span>Account</span>
+              <span onClick={() => { setRestSort(restSort === "desc" ? "asc" : "desc"); setTouchSort(null); }} title="How long it's been restricted. Click to flip; longest-restricted first." style={{ cursor: "pointer", color: restSort ? "#334155" : "#8a93a3", userSelect: "none" }}>Restricted for {restSort === "asc" ? "▲" : restSort === "desc" ? "▼" : "⇅"}</span>
+              <span onClick={() => { setTouchSort(touchDir === "asc" ? "desc" : "asc"); setRestSort(null); }} title="Most recent activity by the team. Click to flip; open tabs show stalest first." style={{ cursor: "pointer", color: touchSort || openTab ? "#334155" : "#8a93a3", userSelect: "none" }}>Last touch {touchDir === "asc" ? "▲" : touchDir === "desc" ? "▼" : "⇅"}</span>
               <span>Times</span><span>Reason</span><span>Email · ID · Form · LinkedIn</span><span>Next step</span><span></span>
             </div>
             {!list.length && <div style={{ padding: "28px 18px", font: `500 13.5px ${F_SANS}`, color: "#8a93a3" }}>Nothing here.</div>}
