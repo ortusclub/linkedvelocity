@@ -116,6 +116,35 @@ export async function GET(req: NextRequest) {
     const collected = Number(collectedAgg._sum.amount ?? 0);
     const collectedCount = collectedAgg._count;
 
+    // ── Cash-this-month breakdown (live state of the current calendar month) ──────
+    // The four buckets partition every charge scheduled this month, so they sum to
+    // `expected` ("charged this month"):
+    //   collected = money already in this month (computed above)
+    //   dueLater  = active rentals still renewing before month-end
+    //   overdue   = active rentals whose charge date lapsed, not yet collected
+    //   failed    = rentals whose last charge failed
+    // Amounts use the locked (or list) price of each rental, like MRR. These are
+    // live (current state); for a past month the headline cards switch to snapshot
+    // but this panel still reflects today — the UI banner says so.
+    const priceOf = (r: { lockedPrice: unknown; linkedinAccount: { monthlyPrice: unknown } }) =>
+      Number((r.lockedPrice as number | null) ?? (r.linkedinAccount.monthlyPrice as number | null) ?? 0);
+    const curMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    let dueLaterAmount = 0, dueLaterCount = 0, overdueAmount = 0, overdueCount = 0;
+    for (const r of activeRentalsList) {
+      const end = r.currentPeriodEnd ? new Date(r.currentPeriodEnd) : null;
+      if (!end) continue;
+      if (end < now) { overdueAmount += priceOf(r); overdueCount++; }
+      else if (end < curMonthEnd) { dueLaterAmount += priceOf(r); dueLaterCount++; }
+    }
+    const failedRentals = await prisma.rental.findMany({
+      where: { status: "payment_failed", ...liveRental },
+      select: { lockedPrice: true, linkedinAccount: { select: { monthlyPrice: true } } },
+    });
+    const failedAmount = failedRentals.reduce((s, r) => s + priceOf(r), 0);
+    const failedCount = failedRentals.length;
+    // Total charged this month = the four buckets combined.
+    const expected = collected + dueLaterAmount + overdueAmount + failedAmount;
+
     // ── Month filter + month-over-month trends, powered by the daily snapshot table ──
     // baseline = the latest snapshot strictly before the selected month (i.e. last month's
     // end-of-day state); list of months we actually have snapshots for (drives the dropdown).
@@ -179,6 +208,8 @@ export async function GET(req: NextRequest) {
         netProfit: disp.netProfit, mrr: disp.mrr, payouts: disp.payouts, activeRentals: disp.activeRentals,
         payoutsPhp, // native ₱ figure of actual payouts in the selected month
         collected, collectedCount,
+        // cash-this-month breakdown (live): buckets sum to `expected`
+        expected, dueLaterAmount, dueLaterCount, overdueAmount, overdueCount, failedAmount, failedCount,
         // demand
         totalCustomers: disp.totalCustomers, newCustomers30d, renewalsDue30d, atRisk,
         // supply
