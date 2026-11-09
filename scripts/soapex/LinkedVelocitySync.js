@@ -25,11 +25,11 @@ function soapexLvPlan_(rows, feed) {
     if (rows[i][0] && !String(rows[i][0]).includes('@')) { end = i; break; }
   }
   const byEmail = {}, byUrl = {}, allEmails = {};
-  rows.forEach((r, i) => { if (String(r[0] || '').includes('@')) (allEmails[soapexLvEmail_(r[0])] ||= []).push(i); });
+  rows.forEach((r, i) => { if (String(r[0] || '').includes('@')) (allEmails[soapexLvEmail_(r[0])] || (allEmails[soapexLvEmail_(r[0])] = [])).push(i); });
   for (let i = marker + 1; i < end; i++) {
     const e = soapexLvEmail_(rows[i][0]), u = soapexLvUrl_(rows[i][7]);
-    if (e) (byEmail[e] ||= []).push(i);
-    if (u) (byUrl[u] ||= []).push(i);
+    if (e) (byEmail[e] || (byEmail[e] = [])).push(i);
+    if (u) (byUrl[u] || (byUrl[u] = [])).push(i);
   }
   // The feed is newest-first. A still-open rental wins over a historical
   // replacement for the same account, including an older still-open rental.
