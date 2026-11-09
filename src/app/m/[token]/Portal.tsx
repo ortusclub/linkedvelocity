@@ -9,7 +9,7 @@ import UnlockGuide, { type ScreenId } from "./unlock-guide";
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
 interface Activity { kind: string; name: string; referrer: string | null; mine: boolean; date: string; }
 type FixIssue = "application_incomplete" | "email_added" | "email_primary" | "twofa" | "password";
-interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; helpSentAt: string | null; appealSentAt: string | null } | null; }
+interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; }
 interface Payout { id: string; type: string; description: string | null; amount: number; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; }
 interface Tier { base: number; verified: number; }
 interface Config { currency: string; symbol: string; offer: { setup: string; monthly: string }; referralTiers: { referral: number; phone: Tier; computer: Tier }; payoutMethods: string[]; defaultPayoutMethod: string; }
@@ -167,8 +167,9 @@ export default function Portal({ token }: { token: string }) {
   const [readyOpen, setReadyOpen] = useState(false);
   const [jobFilter, setJobFilter] = useState<JobFilter>("all");
   const [jobQuery, setJobQuery] = useState("");
-  // The restricted signup whose guided "unlock" sheet is open, and which screen it opens on.
-  const [unlock, setUnlock] = useState<{ id: string; start: ScreenId } | null>(null);
+  // The restricted signup whose guided "unlock" sheet is open, plus which screen + back-stack it
+  // resumes at.
+  const [unlock, setUnlock] = useState<{ id: string; start: ScreenId; history: ScreenId[] } | null>(null);
   const [fixingId, setFixingId] = useState<string | null>(null);
   const [reportingId, setReportingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -613,6 +614,17 @@ export default function Portal({ token }: { token: string }) {
               const bd = { green: C.softGreenBorder, blue: "#c7d7fe", amber: C.warnBorder, red: C.redBorder, grey: "#e2e8f0" }[s.pill.tone];
               const lt = s.restricted ? lockTier(s.method) : null;
               const sFirst = (s.name || "").trim().split(/\s+/)[0] || "they";
+              // Resume the guided-unlock sheet where the referrer left off: any saved screen except
+              // a finished (`done`) or fresh (`ready`) one, which both start over at `ready`.
+              const g = s.recoveryGuide;
+              const savedStep: ScreenId | null = g?.step && g.step !== "done" && g.step !== "ready" ? (g.step as ScreenId) : null;
+              const unlockStart: ScreenId = savedStep ?? "ready";
+              const unlockHistory: ScreenId[] = (savedStep ? (g?.history ?? []) : []) as ScreenId[];
+              const unlockLabel = !lt ? "" :
+                !savedStep ? `Unlock ${lt.amt} — show them how` :
+                savedStep === "waiting" ? "Waiting on LinkedIn — check status" :
+                (savedStep === "help" || savedStep === "appeal") ? "Continue — finish the LinkedIn form" :
+                `Continue unlocking ${lt.amt}`;
               return (
                 <div key={i} style={card}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -673,7 +685,7 @@ export default function Portal({ token }: { token: string }) {
                           <div style={{ font: `500 11px ${JAK}`, color: C.muted }}>{s.path}</div>
                         </div>
                       </div>
-                      <button onClick={() => setUnlock({ id: s.id, start: s.recoveryGuide?.step === "waiting" ? "waiting" : "ready" })} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, minHeight: 44, borderRadius: 11, background: C.red, color: "#fff", border: "none", font: `700 13.5px ${JAK}`, cursor: "pointer" }}><LockOpenGlyph size={14} color="#fff" /> Unlock {lt.amt} — show them how</button>
+                      <button onClick={() => setUnlock({ id: s.id, start: unlockStart, history: unlockHistory })} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, minHeight: 44, borderRadius: 11, background: C.red, color: "#fff", border: "none", font: `700 13.5px ${JAK}`, cursor: "pointer" }}><LockOpenGlyph size={14} color="#fff" /> {unlockLabel}</button>
                       <a href="https://www.linkedin.com/login" target="_blank" rel="noopener noreferrer" style={{ display: "block", textAlign: "center", width: "100%", boxSizing: "border-box", marginTop: 8, minHeight: 44, borderRadius: 11, background: C.dark, color: "#fff", font: `700 14px ${JAK}`, padding: "12px 14px", textDecoration: "none" }}>Open LinkedIn to check it ↗</a>
                       {s.restrictionReport && (
                         <div style={{ font: `700 11.5px/1.4 ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, borderRadius: 9, padding: "9px 11px", marginTop: 8 }}>✓ You told us it&apos;s unrestricted — the team is verifying it now.</div>
@@ -1210,6 +1222,7 @@ export default function Portal({ token }: { token: string }) {
               lockAmt={t.amt}
               resumeHref={resumeHref}
               startStep={unlock.start}
+              startHistory={unlock.history}
               onBackIn={() => void reportRestriction(su.id, "recovered")}
               onClose={() => setUnlock(null)}
             />

@@ -221,11 +221,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // The referrer's own report about this restriction (QR done / says recovered), so we
       // can show "you told us" and hide the buttons until the team clears it. Cleared to
       // null once the team lifts the restriction (accountRestricted goes false).
-      const rawReport = a.restrictionReport as { type?: "qr_done" | "recovered"; at?: string; guideStep?: string; helpSentAt?: string; appealSentAt?: string } | null;
+      const rawReport = a.restrictionReport as { type?: "qr_done" | "recovered"; at?: string; guideStep?: string; guideStepAt?: string; guideHistory?: string[]; helpSentAt?: string; appealSentAt?: string } | null;
       const restrictionReport = accountRestricted && rawReport?.type ? { type: rawReport.type, at: rawReport.at || "" } : null;
-      // The referrer's progress through the guided "unlock" sheet, so they resume where they left
-      // off (especially the `waiting` screen), and the card can show the forms were already sent.
-      const recoveryGuide = accountRestricted ? { step: rawReport?.guideStep ?? null, helpSentAt: rawReport?.helpSentAt ?? null, appealSentAt: rawReport?.appealSentAt ?? null } : null;
+      // The referrer's progress through the guided "unlock" sheet — current screen + back-stack, so
+      // they resume exactly where they left off, plus which LinkedIn forms were already submitted.
+      // Scoped to the CURRENT restriction episode: progress saved before this restriction started
+      // (a prior, since-recovered episode) is ignored, so a re-restriction starts the guide fresh.
+      const guideFresh = rawReport?.guideStepAt && acct?.restrictedAt ? new Date(rawReport.guideStepAt) >= new Date(acct.restrictedAt) : true;
+      const recoveryGuide = accountRestricted ? { step: guideFresh ? (rawReport?.guideStep ?? null) : null, history: guideFresh && Array.isArray(rawReport?.guideHistory) ? rawReport.guideHistory : [], helpSentAt: rawReport?.helpSentAt ?? null, appealSentAt: rawReport?.appealSentAt ?? null } : null;
       // LinkedIn profile URL so the referrer can open the account and check it (e.g. is a
       // restriction still on?). Prefer the linked account's URL, fall back to the application's.
       const rawLi = acct?.linkedinUrl || a.linkedinUrl || "";
@@ -386,10 +389,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
   // The referrer withdraws (or restores) one of their OWN signups — a soft-hide that keeps
   // the record. Only their own signups, never a paid one (that's a real payment record).
   if ((body.action === "withdraw" || body.action === "restore") && typeof body.applicationId === "string") {
-    const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, paidAt: true } });
+    const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, paidAt: true, restrictionReport: true } });
     if (!app || (app.referredBy || "").trim() !== me.slug) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (body.action === "withdraw" && app.paidAt) return NextResponse.json({ error: "A paid signup can't be withdrawn — contact the team." }, { status: 409 });
-    await prisma.ambassadorApplication.update({ where: { id: body.applicationId }, data: { withdrawnAt: body.action === "withdraw" ? new Date() : null } });
+    // Withdrawing takes the signup off the list, so drop any saved guided-unlock progress (keep the
+    // qr/recovered report itself). On restore the referrer starts the guide fresh.
+    const prevReport = (app.restrictionReport && typeof app.restrictionReport === "object" ? app.restrictionReport : null) as { type?: string; at?: string; by?: string } | null;
+    await prisma.ambassadorApplication.update({
+      where: { id: body.applicationId },
+      data: body.action === "withdraw"
+        ? { withdrawnAt: new Date(), restrictionReport: { type: prevReport?.type, at: prevReport?.at, by: prevReport?.by } }
+        : { withdrawnAt: null },
+    });
     return NextResponse.json({ ok: true });
   }
 
@@ -406,16 +417,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
   if ((body.action === "restrictionReport" || body.action === "recoveryGuide") && typeof body.applicationId === "string") {
     const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, restrictionReport: true } });
     if (!app || (app.referredBy || "").trim() !== me.slug) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    type Report = { type?: string; at?: string; by?: string; guideStep?: string; guideStepAt?: string; helpSentAt?: string; appealSentAt?: string };
+    type Report = { type?: string; at?: string; by?: string; guideStep?: string; guideStepAt?: string; guideHistory?: string[]; helpSentAt?: string; appealSentAt?: string };
     const prev = (app.restrictionReport && typeof app.restrictionReport === "object" ? app.restrictionReport : {}) as Report;
     const next: Report = { ...prev };
     const now = new Date().toISOString();
+    const STEPS = ["ready", "signin", "persona", "phone", "result", "retry", "help", "appeal", "waiting", "done"];
     if (body.action === "restrictionReport") {
       if (body.type !== "qr_done" && body.type !== "recovered") return NextResponse.json({ error: "Invalid report." }, { status: 400 });
       next.type = body.type; next.at = now; next.by = "referrer";
     } else {
-      const STEPS = ["ready", "signin", "persona", "phone", "result", "retry", "help", "appeal", "waiting", "done"];
       if (typeof body.step === "string" && STEPS.includes(body.step)) { next.guideStep = body.step; next.guideStepAt = now; }
+      if (Array.isArray(body.history)) next.guideHistory = body.history.filter((h: unknown): h is string => typeof h === "string" && STEPS.includes(h)).slice(0, 20);
       if (body.event === "help_sent") next.helpSentAt = now;
       if (body.event === "appeal_sent") next.appealSentAt = now;
     }

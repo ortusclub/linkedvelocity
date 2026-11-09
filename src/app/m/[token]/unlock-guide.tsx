@@ -41,7 +41,7 @@ type Screen = {
 const MAIN_TOTAL = 5;
 
 export default function UnlockGuide({
-  token, applicationId, firstName, lockAmt, resumeHref, startStep, onBackIn, onClose,
+  token, applicationId, firstName, lockAmt, resumeHref, startStep, startHistory, onBackIn, onClose,
 }: {
   token: string;
   applicationId: string;
@@ -49,13 +49,13 @@ export default function UnlockGuide({
   lockAmt: string; // e.g. "₱700"
   resumeHref: string; // where "Finish the sign-in" resumes the onboarding wizard
   startStep: ScreenId;
+  startHistory: ScreenId[]; // saved back-stack, so Back works after resuming
   onBackIn: () => void; // report "recovered" to the team + refresh the card
   onClose: () => void;
 }) {
   const [lk, setLk] = useState<ScreenId>(startStep);
-  const [hist, setHist] = useState<ScreenId[]>([]);
+  const [hist, setHist] = useState<ScreenId[]>(startHistory);
   const [copied, setCopied] = useState<string | null>(null);
-  const [code, setCode] = useState<{ value: string | null; loading: boolean; error: string; copied: boolean }>({ value: null, loading: false, error: "", copied: false });
   const scroller = useRef<HTMLDivElement>(null);
   const backInFired = useRef(false);
 
@@ -66,11 +66,11 @@ export default function UnlockGuide({
   // Scroll to the top of the sheet on every screen change.
   useEffect(() => { scroller.current?.scrollTo({ top: 0 }); }, [lk]);
 
-  // Persist the current screen to the application so the referrer can come back to it later
-  // (especially `waiting`), and the team can see where the owner is in the flow.
+  // Persist the current screen AND the back-stack to the application, so the referrer resumes
+  // exactly where they left off (Back included), and the team can see where the owner is.
   useEffect(() => {
-    void fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "recoveryGuide", applicationId, step: lk }) }).catch(() => {});
-  }, [lk, token, applicationId]);
+    void fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "recoveryGuide", applicationId, step: lk, history: hist }) }).catch(() => {});
+  }, [lk, hist, token, applicationId]);
 
   // Reaching "Cleared" means the owner is back in — report it once so the team verifies and the
   // payout timer resumes.
@@ -86,16 +86,6 @@ export default function UnlockGuide({
   const back = () => setHist((h) => { if (!h.length) return h; const next = [...h]; const prev = next.pop()!; setLk(prev); return next; });
 
   const flashCopy = (text: string) => { navigator.clipboard?.writeText(text); setCopied(text); setTimeout(() => setCopied((c) => (c === text ? null : c)), 1500); };
-
-  const loadCode = async () => {
-    setCode((c) => ({ ...c, loading: true, error: "", copied: false }));
-    try {
-      const r = await fetch(`/api/m/${token}/code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ applicationId }) });
-      const b = await r.json().catch(() => ({}));
-      if (!r.ok) { setCode({ value: null, loading: false, error: b.error || "Couldn't get the code. Please try again.", copied: false }); return; }
-      setCode({ value: b.code ?? null, loading: false, error: "", copied: false });
-    } catch { setCode({ value: null, loading: false, error: "Check your connection and try again.", copied: false }); }
-  };
 
   const labelColor = s.tone === "cleared" ? "#0f7a3d" : s.tone === "branch" ? "#92400e" : "#8a93a3";
 
@@ -118,6 +108,9 @@ export default function UnlockGuide({
             <button onClick={back} style={{ font: `700 12px ${JAK}`, color: "#5b6779", background: "#f1f3f6", border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>← Back</button>
           )}
           <span style={{ font: `700 10.5px ${JAK}`, letterSpacing: ".06em", textTransform: "uppercase", color: labelColor }}>{s.label}</span>
+          {lk !== "ready" && (
+            <button onClick={() => { setHist([]); setLk("ready"); }} style={{ marginLeft: "auto", font: `600 12px ${JAK}`, color: "#5b6779", background: "none", border: "none", cursor: "pointer" }}>Start over</button>
+          )}
         </div>
 
         {/* Main-path progress (main screens only) */}
@@ -130,7 +123,7 @@ export default function UnlockGuide({
         <div style={{ font: `600 20px/1.25 ${GRO}`, color: "#0b1220", marginBottom: 7 }}>{s.title}</div>
         <p style={{ font: `500 13px/1.5 ${JAK}`, color: "#5b6779", margin: "0 0 14px" }}>{s.body}</p>
 
-        {s.blocks.map((b, i) => <BlockView key={i} b={b} code={code} onLoadCode={loadCode} onCopyCode={(v) => { navigator.clipboard?.writeText(v); setCode((c) => ({ ...c, copied: true })); }} copied={copied} onCopy={flashCopy} />)}
+        {s.blocks.map((b, i) => <BlockView key={i} b={b} token={token} applicationId={applicationId} copied={copied} onCopy={flashCopy} />)}
 
         {/* Choice buttons */}
         <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 16 }}>
@@ -156,11 +149,10 @@ export default function UnlockGuide({
   );
 }
 
-function BlockView({ b, code, onLoadCode, onCopyCode, copied, onCopy }: {
+function BlockView({ b, token, applicationId, copied, onCopy }: {
   b: Block;
-  code: { value: string | null; loading: boolean; error: string; copied: boolean };
-  onLoadCode: () => void;
-  onCopyCode: (v: string) => void;
+  token: string;
+  applicationId: string;
   copied: string | null;
   onCopy: (text: string) => void;
 }) {
@@ -179,29 +171,7 @@ function BlockView({ b, code, onLoadCode, onCopyCode, copied, onCopy }: {
       </div>
     );
   }
-  if (b.t === "code") {
-    return (
-      <div style={{ marginTop: 12 }}>
-        {code.value || code.loading || code.error ? (
-          <div style={{ background: "#e7f7ee", border: "1px solid #c3ebd2", borderRadius: 10, padding: 12 }}>
-            <div style={{ font: `700 10px ${JAK}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#0f7a3d", marginBottom: 6 }}>Authenticator code</div>
-            {code.loading ? <div style={{ font: `600 13px ${JAK}`, color: "#5b6779" }}>Getting code…</div>
-              : code.error ? <div style={{ font: `600 12.5px ${JAK}`, color: "#b91c1c" }}>{code.error}</div>
-              : code.value ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ font: `700 24px ${GRO}`, letterSpacing: ".14em", color: "#0b1220" }}>{code.value}</span>
-                  <button onClick={() => onCopyCode(code.value!)} style={{ font: `700 12px ${JAK}`, color: "#fff", background: "#0b1220", border: "none", borderRadius: 8, padding: "7px 11px", cursor: "pointer" }}>{code.copied ? "Copied ✓" : "Copy"}</button>
-                  <button onClick={onLoadCode} style={{ font: `700 12px ${JAK}`, color: "#0f7a3d", background: "none", border: "none", cursor: "pointer" }}>Refresh</button>
-                </div>
-              ) : null}
-            <div style={{ font: `500 11px/1.4 ${JAK}`, color: "#5b7a68", marginTop: 8 }}>Enter this where LinkedIn asks for the 6-digit code. It changes every 30 seconds — tap Refresh for a fresh one.</div>
-          </div>
-        ) : (
-          <button onClick={onLoadCode} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", minHeight: 44, font: `700 14px ${JAK}`, color: "#0f7a3d", background: "#e7f7ee", border: "1px solid #c3ebd2", borderRadius: 10, padding: "11px 12px", cursor: "pointer" }}>Get authenticator code</button>
-        )}
-      </div>
-    );
-  }
+  if (b.t === "code") return <CodeField token={token} applicationId={applicationId} />;
   if (b.t === "link") {
     return (
       <a href={b.href} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", boxSizing: "border-box", marginTop: 12, font: `700 13.5px ${JAK}`, color: "#2563eb", background: "#eff4ff", border: "1px solid #cfdcfb", borderRadius: 10, padding: "11px 12px", textDecoration: "none" }}>{b.label} ↗</a>
@@ -236,6 +206,76 @@ function BlockView({ b, code, onLoadCode, onCopyCode, copied, onCopy }: {
   // note
   return (
     <div style={{ marginTop: 12, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 12, font: `500 12.5px/1.5 ${JAK}`, color: "#92400e" }}>{b.text}</div>
+  );
+}
+
+// The live authenticator (TOTP) code for the account, fetched from the referrer's own endpoint.
+// Shows a 30-second countdown and auto-refreshes when the window rolls over; it unmounts (and so
+// clears + collapses) when the sheet closes or the referrer leaves the sign-in screen.
+function CodeField({ token, applicationId }: { token: string; applicationId: string }) {
+  const [st, setSt] = useState<{ value: string | null; loading: boolean; error: boolean; open: boolean }>({ value: null, loading: false, error: false, open: false });
+  const [copied, setCopied] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const lastPeriod = useRef<number | null>(null);
+
+  const load = async () => {
+    setSt((s) => ({ ...s, loading: true, error: false, open: true }));
+    try {
+      const r = await fetch(`/api/m/${token}/code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ applicationId }) });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok || !b.code) { setSt((s) => ({ ...s, loading: false, error: true, open: true })); return; }
+      setSt({ value: b.code, loading: false, error: false, open: true });
+    } catch { setSt((s) => ({ ...s, loading: false, error: true, open: true })); }
+  };
+
+  // Tick each second while a code is shown, to drive the countdown.
+  useEffect(() => {
+    if (!st.value) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [st.value]);
+
+  const secondsLeft = 30 - (Math.floor(now / 1000) % 30);
+  const periodIdx = Math.floor(now / 30000);
+  // When the 30-second TOTP window rolls over, pull a fresh code automatically.
+  useEffect(() => {
+    if (!st.value) { lastPeriod.current = null; return; }
+    if (lastPeriod.current === null) { lastPeriod.current = periodIdx; return; }
+    if (periodIdx !== lastPeriod.current) { lastPeriod.current = periodIdx; void load(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodIdx, st.value]);
+
+  const copy = () => { if (!st.value) return; navigator.clipboard?.writeText(st.value); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+
+  if (!st.open) {
+    return <button onClick={load} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", minHeight: 46, marginTop: 12, font: `700 14px ${JAK}`, color: "#0f7a3d", background: "#e7f7ee", border: "1px solid #c3ebd2", borderRadius: 10, cursor: "pointer" }}>Get authenticator code</button>;
+  }
+  return (
+    <div style={{ marginTop: 12, background: "#e7f7ee", border: "1px solid #c3ebd2", borderRadius: 12, padding: "13px 14px" }}>
+      {st.loading && !st.value ? (
+        <div style={{ font: `600 13px ${JAK}`, color: "#0f7a3d" }}>Getting code…</div>
+      ) : st.error && !st.value ? (
+        <>
+          <div style={{ font: `600 12.5px/1.5 ${JAK}`, color: "#b91c1c" }}>Couldn&apos;t get a code — try again or message support.</div>
+          <button onClick={load} style={{ marginTop: 10, width: "100%", minHeight: 44, font: `700 13px ${JAK}`, color: "#0f7a3d", background: "#fff", border: "1px solid #c3ebd2", borderRadius: 10, cursor: "pointer" }}>Retry</button>
+        </>
+      ) : st.value ? (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ font: `700 10.5px ${JAK}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#0f7a3d" }}>6-digit code</span>
+            <span style={{ font: `600 11.5px ${JAK}`, color: "#0f7a3d", fontVariantNumeric: "tabular-nums" }}>New code in {secondsLeft}s</span>
+          </div>
+          <div style={{ font: `600 32px ${GRO}`, letterSpacing: ".12em", color: "#0b1220", margin: "6px 0 8px" }}>{st.value.replace(/^(\d{3})(\d{3})$/, "$1 $2")}</div>
+          <div style={{ height: 4, borderRadius: 999, background: "#c3ebd2", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${(secondsLeft / 30) * 100}%`, background: "#12a150", transition: "width 1s linear" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={copy} style={{ flex: 1, minHeight: 44, font: `700 13px ${JAK}`, color: "#fff", background: "#12a150", border: "none", borderRadius: 10, cursor: "pointer" }}>{copied ? "Copied ✓" : "Copy code"}</button>
+            <button onClick={load} style={{ flex: 1, minHeight: 44, font: `700 13px ${JAK}`, color: "#0f7a3d", background: "#fff", border: "1px solid #c3ebd2", borderRadius: 10, cursor: "pointer" }}>Refresh</button>
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -277,7 +317,7 @@ function buildScreens(N: string): Record<ScreenId, Screen> {
       blocks: [
         { t: "items", items: [
           { title: "Enter their login email and password" },
-          { title: "Asked for a 6-digit code?", sub: "Get one from the panel below. Codes change every 30 seconds — if it expires, get a fresh one." },
+          { title: "Asked for a 6-digit code?", sub: "Tap Get authenticator code below. It changes every 30 seconds — if it expires, use the new one." },
           { title: "Password not working?", sub: "Use Forgot password on LinkedIn's sign-in page." },
         ] },
         { t: "code" },
