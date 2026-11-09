@@ -55,7 +55,12 @@ function soapexLvPlan_(rows, feed) {
     const hits = [...new Set(emailHits.concat(urlHits))];
     if (hits.length > 1) { warnings.push('Ambiguous existing identity: ' + (email || r.name)); return; }
     const outside = email ? (allEmails[email] || []).filter(i => i <= marker || i >= end) : [];
-    if (!hits.length && outside.length) { if (current) warnings.push('Identity also belongs to another section: ' + email); return; }
+    if (!hits.length && outside.length) {
+      const lowerHeading = String((rows[end] || [])[0] || '').trim().toLowerCase();
+      const retainedUnavailable = ['innaccessible/restricted', 'inaccessible/restricted'].includes(lowerHeading) && outside.every(i => i > end);
+      if (current && !retainedUnavailable) warnings.push('Identity also belongs to another section: ' + email);
+      return; // Never duplicate or move an existing unavailable account.
+    }
     const note = 'LinkedVelocity rental ' + r.rentalId + '; status: ' + r.status + (r.paused ? '; paused' : '') + (r.beingPrepared ? '; being prepared' : '') + '; checked ' + feed.fetchedAt;
     if (!hits.length) {
       if (!current) return; // Do not import historic rentals absent from this sheet.
@@ -89,7 +94,11 @@ function soapexLvApi_(method, suffix, payload) {
     contentType: 'application/json', muteHttpExceptions: true,
     ...(payload ? { payload: JSON.stringify(payload) } : {}),
   });
-  if (response.getResponseCode() >= 300) throw Error('SoAPEX Sheets API failed (' + response.getResponseCode() + ')');
+  if (response.getResponseCode() >= 300) {
+    let detail = '';
+    try { const failure = JSON.parse(response.getContentText()).error; detail = String(failure.message || '').slice(0, 1000); } catch (_) {}
+    throw Error('SoAPEX Sheets API failed (' + response.getResponseCode() + '): ' + detail);
+  }
   return JSON.parse(response.getContentText());
 }
 function soapexLvCellRequest_(row, col, value, note) {
@@ -125,12 +134,14 @@ function soapexRefreshLinkedVelocity() {
     const snapshot = soapexLvRead_(), plan = soapexLvPlan_(snapshot.rows, feed);
     if (plan.warnings.length) throw Error('Rental sync held for identity review: ' + plan.warnings.join('; '));
     const requests = plan.edits.map(e => soapexLvCellRequest_(e.row, e.col, e.value, e.note));
-    // Append new rentals at the end of the section. Inserting cells/rows in
-    // existing accounts would race the live campaign outcome writers.
-    let appendAt = plan.end;
-    while (appendAt > plan.marker + 1 && !snapshot.rows[appendAt - 1].some(v => v !== '' && v != null)) appendAt--;
-    if (plan.additions.length && plan.end < snapshot.count) throw Error('A following section exists; manual layout review required');
-    if (appendAt + plan.additions.length > snapshot.count) requests.unshift({ appendDimension: { sheetId: SOAPEX_LV.sheetId, dimension: 'ROWS', length: appendAt + plan.additions.length - snapshot.count } });
+    // Insert new current rentals before the lower historical/unavailable block.
+    // Work backwards so an isolated restriction among current rentals does not
+    // move the insertion point to the top of the current-rental list.
+    let appendAt = soapexLvInsertionRow_(snapshot.rows, plan.marker, plan.end);
+    if (plan.additions.length) {
+      if (appendAt < snapshot.count) requests.push({ insertDimension: { range: { sheetId: SOAPEX_LV.sheetId, dimension: 'ROWS', startIndex: appendAt, endIndex: appendAt + plan.additions.length }, inheritFromBefore: true } });
+      else requests.push({ appendDimension: { sheetId: SOAPEX_LV.sheetId, dimension: 'ROWS', length: plan.additions.length } });
+    }
     plan.additions.forEach((r, n) => {
       const i = appendAt + n;
       requests.push({ copyPaste: {
@@ -148,7 +159,7 @@ function soapexRefreshLinkedVelocity() {
     if (requests.length) soapexLvApi_('post', ':batchUpdate', { requests });
     const checked = soapexLvRead_(), remaining = soapexLvPlan_(checked.rows, feed);
     if (remaining.additions.length || remaining.warnings.length) throw Error('Rental sync readback incomplete; success time not advanced');
-    plan.edits.forEach(e => { if ((checked.rows[e.row][e.col] || '') !== (e.value || '')) throw Error('Rental sync readback mismatch'); });
+    plan.edits.forEach(e => { if ((checked.rows[e.row + (e.row >= appendAt ? plan.additions.length : 0)][e.col] || '') !== (e.value || '')) throw Error('Rental sync readback mismatch'); });
     const now = new Date(), next = soapexLvNext_(now), serial = d => d.getTime() / 86400000 + 25569;
     soapexLvApi_('post', ':batchUpdate', { requests: [
       soapexLvCellRequest_(1, 1, 'LV updated (UTC)'), soapexLvCellRequest_(1, 3, serial(now)),
@@ -181,16 +192,17 @@ function soapexInstallLinkedVelocitySync() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (ss.getId() !== SOAPEX_LV.spreadsheetId) throw Error('Wrong workbook');
   const sheet = ss.getSheets().find(s => s.getSheetId() === SOAPEX_LV.sheetId);
+  const existing = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'soapexLvScheduledRefresh');
   const snapshot = soapexLvRead_();
   const own = snapshot.rows[1][1] === 'LV updated (UTC)';
   if (!own && snapshot.rows[1].slice(1, 16).some(v => v !== '' && v != null)) throw Error('Top control area is occupied; existing values preserved');
   const groups = [[1, 3], [3, 6], [6, 8], [8, 11], [11, 13], [13, 16]];
   if (!own) {
     const overlap = (snapshot.tab.merges || []).some(r => r.startRowIndex <= 1 && r.endRowIndex > 1 && r.startColumnIndex < 16 && r.endColumnIndex > 1);
-    if (overlap) throw Error('Top control area has existing merged cells; review required');
-    soapexLvApi_('post', ':batchUpdate', { requests: groups.map(([start, end]) => ({ mergeCells: { range: { sheetId: SOAPEX_LV.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: start, endColumnIndex: end }, mergeType: 'MERGE_ALL' } })) });
+    const ownMerges = groups.every(([start, end]) => (snapshot.tab.merges || []).some(r => r.startRowIndex === 1 && r.endRowIndex === 2 && r.startColumnIndex === start && r.endColumnIndex === end));
+    if (overlap && !ownMerges) throw Error('Top control area has existing merged cells; review required');
+    if (!ownMerges) soapexLvApi_('post', ':batchUpdate', { requests: groups.map(([start, end]) => ({ mergeCells: { range: { sheetId: SOAPEX_LV.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: start, endColumnIndex: end }, mergeType: 'MERGE_ALL' } })) });
   }
-  const existing = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'soapexLvScheduledRefresh');
   if (!existing.length) ScriptApp.newTrigger('soapexLvScheduledRefresh').timeBased().everyHours(4).create();
   existing.slice(1).forEach(t => ScriptApp.deleteTrigger(t));
   // The over-cell image is a real Sheets button with an assigned function.
@@ -204,3 +216,17 @@ function soapexInstallLinkedVelocitySync() {
 }
 
 const SOAPEX_LV_BUTTON_PNG = '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';
+
+function soapexDiagnoseConnection() { soapexLvRead_(); console.log("SoAPEX Sheets API read verified"); }
+
+function soapexLvInsertionRow_(rows, marker, end) {
+  let at = end;
+  while (at > marker + 1) {
+    const r = rows[at - 1] || [];
+    const status = String(r[1] || '').trim().toLowerCase();
+    const blank = !r.some(v => v !== '' && v != null);
+    if (blank || status === 'past rental' || status === 'inaccessible' || status.includes('restricted')) at--;
+    else break;
+  }
+  return at;
+}

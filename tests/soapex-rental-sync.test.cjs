@@ -48,3 +48,11 @@ test('manual refresh due-time lookup preserves the scheduled timestamp',()=>{
  context.PropertiesService={getScriptProperties:()=>({getProperty:()=>saved,setProperty:()=>{throw Error('manual path must not reschedule');}})};
  assert.equal(context.soapexLvNext_(new Date('2026-11-09T23:00:00Z')).toISOString(),saved);
 });
+test('new rentals insert before the lower unavailable block, not isolated restricted current rows',()=>{
+ const r=[['Email','Status'],['Linked Velocity Rented Accounts'],['a@example.com','Identity Restricted'],['b@example.com','Rented'],[],['c@example.com','Past Rental'],['d@example.com','Inaccessible'],['e@example.com','Identity Restricted']];
+ assert.equal(context.soapexLvInsertionRow_(r,1,r.length),4);
+});
+test('known rentals in the explicit unavailable section are retained without duplicate or edits',()=>{
+ const r=[['Email','Status'],['Linked Velocity Rented Accounts'],['other@example.com','Rented'],[],['Innaccessible/Restricted'],['rented@example.com','Identity Restricted']];
+ const p=plan(r,[source()]);assert.equal(p.warnings.length,0);assert.equal(p.additions.length,0);assert.equal(p.edits.length,0);assert.equal(context.soapexLvInsertionRow_(r,p.marker,p.end),3);
+});

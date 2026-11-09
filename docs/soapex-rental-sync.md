@@ -41,7 +41,7 @@ Preserve existing restriction/inaccessible labels. Existing ordinary Rented
 labels become Past Rental only with affirmative ended-rental evidence.
 Absence from a feed alone does not remove a row or overwrite its status.
 Import newly open identities only; keep historic identities and original values.
-New identities append without moving existing campaign rows, with identity and
+New identities insert above the lower Innaccessible/Restricted heading, with identity and
 source fields only; no credit availability is inferred from being rented.
 Read back and reconcile before advancing success time. Review live current
 identity coverage and unchanged non-LV sections before reporting completion.
@@ -66,3 +66,7 @@ No key was created and no live cells, existing scripts or triggers were changed.
 Ask Samuel to approve creating the Apex-only rental-feed credential and storing
 it in LinkedVelocity production and the bound script properties. Do not bypass
 that rejection. Runtime verification and Google consent remain pending.
+
+## Live completion
+
+Active and verified 9 November 2026: every-four-hour trigger, assigned image button and readback. Manual refresh14:14 UTC retained next due18:09 UTC. Known identities in the lower Innaccessible/Restricted section are excluded from edits and duplicate insertion. New accounts insert above that heading. Sheets v4 service manifest and safe installer retries included.13 focused tests pass. Earlier prepared/blocker sections are historical and resolved.

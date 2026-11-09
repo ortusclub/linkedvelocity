@@ -97,3 +97,7 @@ below a long expanded list. Other/history remains a secondary view.
 
 ## LV reserves eligibility — Samuel, 9 November 2026
 CC+IC operators at Apex/Ortus receive five eligible LV accounts only at Start, preferring available and falling back to accounts in use by campaigns. Do not reserve before Start. Preserve customer rentals, restrictions, holds and session locks. Feed only the eligibility boolean, never credentials or rental details. Each person has one shared 500-connection weekly allowance across all reserves and campaigns. Changing the five requires Stop then Start.
+
+
+## SoAPEX rental sync active and insertion boundary — 9 November 2026
+The Sheets API 403 was resolved by enabling the Sheets v4 advanced service in the default Apps Script project. User granted scheduling permission. Four-hour trigger soapexLvScheduledRefresh is installed and verified; top Refresh LV rentals button tested successfully at14:14 UTC with next due18:09 UTC unchanged. 19 current Apex rentals represented; zero added. Samuel explicitly requires new rentals inside Linked Velocity Rented Accounts BEFORE the lower Innaccessible/Restricted heading, never appended below it. Existing known identities in that lower block stay there and must not be duplicated or changed. Script reads/writes Sheets REST API; assignments/campaign/credit columns preserved. Resumable evidence: data/soapex-lv-sync-20261109/task-notes.json.
