@@ -412,11 +412,17 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const log = asLog(a.restrictionLog);
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRec = [...log].reverse().find((e) => e.event === "recovered");
-  const resolvedAt = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRec ? Date.parse(lastRec.at) : null);
+  const resolvedRaw = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRec ? Date.parse(lastRec.at) : null);
+  // Re-restricted after that recovery (openSince newer than the resolved date): the recovery is
+  // stale, so the post-recovery securing steps (GoLogin login / warm-up) no longer apply — this is a
+  // fresh restriction. Null it so the panel restarts the chain instead of showing "Log in + reset
+  // password" with no current-episode steps. Mirrors the same guard in deriveCase (#719).
+  const resolvedAt = resolvedRaw != null && openSince != null && openSince > resolvedRaw ? null : resolvedRaw;
   const rec = !!resolvedAt, lost = !!stored.outcome, rented = a.status === "rented";
   // Securing (GoLogin + password) + warm-up only apply to recoveries taken through this tab; a
-  // recovery logged the old way is already handled, so those steps show as done, not "todo".
-  const securing = !!stored.resolvedAt;
+  // recovery logged the old way is already handled, so those steps show as done, not "todo". Gated
+  // on resolvedAt (not raw stored.resolvedAt) so a re-restriction after the recovery drops securing.
+  const securing = !!stored.resolvedAt && resolvedAt != null;
   type Pre = Omit<WfCard, "stLbl" | "stFg" | "isCurrent">;
   const cards: Pre[] = [];
   const mk = (n: number, title: string, sub: string, state: WfState, extra: Partial<Pre> = {}) => cards.push({ n, title, sub, state, actions: [], ...extra });
