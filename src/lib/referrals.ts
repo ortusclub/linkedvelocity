@@ -91,7 +91,7 @@ export function referralMaturesAt(a: ReferralGate): Date | null {
 
 // The setup fee (and the referrer's commission) come due one week after QC passes. This is
 // the raw QC + 1 week date REGARDLESS of status, so the owner-side views (payouts digest,
-// owners export, payouts-ii) show the same "ready" date as the pipeline and the referrer
+// owners export, payouts) show the same "ready" date as the pipeline and the referrer
 // portal. Unlike referralMaturesAt it doesn't null out for onboarded — those callers still
 // want the date. Returns null only until QC is passed (no date to show yet).
 export function setupFeeReadyDate(verifiedAt: Date | string | null): Date | null {
