@@ -20,6 +20,74 @@ import { testProxy } from "@/lib/proxy-verify";
 export type FixOutcome = "swapped" | "no_proxy" | "verify_failed";
 export type FixResult = { outcome: FixOutcome; newProxyHost?: string; newProxyPort?: number };
 
+// Assign a fresh, geo-matched proxy to an ACCOUNT (by account id) — the recovery-side
+// companion to the proxy-reclaim cron. That cron releases proxies from long-dead
+// restricted accounts so they stop hogging capacity; when we then decide to recover one,
+// it has no proxy, and this gives it one on demand (one click from the restrictions page).
+//
+// Works whether or not the account currently has a proxy: a reclaimed account has none
+// (just assign + verify), and an account on a dead proxy gets it swapped (exclude the old
+// one, verify, roll back on failure). Only touches the GoLogin profile's proxy subresource
+// and the DB proxy columns — profile id/name (and any share link) are untouched. Picks from
+// our existing pool only; returns "no_proxy" when nothing free matches the geo (caller
+// escalates — no automatic purchase).
+export async function assignProxyToAccount(accountId: string): Promise<FixResult> {
+  const acct = await prisma.linkedInAccount.findUnique({ where: { id: accountId } });
+  if (!acct) throw new Error("Account not found");
+  if (!acct.gologinProfileId) return { outcome: "no_proxy" };
+
+  const profileId = acct.gologinProfileId;
+  const old = {
+    host: acct.proxyHost,
+    port: acct.proxyPort,
+    username: acct.proxyUsername,
+    password: acct.proxyPassword,
+  };
+
+  const exclude = old.host && old.port ? new Set([`${old.host}:${old.port}`]) : new Set<string>();
+  const picked = await pickAvailableProxy({
+    provider: "",
+    type: "",
+    country: acct.proxyLocation || acct.location,
+    exclude,
+  });
+  if (!picked || !picked.username || !picked.password) return { outcome: "no_proxy" };
+
+  const next = { host: picked.host, port: picked.port, username: picked.username, password: picked.password };
+  await gologin.updateProxy(profileId, next);
+
+  const probe = testProxy(next);
+  if (!probe.ok) {
+    // Roll back to the old proxy on the profile when there was one; leave the DB as-is.
+    if (old.host && old.port) {
+      try {
+        await gologin.updateProxy(profileId, {
+          host: old.host,
+          port: old.port,
+          username: old.username ?? undefined,
+          password: old.password ?? undefined,
+        });
+      } catch (e) {
+        console.error("assignProxyToAccount: rollback PATCH failed", accountId, e instanceof Error ? e.message : e);
+      }
+    }
+    return { outcome: "verify_failed" };
+  }
+
+  await prisma.linkedInAccount.update({
+    where: { id: acct.id },
+    data: {
+      proxyHost: next.host,
+      proxyPort: next.port,
+      proxyUsername: next.username,
+      proxyPassword: next.password,
+      proxyLocation: picked.country ?? acct.proxyLocation,
+    },
+  });
+
+  return { outcome: "swapped", newProxyHost: next.host, newProxyPort: next.port };
+}
+
 export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
   const rental = await prisma.rental.findUnique({
     where: { id: rentalId },

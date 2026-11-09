@@ -13,7 +13,7 @@ type Acct = {
   id: string; name: string; url: string | null; status: string; verified: boolean;
   createdAt: string | null; wentLiveAt: string | null; everRestricted: boolean; open: boolean; recovered: boolean; perma: boolean;
   restrictCount: number; firstRestrictedAt: string | null; lastRestrictedAt: string | null; episodes: Episode[];
-  proxyHost: string | null; proxyType: "datacenter" | "residential" | "none"; geo: "match" | "mismatch" | "unknown" | "none";
+  proxyHost: string | null; proxyType: "datacenter" | "residential" | "none"; geo: "match" | "mismatch" | "unknown" | "none"; hasProfile: boolean;
   ageMonths: number | null; rentedEver: boolean; renters: string[]; restrictedWhileRentedBy: string[]; emailDomain: string | null; cause: string; recoveryPool: boolean;
 };
 type Data = { now: number; recoveryHosts: string[]; accounts: Acct[] };
@@ -85,6 +85,36 @@ const DIMS: { key: string; label: string; fn: (a: Acct) => string | null; note?:
 ];
 
 type DrawerState = { title: string; sub: string; rows: Acct[] } | null;
+
+// Shown in the drawer's Proxy cell for a restricted account that has a GoLogin profile but
+// no proxy (its proxy was freed by the reclaim cron / manually). One click assigns a fresh
+// geo-matched proxy from the pool so recovery can proceed. Self-contained state so it never
+// disturbs the rest of the drawer.
+function AssignProxyButton({ accountId }: { accountId: string }) {
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [msg, setMsg] = useState<string>("");
+  if (state === "done") return <span style={{ font: `600 12px ${F}`, color: "#0f7a3d", whiteSpace: "nowrap" }}>✓ {msg}</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+      <button
+        disabled={state === "loading"}
+        onClick={async () => {
+          setState("loading"); setMsg("");
+          try {
+            const r = await fetch(`/api/admin/accounts/${accountId}/assign-proxy`, { method: "POST" });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) { setState("error"); setMsg(d.error || "Failed"); return; }
+            setState("done"); setMsg(d.proxyHost ? `${d.proxyHost}` : "assigned");
+          } catch { setState("error"); setMsg("Network error"); }
+        }}
+        style={{ border: "1px solid #c7d2fe", background: state === "loading" ? "#eef2ff" : "#eff3ff", color: "#2563eb", borderRadius: 7, padding: "3px 9px", font: `600 11.5px ${F}`, cursor: state === "loading" ? "default" : "pointer", whiteSpace: "nowrap" }}
+      >
+        {state === "loading" ? "Assigning…" : state === "error" ? "Retry" : "Assign proxy"}
+      </button>
+      {state === "error" && <span title={msg} style={{ font: `500 11px ${F}`, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{msg}</span>}
+    </span>
+  );
+}
 
 export default function RestrictionAnalysisPage() {
   const [data, setData] = useState<Data | null>(null);
@@ -604,7 +634,7 @@ export default function RestrictionAnalysisPage() {
                 <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(150px,1.4fr) 110px minmax(130px,1fr) minmax(120px,1fr) 70px", gap: 12, padding: "9px 20px", borderBottom: "1px solid #f0f2f5", alignItems: "center" }}>
                   <span style={{ minWidth: 0, font: `600 13px ${F}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.url ? <a href={a.url.startsWith("http") ? a.url : `https://${a.url}`} target="_blank" rel="noreferrer" style={{ color: "#0b1220" }}>{a.name}</a> : a.name}</span>
                   <span style={{ font: `700 10.5px ${F}`, padding: "2px 8px", borderRadius: 999, background: a.open ? "#fef2f2" : a.perma ? "#f1f5f9" : "#ecfdf3", color: a.open ? "#b91c1c" : a.perma ? "#475569" : "#0f7a3d", whiteSpace: "nowrap", justifySelf: "start" }}>{a.open ? "restricted" : a.perma ? "lost" : a.everRestricted ? "recovered" : a.status}</span>
-                  <span style={{ font: `500 12px ${F}`, color: a.proxyType === "datacenter" ? "#b91c1c" : "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.proxyHost || "—"}</span>
+                  <span style={{ font: `500 12px ${F}`, color: a.proxyType === "datacenter" ? "#b91c1c" : "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.proxyHost ? a.proxyHost : a.hasProfile ? <AssignProxyButton accountId={a.id} /> : "—"}</span>
                   <span style={{ font: `500 12px ${F}`, color: "#5b6779", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.cause}</span>
                   <span style={{ font: `500 12px ${F}`, color: "#5b6779", whiteSpace: "nowrap" }}>{fmtDay(a.lastRestrictedAt)}</span>
                 </div>
