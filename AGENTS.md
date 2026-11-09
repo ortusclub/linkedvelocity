@@ -86,3 +86,6 @@ use the category programme. Do not create duplicates to change the display.
 Keep Maturing, Construction and Available visible together as prominent category
 selectors above the account list, with counts. Do not bury subsequent categories
 below a long expanded list. Other/history remains a secondary view.
+
+## LV reserves eligibility — Samuel, 9 November 2026
+CC+IC operators at Apex/Ortus receive five eligible LV accounts only at Start, preferring available and falling back to accounts in use by campaigns. Do not reserve before Start. Preserve customer rentals, restrictions, holds and session locks. Feed only the eligibility boolean, never credentials or rental details. Each person has one shared 500-connection weekly allowance across all reserves and campaigns. Changing the five requires Stop then Start.

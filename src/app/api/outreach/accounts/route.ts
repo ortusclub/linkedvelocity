@@ -20,7 +20,8 @@ function keyMatches(given: string, expected: string): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const expected = (process.env.OUTREACH_ACCOUNTS_KEY || "").trim();
+  const reservesOnly = req.nextUrl.searchParams.get("purpose") === "lv-reserves";
+  const expected = (reservesOnly ? process.env.MATURING_ENGINE_TOKEN : process.env.OUTREACH_ACCOUNTS_KEY)?.trim() || "";
   const given = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (!expected || !given || !keyMatches(given, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,6 +33,8 @@ export async function GET(req: NextRequest) {
     where: { status: { not: "removed" }, linkedinUrl: { not: null }, inventoryPool: { not: "campaign" } },
     select: {
       id: true,
+      inventoryPool: true,
+      heldUntil: true,
       permanentlyRestricted: true,
       gologinProfileId: true,
       loginEmail: true,
@@ -64,6 +67,12 @@ export async function GET(req: NextRequest) {
     .filter((a) => a.gologinProfileId || a.loginEmail)
     .map((raw) => ({ ...raw, hasPassword: !!raw.accountPassword, accountPassword: undefined }))
     .map((a) => ({
+      // Eligibility only; assignment happens in Outreach when Start is clicked.
+      reserveEligible: a.inventoryPool === "main" && a.status === "available"
+        && category(a) === "available" && !a.twoFactorResetNeeded
+        && !a.restrictedAt && !a.permanentlyRestricted && a.rentals.length === 0
+        && (!a.heldUntil || a.heldUntil.getTime() <= Date.now())
+        && !!a.gologinProfileId && !!a.loginEmail && a.hasPassword,
       maturingCategory: category(a),
       maturingCategories: categories(a),
       // Why auto-start last failed to launch this account, so the Outreach board can
@@ -80,5 +89,5 @@ export async function GET(req: NextRequest) {
       rented: a.status === "rented" || a.rentals.length > 0,
     }));
 
-  return NextResponse.json({ accounts });
+  return NextResponse.json({ accounts: reservesOnly ? accounts.filter(a => a.reserveEligible) : accounts });
 }
