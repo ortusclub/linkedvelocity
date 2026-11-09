@@ -232,6 +232,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // referrer's commission both clear ~a week AFTER QC (the same maturation clock the admin
       // pipeline shows via referralMaturesAt), then monthly on the 1st. Using the same clock
       // keeps this date identical to the admin view.
+      // A restriction in the account's HISTORY still holds payment even when the live
+      // `restrictedAt` flag has momentarily dropped (a recover→re-flag sync gap) or the
+      // account just recovered but hasn't re-stabilised. The flat QC+1wk maturation clock
+      // doesn't credit restricted time, so without this the portal flips straight to
+      // "setup fee is due now" the instant an account recovers — the wrong impression for a
+      // signup that genuinely can't be paid yet. The latest restriction event decides it:
+      // still-restricted (unpaired) holds; a recovery holds for a week until it re-stabilises.
+      const restrEvents = (Array.isArray(acct?.restrictionLog) ? (acct!.restrictionLog as { at?: string; event?: string }[]) : [])
+        .filter((e) => e?.at && (e.event === "restricted" || e.event === "recovered"))
+        .sort((x, y) => new Date(x.at!).getTime() - new Date(y.at!).getTime());
+      const lastRestr = restrEvents[restrEvents.length - 1];
+      const restrictionHold = !!lastRestr && (
+        lastRestr.event === "restricted" ||
+        (lastRestr.event === "recovered" && Date.now() < new Date(lastRestr.at!).getTime() + 7 * 86400000)
+      );
       let pay: { text: string; sub?: string } | null = null;
       if (accountEnded) {
         pay = { text: "No payout — this account was retired", sub: "a permanently restricted / retired account doesn't pay out" };
@@ -241,6 +256,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         const paidCount = Array.isArray(a.monthlyPayouts) ? (a.monthlyPayouts as { kind?: string }[]).filter((p) => p?.kind !== "setup").length : 0;
         const nm = monthlyDueDate(setupPaidDate(a.paidAt, a.monthlyPayouts), paidCount);
         pay = { text: "Setup fee paid ✓", sub: nm ? `next monthly around ${fmtDate(nm.toISOString())}` : "monthly payouts continue in the first few days of each month" };
+      } else if (restrictionHold) {
+        pay = { text: "Payment on hold after a recent restriction", sub: "it resumes once the account is stable again" };
       } else if (onboarded) {
         const ready = referralMaturesAt(a); // QC + 1 week; null when not QC'd yet or already matured
         if (!a.verifiedAt) {
