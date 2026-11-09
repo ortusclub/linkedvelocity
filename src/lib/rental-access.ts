@@ -1,6 +1,7 @@
 import { paidMonthEnd } from "@/lib/shadow-handover";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
+import { revokeRentedReserves } from "@/lib/lv-reserve-revocation";
 import { shareProfile, unshareProfile, tokenForAccount, workspaceForAccount, createPublicShareLink, getPublicShareLink, deletePublicShareLink, setPublicShareLinkPaused } from "@/services/gologin";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -25,6 +26,7 @@ export async function grantRentalAccess(rentalId: string): Promise<{ shareId: st
     if (outstanding) throw new Error("Shadow handover must be scheduled before granting access");
   }
   if (rental.status === "cancelled" || rental.status === "expired") throw new Error("Rental has ended");
+  if (!rental.isShadow) await revokeRentedReserves(rental.linkedinAccountId);
   if (rental.linkedinAccount.restrictedAt || rental.linkedinAccount.twoFactorResetNeeded) throw new Error("Account is not ready for access");
   const profileId = rental.linkedinAccount.gologinProfileId;
   if (!profileId) {

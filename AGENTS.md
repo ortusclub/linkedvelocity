@@ -1,5 +1,8 @@
 # LinkedVelocity — assistant starting point
 
+## LV reserve rental trigger — Samuel, 9 November 2026
+On a real customer rental, notify the engine to stop that profile's LV reserve sending, introductions and monitoring across campaigns. Prefer the rental trigger and durable engine-local checks over LV API calls before every action. Reconcile current rental records periodically to recover missed notifications. Preserve customer access, payments, unrelated profiles and confirmed campaign history; no automatic replacement of the selected five accounts. Verify engine acknowledgement before granting new customer access.
+
 ## SoAPEX rental refresh — Samuel, 9 November 2026
 Sync only SoAPEX's Linked Velocity Rented Accounts section from Apex's actual
 LinkedVelocity rentals every four hours. Preserve other sections, assignments,

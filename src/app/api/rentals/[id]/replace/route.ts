@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { notifyReserveRental } from "@/lib/lv-reserve-revocation";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAuth } from "@/lib/auth";
@@ -186,6 +187,7 @@ export async function POST(
       throw e;
     }
     const newRentalId = swap.id;
+    if (!old.isShadow) await notifyReserveRental(newAccountId);
     const charged = swap.charged;
 
     // Stop billing the dead account (card renters). Wallet rentals have no Stripe sub.

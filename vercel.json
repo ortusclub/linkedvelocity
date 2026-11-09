@@ -4,6 +4,10 @@
   "installCommand": "npm install",
   "crons": [
     {
+      "path": "/api/cron/reconcile-lv-reserves",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/detect-deposits",
       "schedule": "* * * * *"
     },

@@ -349,6 +349,7 @@ export async function checkCryptoPayments(): Promise<WalletCheckResult[]> {
         where: { id: a.id },
         data: { status: "rented", trialEndsAt: null, listed: false },
       });
+      await (await import('@/lib/lv-reserve-revocation')).notifyReserveRental(a.id);
       promoted = true;
     }
     const rate = Number(a.paymentDailyRate || 0);

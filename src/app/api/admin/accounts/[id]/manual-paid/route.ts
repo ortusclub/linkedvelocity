@@ -31,6 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           listed: false,
         },
       });
+      await (await import('@/lib/lv-reserve-revocation')).notifyReserveRental(id);
       return NextResponse.json({ ok: true, manualPaidUntil: until, promoted: acc.status === "trial" });
     }
 
