@@ -68,6 +68,11 @@ ${selfMode ? "7. Return to this wizard, open LinkedIn’s verification link on y
 
   // Vertical-stepper primitives (match the 2FA step's look).
   const started = setup.forwardingActive; // step 1 complete: inbox verified + forwarding live + LV address provisioned
+  // LinkedIn's verification message actually reached our forwarding (a code or a confirm link).
+  // Until it does, the referrer can't truthfully tick "verified"/"primary" — and the server
+  // rejects the primary step anyway — so we gate those checkboxes on it rather than letting the
+  // referrer pre-tick and then face a silently-locked Continue button.
+  const linkReceived = demo || !!(setup.lastForwardedAt || setup.confirmUrl);
   const dot = (label: string, state: "done" | "active" | "locked") => <span style={{ width: 26, height: 26, flex: "none", borderRadius: "50%", background: state === "done" ? "#16a34a" : state === "active" ? "#0b1220" : "#c5cbd3", color: "#fff", font: "700 12.5px 'Space Grotesk', system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center" }}>{label}</span>;
   const line = () => <span style={{ flex: 1, width: 2, background: "#e3e6ea", margin: "4px 0" }} />;
   const txt = { font: "600 14.5px/1.45 'Plus Jakarta Sans', system-ui, sans-serif", color: "#0b1220" } as const;
@@ -142,7 +147,8 @@ ${selfMode ? "7. Return to this wizard, open LinkedIn’s verification link on y
                 <button type="button" className={styles.secondary} disabled={busy} onClick={() => void refresh()}>{busy ? "Checking…" : "Check for LinkedIn’s link"}</button>
               </>
             )}
-            <label className={styles.check} style={{ margin: "2px 0 0" }}><input type="checkbox" checked={linkConfirmed} onChange={e => setLinkConfirmed(e.target.checked)} /><span>It now shows as <strong>verified</strong> on LinkedIn.</span></label>
+            <label className={styles.check} style={{ margin: "2px 0 0", ...(linkReceived ? {} : { opacity: .5, cursor: "not-allowed" }) }}><input type="checkbox" checked={linkConfirmed && linkReceived} disabled={!linkReceived} onChange={e => setLinkConfirmed(e.target.checked)} /><span>It now shows as <strong>verified</strong> on LinkedIn.</span></label>
+            {!linkReceived && <div style={{ font: "500 11.5px/1.45 'Plus Jakarta Sans', system-ui, sans-serif", color: "#8a93a3" }}>You can tick this once LinkedIn’s confirmation reaches us — finish verifying on LinkedIn, then tap <strong>Check for LinkedIn’s link</strong> above.</div>}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
               <button type="button" onClick={() => setShowCode(v => !v)} style={{ border: "none", background: "none", padding: 0, font: "600 12px 'Plus Jakarta Sans', system-ui, sans-serif", color: "#15803d", cursor: "pointer" }}>{showCode ? "Hide code" : "LinkedIn asking for a code instead?"}</button>
               <button type="button" onClick={() => void restart()} disabled={busy} style={{ border: "none", background: "none", padding: 0, font: "600 12px 'Plus Jakarta Sans', system-ui, sans-serif", color: "#8a93a3", cursor: "pointer", textDecoration: "underline" }}>Use a different email</button>
@@ -167,14 +173,14 @@ ${selfMode ? "7. Return to this wizard, open LinkedIn’s verification link on y
             <div style={txt}>Make our email <strong>primary</strong></div>
             <div style={sub}>Back in LinkedIn’s Email addresses, tap <span style={{ display: "inline-block", font: "700 12px 'Plus Jakarta Sans', system-ui, sans-serif", color: "#3b4556", background: "#eef0f4", borderRadius: 999, padding: "1px 9px" }}>Make primary</span> next to our email.</div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: "9px 11px", font: "500 12.5px/1.45 'Plus Jakarta Sans', system-ui, sans-serif", color: "#9a3412" }}><b style={{ flex: "none" }}>!</b><span><b>Added isn’t enough</b> — if it’s not primary, we can’t sign in.</span></div>
-            <label className={styles.check} style={{ margin: "2px 0 0" }}><input type="checkbox" checked={primary} onChange={e => setPrimary(e.target.checked)} /><span>It shows as <strong>primary</strong> on LinkedIn, and {selfMode ? "I agree" : "the owner agrees"}.</span></label>
+            <label className={styles.check} style={{ margin: "2px 0 0", ...(linkConfirmed ? {} : { opacity: .5, cursor: "not-allowed" }) }}><input type="checkbox" checked={primary && linkConfirmed} disabled={!linkConfirmed} onChange={e => setPrimary(e.target.checked)} /><span>It shows as <strong>primary</strong> on LinkedIn, and {selfMode ? "I agree" : "the owner agrees"}.</span></label>
             <a href="https://linkedvelocity.com/account-guide-v2" target="_blank" rel="noreferrer" style={{ font: "600 12px 'Plus Jakarta Sans', system-ui, sans-serif", color: "#15803d", textDecoration: "none" }}>See it with screenshots ↗</a>
           </div>
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 18 }}>
-        <button className={styles.primary} disabled={busy || !primary || (!demo && !(setup.lastForwardedAt || setup.confirmUrl))} onClick={() => void submit({ action: "primary", consent: true })}>{primary ? "Email is primary — continue to sign-in →" : "Continue to sign-in →"}</button>
+        <button className={styles.primary} disabled={busy || !linkReceived || !linkConfirmed || !primary} onClick={() => void submit({ action: "primary", consent: true })}>{primary && linkConfirmed ? "Email is primary — continue to sign-in →" : "Continue to sign-in →"}</button>
         <p className={styles.hint} style={{ textAlign: "center" }}>Only change the primary email with the {selfMode ? "" : "owner’s "}OK. Unsure? Pause and message us.</p>
       </div>
     </>}
