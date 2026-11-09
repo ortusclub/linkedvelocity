@@ -1,5 +1,13 @@
 # LinkedVelocity — assistant starting point
 
+## SoAPEX rental refresh — Samuel, 9 November 2026
+Sync only SoAPEX's Linked Velocity Rented Accounts section from Apex's actual
+LinkedVelocity rentals every four hours. Preserve other sections, assignments,
+credentials and campaign/credit usage. At the top show the last successful
+update and next due time with timezone, plus a manual refresh button independent
+of schedule. Keep history and uncertain identities; verify source coverage.
+See `docs/soapex-rental-sync.md` for exact workbook/script identities and setup.
+
 This repository is LinkedVelocity (formerly Klabber), `ortusclub/linkedvelocity`. The live site is https://linkedvelocity.com. Start with this file and task-specific documentation rather than relying on prior chat history.
 
 ## Wise payment investigations
