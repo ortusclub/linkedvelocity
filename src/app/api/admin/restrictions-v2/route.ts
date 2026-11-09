@@ -226,9 +226,15 @@ export async function GET(req: Request) {
       // their phase, so a dead account with a lingering active rental doesn't read as Rented.
       const wasOnboarded = everRented.has(a.id) || !!app?.paidAt || app?.status === "onboarded";
       const retiredOrLost = a.status === "retired" || !!d.lostOutcome;
+      // Once an account has a real onboarded signal (setup fee paid, ever rented, or app marked
+      // onboarded) it stays "Onboarded" even while its status reads under_construction — a restricted
+      // or post-recovery account gets dropped back into construction/warm-up, but it's past onboarding,
+      // so the lifecycle chip should say so, not "Under construction" (which implies a build that never
+      // went live). Only an account with NO onboarded signal is Under construction.
       const phase = retiredOrLost ? d.phase
         : renterByAccount.has(a.id) ? PHASE.rented
-        : a.status === "unavailable" ? (wasOnboarded ? PHASE.available : PHASE.under_construction)
+        : wasOnboarded ? PHASE.available
+        : a.status === "unavailable" ? PHASE.under_construction
         : d.phase;
 
       return {
