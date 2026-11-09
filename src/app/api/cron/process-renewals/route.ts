@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { stripe } from "@/lib/stripe";
+import { createHash } from "crypto";
 import { revokeRentalAccess } from "@/lib/rental-access";
 import {
   sendRenewalReminder3dBatch,
@@ -187,14 +188,22 @@ export async function POST(req: NextRequest) {
       where: { shadowExitAt: null, usdcPayment: true, stripeSubscriptionId: null, status: "active", autoRenew: true, currentPeriodEnd: { lte: now }, linkedinAccount: { restrictedAt: null } },
       include: { user: true, linkedinAccount: true },
     });
+    // Collect per rental: wallet draws down immediately (per rental), but CARD charges are grouped
+    // and billed as ONE consolidated PaymentIntent per renter below. Firing many identical small
+    // charges at the same card in the same second trips issuer velocity / duplicate-charge controls
+    // and some get declined; one charge for the total does not. Accounting stays per account (one
+    // transaction row + one confirmation email each).
+    type DueRow = (typeof dueUsdc)[number];
+    const cardQueue = new Map<string, DueRow[]>(); // userId -> rentals to bill on the saved card
+    const toGrace: DueRow[] = []; // couldn't collect (no wallet, no card, or the card charge failed)
+
     for (const r of dueUsdc) {
       const price = r.lockedPrice ?? r.linkedinAccount.monthlyPrice;
-      const base = r.currentPeriodEnd && r.currentPeriodEnd > now ? new Date(r.currentPeriodEnd) : now;
-      const nextPeriodEnd = new Date(base.getFullYear(), base.getMonth() + 1, base.getDate());
-      let renewed = false;
 
-      // a) Wallet — if the balance fully covers the price, draw it down.
+      // a) Wallet — if the balance fully covers the price, draw it down (per rental).
       if (r.user.usdcBalance.greaterThanOrEqualTo(price)) {
+        const base = r.currentPeriodEnd && r.currentPeriodEnd > now ? new Date(r.currentPeriodEnd) : now;
+        const nextPeriodEnd = new Date(base.getFullYear(), base.getMonth() + 1, base.getDate());
         await prisma.$transaction(async (tx) => {
           await tx.user.update({ where: { id: r.userId }, data: { usdcBalance: { decrement: price } } });
           await tx.rental.update({
@@ -211,12 +220,13 @@ export async function POST(req: NextRequest) {
         });
         try { await sendRenewalConfirmation(r.user.email, r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
         result.renewed++;
-        renewed = true;
-      } else if (r.user.stripeCustomerId && r.user.stripePaymentMethodId) {
-        // Never charge a card without prior notice. If this rental somehow became due without a
-        // pre-charge reminder (e.g. the cron missed the 3-day window), send it now and DEFER the
-        // charge to a later run — notice must always come first. Normal flow: section 0 already
-        // sent it 3 days ago, so heads_up is present here and we charge straight through.
+        continue;
+      }
+
+      // b) Wallet short — bill the saved card. Never charge without prior notice: if the heads-up
+      // hasn't gone out (e.g. the cron missed the 3-day window), send it now and DEFER to a later
+      // run. Otherwise queue it for this renter's ONE consolidated card charge below.
+      if (r.user.stripeCustomerId && r.user.stripePaymentMethodId) {
         const remindedC = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
         if (!remindedC.includes("heads_up")) {
           try {
@@ -226,78 +236,115 @@ export async function POST(req: NextRequest) {
           } catch (e) { console.error(e); }
           continue; // defer the charge to the next run — no grace/revoke this pass
         }
-        // b) Wallet short — charge the saved card on file off-session. The idempotency key is
-        // scoped to (rental, period) so a retry (or a crash after the Stripe charge but before
-        // our DB write) can never double-charge the same renewal.
-        let ok = false;
-        try {
-          const pi = await stripe.paymentIntents.create(
-            {
-              amount: Math.round(Number(price) * 100),
-              currency: "usd",
-              customer: r.user.stripeCustomerId,
-              payment_method: r.user.stripePaymentMethodId,
-              off_session: true,
-              confirm: true,
-              description: `Monthly renewal for ${r.linkedinAccount.linkedinName}`,
-              metadata: { rentalId: r.id, userId: r.userId, type: "rental_card_renewal" },
-            },
-            { idempotencyKey: `renew_${r.id}_${base.getTime()}` }
-          );
-          ok = pi.status === "succeeded";
-        } catch (e) {
-          // Card declined / needs authentication — leave `ok` false so it drops into grace.
-          console.error("card renewal charge failed", r.id, e instanceof Error ? e.message : e);
-        }
-        if (ok) {
-          await prisma.$transaction(async (tx) => {
-            await tx.rental.update({
-              where: { id: r.id },
-              data: { currentPeriodEnd: nextPeriodEnd, renewalRemindersSent: [] as unknown as Prisma.InputJsonValue },
-            });
-            await tx.transaction.create({
-              data: {
-                userId: r.userId, type: "rental_payment",
-                amount: new Prisma.Decimal(price).negated(), rentalId: r.id,
-                description: `Monthly renewal (card ••${r.user.cardLast4 ?? ""}) for ${r.linkedinAccount.linkedinName}`,
-              },
-            });
-          });
-          try { await sendRenewalConfirmation(r.user.email, r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
-          result.renewed++;
-          result.cardRenewed++;
-          renewed = true;
-        }
+        const arr = cardQueue.get(r.userId) ?? [];
+        arr.push(r);
+        cardQueue.set(r.userId, arr);
+        continue;
       }
 
-      // c) Neither wallet nor card covered it. Don't cut access on the first miss — keep the
-      // account ON and let the cron keep retrying (the rental stays "active" and still due, so
-      // every run re-attempts and collects the moment the wallet is funded or the card clears).
-      // Only give up, revoke + release once we're USDC_GRACE_DAYS past the period end. During
-      // grace we send the soft "payment hiccup" email once (not the hard revoke one); the marker
-      // clears on a successful charge (renewalRemindersSent is reset to []).
-      if (!renewed) {
-        const periodEnd = r.currentPeriodEnd ? new Date(r.currentPeriodEnd) : now;
-        const graceCutoff = new Date(periodEnd.getTime() + USDC_GRACE_DAYS * DAY);
-        const sent = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
-        if (now >= graceCutoff) {
-          // Grace exhausted — revoke access and mark "expired" so the release pass (section 3)
-          // cuts access and pulls the account into the after-rental reset, matching the lapse path.
-          await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
-          // Pause (not delete) the public link — the account is held for the reclaim window,
-          // so a renter who re-pays regains access on grant without a fresh link.
-          try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
-          try { await sendAccessRevokedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`, fmtDate(graceCutoff), r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
-          teamEvents.push({ kind: "revoked", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `unpaid since ${fmtDate(periodEnd)}` });
-          result.failed++;
-        } else {
-          if (!sent.includes("payment_hiccup")) {
-            try { await sendPaymentFailedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`); } catch (e) { console.error(e); }
-            await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "payment_hiccup"] as unknown as Prisma.InputJsonValue } });
-            teamEvents.push({ kind: "grace", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `retrying, grace to ${fmtDate(graceCutoff)}` });
+      // c) No wallet and no card on file — fall into the dunning grace below.
+      toGrace.push(r);
+    }
+
+    // One consolidated card charge per renter for all their due card-on-file renewals. The
+    // idempotency key is derived from the exact (rental, period) set, so a re-run with the same
+    // dues returns the SAME PaymentIntent (never a second charge). The per-renter DB writes are a
+    // single atomic transaction, so a crash leaves the group unchanged and the retry re-settles
+    // against that same PaymentIntent. A whole-charge decline drops every rental in the group into
+    // grace together — nobody is cut on a single decline that's still within their window.
+    for (const [userId, rentals] of cardQueue) {
+      const u = rentals[0].user;
+      const totalCents = rentals.reduce((s, r) => s + Math.round(Number(r.lockedPrice ?? r.linkedinAccount.monthlyPrice) * 100), 0);
+      const idemSeed = rentals
+        .map((r) => `${r.id}:${(r.currentPeriodEnd && r.currentPeriodEnd > now ? new Date(r.currentPeriodEnd) : now).getTime()}`)
+        .sort()
+        .join("|");
+      const idemKey = `renewgrp_${userId}_${createHash("sha1").update(idemSeed).digest("hex").slice(0, 16)}`;
+
+      let ok = false;
+      try {
+        const pi = await stripe.paymentIntents.create(
+          {
+            amount: totalCents,
+            currency: "usd",
+            customer: u.stripeCustomerId!,
+            payment_method: u.stripePaymentMethodId!,
+            off_session: true,
+            confirm: true,
+            description: rentals.length === 1
+              ? `Monthly renewal for ${rentals[0].linkedinAccount.linkedinName}`
+              : `Monthly renewal — ${rentals.length} accounts (card ••${u.cardLast4 ?? ""})`,
+            metadata: { userId, type: "rental_card_renewal", count: String(rentals.length), rentalIds: rentals.map((r) => r.id).join(",").slice(0, 480) },
+          },
+          { idempotencyKey: idemKey }
+        );
+        ok = pi.status === "succeeded";
+      } catch (e) {
+        // Whole charge declined / needs auth — leave ok false so the group drops into grace.
+        console.error("consolidated card renewal charge failed", userId, rentals.length, e instanceof Error ? e.message : e);
+      }
+
+      if (ok) {
+        try {
+          await prisma.$transaction(async (tx) => {
+            for (const r of rentals) {
+              const price = r.lockedPrice ?? r.linkedinAccount.monthlyPrice;
+              const base = r.currentPeriodEnd && r.currentPeriodEnd > now ? new Date(r.currentPeriodEnd) : now;
+              const nextPeriodEnd = new Date(base.getFullYear(), base.getMonth() + 1, base.getDate());
+              await tx.rental.update({
+                where: { id: r.id },
+                data: { currentPeriodEnd: nextPeriodEnd, renewalRemindersSent: [] as unknown as Prisma.InputJsonValue },
+              });
+              await tx.transaction.create({
+                data: {
+                  userId, type: "rental_payment",
+                  amount: new Prisma.Decimal(price).negated(), rentalId: r.id,
+                  description: `Monthly renewal (card ••${u.cardLast4 ?? ""}) for ${r.linkedinAccount.linkedinName}`,
+                },
+              });
+            }
+          });
+          for (const r of rentals) {
+            try { await sendRenewalConfirmation(u.email, r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
+            result.renewed++;
+            result.cardRenewed++;
           }
-          result.graced++;
+        } catch (e) {
+          // Charge succeeded but our DB write didn't — do NOT grace (money was taken). The same
+          // dues stay unmarked, so the next run rebuilds the identical group, the idempotency key
+          // returns this same PaymentIntent (no second charge), and the DB write is retried.
+          console.error("consolidated renewal: charge ok but DB write failed, reconciling next run", userId, e instanceof Error ? e.message : e);
         }
+      } else {
+        for (const r of rentals) toGrace.push(r);
+      }
+    }
+
+    // c) Dunning grace for everything we couldn't collect. Don't cut access on the first miss —
+    // keep the account ON and retry each run (the rental stays "active" and still due). Only give
+    // up, revoke + release once we're USDC_GRACE_DAYS past the period end. During grace we send the
+    // soft "payment hiccup" email once; the marker clears on a successful charge (reset to []).
+    for (const r of toGrace) {
+      const periodEnd = r.currentPeriodEnd ? new Date(r.currentPeriodEnd) : now;
+      const graceCutoff = new Date(periodEnd.getTime() + USDC_GRACE_DAYS * DAY);
+      const sent = Array.isArray(r.renewalRemindersSent) ? (r.renewalRemindersSent as string[]) : [];
+      if (now >= graceCutoff) {
+        // Grace exhausted — revoke access and mark "expired" so the release pass (section 3) cuts
+        // access and pulls the account into the after-rental reset, matching the lapse path.
+        await prisma.rental.update({ where: { id: r.id }, data: { status: "expired" } });
+        // Pause (not delete) the public link — the account is held for the reclaim window, so a
+        // renter who re-pays regains access on grant without a fresh link.
+        try { await revokeRentalAccess(r.id, { publicLink: "pause" }); } catch (e) { console.error("revoke on grace exhausted", r.id, e); }
+        try { await sendAccessRevokedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`, fmtDate(graceCutoff), r.linkedinAccount.linkedinName); } catch (e) { console.error(e); }
+        teamEvents.push({ kind: "revoked", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `unpaid since ${fmtDate(periodEnd)}` });
+        result.failed++;
+      } else {
+        if (!sent.includes("payment_hiccup")) {
+          try { await sendPaymentFailedEmail(r.user.email, firstNameOf(r.user.fullName), `${APP_URL}/api/rentals/${r.id}/renew`); } catch (e) { console.error(e); }
+          await prisma.rental.update({ where: { id: r.id }, data: { renewalRemindersSent: [...sent, "payment_hiccup"] as unknown as Prisma.InputJsonValue } });
+          teamEvents.push({ kind: "grace", renter: r.user.fullName || r.user.email, account: r.linkedinAccount.linkedinName, note: `retrying, grace to ${fmtDate(graceCutoff)}` });
+        }
+        result.graced++;
       }
     }
 
