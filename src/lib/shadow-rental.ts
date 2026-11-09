@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { notifyReserveRental } from "@/lib/lv-reserve-revocation";
 import { scheduleShadowHandover } from "@/lib/shadow-handover";
 
 // Per-renter flat monthly rate. A shadow renter pays this per idle account instead of the
@@ -44,5 +45,6 @@ export async function activeShadowAccountIds(): Promise<Set<string>> {
 // Reserve seven days for the current shadow renter. Called after creating a real rental;
 // retries are safe, and the auto-grant job recovers any interrupted checkout scheduling.
 export async function yieldShadowRentals(accountId: string, opts?: { reason?: string }): Promise<number> {
+  await notifyReserveRental(accountId);
   return scheduleShadowHandover(accountId, opts?.reason);
 }

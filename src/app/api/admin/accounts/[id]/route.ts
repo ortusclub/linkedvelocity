@@ -429,6 +429,7 @@ export async function PATCH(
     }
 
     // Return decrypted secrets so the admin UI shows the real values, not ciphertext.
+    if (account.status === 'rented') await (await import('@/lib/lv-reserve-revocation')).notifyReserveRental(account.id);
     account.accountPassword = decryptSecret(account.accountPassword);
     account.twoFactor = decryptSecret(account.twoFactor);
     return NextResponse.json({ account, ...(notify ? { notify } : {}) });
