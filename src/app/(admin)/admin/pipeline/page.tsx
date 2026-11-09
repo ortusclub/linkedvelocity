@@ -198,7 +198,9 @@ export default function PipelineNewPage() {
   // open up right here — matched back to the app by its LinkedIn URL and an "Owner: email"
   // note. For an app with no account yet (nothing matched), so it can't create a duplicate.
   const createAccount = async (r: Row) => {
-    if (r.accountId) return; setBusy(r.id);
+    if (r.accountId) return;
+    if (!r.linkedinUrl || !r.linkedinUrl.trim()) { alert("Add the applicant's LinkedIn URL first — it's required to create their account."); return; }
+    setBusy(r.id);
     try {
       const res = await fetch("/api/admin/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
         linkedinName: formatName(r.fullName) || r.fullName || r.email,

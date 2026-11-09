@@ -47,6 +47,10 @@ export default function DIYPage() {
       setError("Please add your name, email and a contact number so we can reach you.");
       return;
     }
+    if (!form.linkedinUrl.trim() || !/linkedin\.com/i.test(form.linkedinUrl)) {
+      setError("Please add your LinkedIn profile URL (e.g. linkedin.com/in/yourprofile).");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/ambassador/apply", {
@@ -56,7 +60,7 @@ export default function DIYPage() {
           fullName: form.fullName.trim(),
           email: form.email.trim(),
           contactNumber: `${form.contactMethod}:${form.contactHandle.trim()}`,
-          linkedinUrl: form.linkedinUrl.trim() || undefined,
+          linkedinUrl: form.linkedinUrl.trim(),
           referredBy: ref || "diy",
           referralSource: "DIY page",
           diyTier: tier,
@@ -166,7 +170,7 @@ export default function DIYPage() {
                   </div>
                   <div style={{ marginBottom: 20 }}>
                     <label style={label}>LinkedIn profile URL <span style={{ fontWeight: 400, color: "#96A0AD" }}>(optional)</span></label>
-                    <input style={inp} value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} placeholder="linkedin.com/in/yourprofile" />
+                    <input style={inp} value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} placeholder="linkedin.com/in/yourprofile" required />
                   </div>
 
                   {error && <div style={{ fontSize: 13.5, color: "#C0392B", marginBottom: 14 }}>{error}</div>}
