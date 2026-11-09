@@ -107,8 +107,29 @@ model User {
   transactions      Transaction[]
   depositAddress    DepositAddress?
   person            Person?
+  claimedTasks      AdminTask[]     @relation("TaskClaimer")
 
   @@map("users")
+}
+
+// Human state for the dashboard To-do worklist. The tasks themselves are DERIVED
+// live from signals (failed payments, apps to review, idle accounts, …) in
+// src/lib/admin-tasks.ts; this table only persists who claimed/assigned a task and
+// whether it's done, keyed by a stable taskKey. When the underlying signal clears,
+// the derived task disappears and its row here becomes inert (ignored, no match).
+model AdminTask {
+  id          String    @id @default(cuid())
+  taskKey     String    @unique @map("task_key") // stable identity, e.g. "failed-payment:<rentalId>"
+  status      String    @default("open")         // open | claimed | done
+  claimedById String?   @map("claimed_by_id") @db.Uuid
+  claimedBy   User?     @relation("TaskClaimer", fields: [claimedById], references: [id])
+  claimedAt   DateTime? @map("claimed_at")
+  doneAt      DateTime? @map("done_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("admin_tasks")
 }
 
 // Admin-managed voucher / discount codes applied at checkout (and locked onto the rental
