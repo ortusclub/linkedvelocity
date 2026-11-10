@@ -151,22 +151,22 @@ export async function GET(_req: NextRequest) {
       const rentedMs = rentedMsByAccount.get(a.id) ?? 0;
       const earnedTotal = Math.max(0, Math.round(((cryptoByAccount.get(a.id) ?? 0) + (txnByAccount.get(a.id) ?? 0)) * 100) / 100);
       // "Ready to promote" — a construction account that has earned its way to Available:
-      // ≥1 month old, ≥2 weeks maturing with NO restriction in that window (survived the
-      // weed-out), ≥100 connections, setup fee paid, and every rental-ready AUTO check
-      // passing (not restricted, 2FA not pending, proxy assigned, no leftover GoLogin share).
-      // The manual housekeeping ticks are NOT required here — they matter for accounts coming
-      // off a renter, not ones we built; listing still runs the full gated flip. Surfaced as a
-      // flag so the operator can one-click list from inventory instead of accounts sitting in
-      // Construction forever (Sam, 2026-11-10).
-      const matStart = a.maturingStartedAt ? new Date(a.maturingStartedAt).getTime() : 0;
+      // ≥1 month old, ≥100 connections, NO restriction in the last 14 days (durable — survived
+      // the recent risky window), setup fee paid, and every rental-ready AUTO check passing (not
+      // restricted, 2FA not pending, proxy assigned, no leftover GoLogin share).
+      // NOTE: we deliberately do NOT gate on maturing-run duration (maturing_started_at). That
+      // clock RESETS on every re-enrolment, so it undercounts how long an account has really been
+      // maturing and starved this list to zero right after a cohort restart (Sam, 2026-11-10).
+      // "No restriction in 14d" + ≥1mo age is the durability signal instead.
+      // The manual housekeeping ticks are NOT required here — they matter for accounts coming off a
+      // renter, not ones we built; listing still runs the full gated flip.
       const restrLog = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string; event?: string }[]) : [];
-      const restrictedDuringMaturing = matStart > 0 && restrLog.some((e) => e?.event === "restricted" && Date.parse(e.at || "") >= matStart);
+      const restrictedRecently = restrLog.some((e) => e?.event === "restricted" && now - Date.parse(e.at || "") < 14 * DAY);
       const readyToPromote =
         ["under_construction", "construction_immature"].includes(a.status) &&
         now - new Date(a.createdAt).getTime() >= 30 * DAY &&
-        matStart > 0 && now - matStart >= 14 * DAY &&
         (a.connectionCount ?? 0) >= 100 &&
-        !restrictedDuringMaturing &&
+        !restrictedRecently &&
         rentalReadyAuto({ ...a, gologinShared: gologinSharedSet.has(a.id) }).length === 0 &&
         (app ? !!app.paidAt : true);
       return {
