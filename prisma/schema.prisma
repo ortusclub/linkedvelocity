@@ -800,8 +800,12 @@ model Person {
   source         String?
   pocOwner       String?   @map("poc_owner")                         // 'Ardi'|'Milee'|'Sam'|null
   followUp       DateTime? @map("follow_up")
-  leadStage      String?   @map("lead_stage")                        // 'warm'|'cold'|null
+  leadStage      String?   @map("lead_stage")                        // CRM temperature override: 'hot'|'warm'|'cold'|null (null = auto from recency); legacy values 'warm'|'cold'
   statusOverride String?   @map("status_override")                   // 'renting'|'dormant'|null — admin pin, beats derived status (off-platform renters, ghosts)
+  nextStep       String?   @map("next_step")                         // CRM sales lens: the next action text (pairs with followUp as its due date)
+  interest       String?                                             // what the contact wants to rent — free text (sales lens)
+  dealValue      Int?      @map("deal_value")                        // $/mo potential for a lead (sales lens)
+  direction      String?                                             // 'in' (they reached out) | 'out' (we reached out) | null
   isTest         Boolean   @default(false) @map("is_test")           // leads only; linked persons use User.isTest
   notes          String?
   lastActivityAt DateTime  @default(now()) @map("last_activity_at")
