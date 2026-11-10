@@ -242,6 +242,11 @@ model LinkedInAccount {
   maturingStalledReason String?       @map("maturing_stalled_reason") // AUTO: short human reason for the stall (e.g. "login / identity review"), shown in the ⚠️ badge tooltip.
   maturingStartFailedAt DateTime?     @map("maturing_start_failed_at") // AUTO (auto-start-maturing cron): set when start() THREW for this account (engine couldn't launch a campaign — e.g. the profile can't log in). Makes the cron SKIP it for a cooldown so it advances to startable accounts instead of re-hitting the same failing ones every tick. Cleared on a successful start or when it's rented/restricted. Also surfaces in the ⚠️ attention list.
   maturingStartFailedReason String?   @map("maturing_start_failed_reason") // AUTO: short reason the start failed (first line of the engine error), for the ⚠️ badge tooltip.
+  // MANUAL operator flag from the maturing tracker (Gigi/Milee report what they SEE on an account,
+  // separate from the auto engine flags above). { kind: 'logged_out'|'relogin'|'identity'|'paused'|'other', note?, by, at }.
+  // Surfaces the account in the tracker's Needs-review and (except 'other') drops it from the live maturing count.
+  // 'restricted' is NOT stored here — that goes through the real restriction flow (restrictedAt).
+  maturingFlag          Json?         @map("maturing_flag")
   profileBuild          Json?         @map("profile_build") // Level-4 generated profile (headline/about/2 past PH roles/PH school/US location) to copy-paste into LinkedIn
   // admin-set (from the Replacements workqueue): LinkedIn restriction is permanent — the
   // account can't be recovered. Renters see "Permanently restricted" and can only replace it.
