@@ -59,7 +59,7 @@ export async function GET() {
     const buckets: Record<string, { total: number; maturing: number; stalled: number; startFailed: number; notEnrolled: number }> = {
       Available: { total: 0, maturing: 0, stalled: 0, startFailed: 0, notEnrolled: 0 },
       Construction: { total: 0, maturing: 0, stalled: 0, startFailed: 0, notEnrolled: 0 },
-      "Level-4 (other)": { total: 0, maturing: 0, stalled: 0, startFailed: 0, notEnrolled: 0 },
+      "Pipeline": { total: 0, maturing: 0, stalled: 0, startFailed: 0, notEnrolled: 0 },
     };
     const needsReview: Row[] = [];
     const maturing: Row[] = [];
@@ -91,10 +91,16 @@ export async function GET() {
         continue; // restricted accounts are a separate recovery concern, never "eligible maturing"
       }
 
+      // Not-maturable account statuses never belong in the maturing tracker, even when the
+      // application is verified (Level-4): a returned ('unavailable'), retired, or in-maintenance
+      // account isn't ours to mature. Without this a retired account with a verified app shows as
+      // an eligible "Level-4" row. auto-start already excludes these; reconcile stops their runs.
+      if (["unavailable", "retired", "maintenance"].includes(a.status)) continue;
+
       const eligible = pipeline || group === "Construction" || group === "Available";
       if (!eligible || rented) continue;
 
-      const bkey = group === "Construction" || group === "Available" ? group : "Level-4 (other)";
+      const bkey = group === "Construction" || group === "Available" ? group : "Pipeline";
       const b = buckets[bkey];
       b.total++;
 
@@ -124,7 +130,7 @@ export async function GET() {
         b.notEnrolled++;
         const detail = !validUrl(a.linkedinUrl)
           ? "No valid LinkedIn URL on the account — add it in Inventory so maturing can start."
-          : "Queued for auto-start. The system switches on a few accounts at a time (on purpose, to avoid restrictions), so this is just waiting its turn — nothing is wrong with it.";
+          : "Queued for auto-start. The system switches on a few accounts at a time, so this is just waiting its turn — nothing is wrong with it.";
         needsReview.push({ ...base, reason: "not-enrolled", detail: detail + dueSuffix, since: null });
       }
     }
@@ -133,8 +139,8 @@ export async function GET() {
     needsReview.sort((x, y) => (order[x.reason] ?? 9) - (order[y.reason] ?? 9) || (x.connections ?? 1e9) - (y.connections ?? 1e9));
     maturing.sort((x, y) => (y.since || "").localeCompare(x.since || ""));
 
-    const eligibleTotal = buckets.Available.total + buckets.Construction.total + buckets["Level-4 (other)"].total;
-    const maturingTotal = buckets.Available.maturing + buckets.Construction.maturing + buckets["Level-4 (other)"].maturing;
+    const eligibleTotal = buckets.Available.total + buckets.Construction.total + buckets["Pipeline"].total;
+    const maturingTotal = buckets.Available.maturing + buckets.Construction.maturing + buckets["Pipeline"].maturing;
 
     return NextResponse.json(
       { updatedAt: new Date().toISOString(), buckets, needsReview, maturing, restrictedCount, restrictedSample,
