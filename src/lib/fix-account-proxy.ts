@@ -37,6 +37,9 @@ export async function assignProxyToAccount(accountId: string): Promise<FixResult
   if (!acct.gologinProfileId) return { outcome: "no_proxy" };
 
   const profileId = acct.gologinProfileId;
+  // Proxy PATCHes must use the token for the GoLogin account that hosts this profile:
+  // the master token gets 401 on "klabber"-hosted profiles (and vice-versa).
+  const token = gologin.tokenForAccount(acct.gologinAccount);
   const old = {
     host: acct.proxyHost,
     port: acct.proxyPort,
@@ -54,7 +57,7 @@ export async function assignProxyToAccount(accountId: string): Promise<FixResult
   if (!picked || !picked.username || !picked.password) return { outcome: "no_proxy" };
 
   const next = { host: picked.host, port: picked.port, username: picked.username, password: picked.password };
-  await gologin.updateProxy(profileId, next);
+  await gologin.updateProxy(profileId, next, token);
 
   const probe = testProxy(next);
   if (!probe.ok) {
@@ -66,7 +69,7 @@ export async function assignProxyToAccount(accountId: string): Promise<FixResult
           port: old.port,
           username: old.username ?? undefined,
           password: old.password ?? undefined,
-        });
+        }, token);
       } catch (e) {
         console.error("assignProxyToAccount: rollback PATCH failed", accountId, e instanceof Error ? e.message : e);
       }
@@ -100,6 +103,8 @@ export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
   if (!acct.gologinProfileId) return { outcome: "no_proxy" };
 
   const profileId = acct.gologinProfileId;
+  // Use the token for the GoLogin account that hosts this profile (see assignProxyToAccount).
+  const token = gologin.tokenForAccount(acct.gologinAccount);
   const old = {
     host: acct.proxyHost,
     port: acct.proxyPort,
@@ -120,7 +125,7 @@ export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
   const next = { host: picked.host, port: picked.port, username: picked.username, password: picked.password };
 
   // Swap on the LIVE profile (share link unaffected — see note above).
-  await gologin.updateProxy(profileId, next);
+  await gologin.updateProxy(profileId, next, token);
 
   // Verify the new proxy is actually alive before we commit it to the DB.
   const probe = testProxy(next);
@@ -133,7 +138,7 @@ export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
           port: old.port,
           username: old.username ?? undefined,
           password: old.password ?? undefined,
-        });
+        }, token);
       } catch (e) {
         console.error("fixAccountProxy: rollback PATCH failed", rentalId, e instanceof Error ? e.message : e);
       }

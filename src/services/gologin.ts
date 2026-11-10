@@ -109,7 +109,8 @@ export async function deleteProfile(profileId: string, token?: string) {
 
 export async function updateProxy(
   profileId: string,
-  proxy: { host: string; port: number; username?: string; password?: string }
+  proxy: { host: string; port: number; username?: string; password?: string },
+  token?: string
 ) {
   return gologinFetch(`/browser/${profileId}/proxy`, {
     method: "PATCH",
@@ -120,7 +121,7 @@ export async function updateProxy(
       username: proxy.username,
       password: proxy.password,
     }),
-  });
+  }, token);
 }
 
 export async function addCookies(profileId: string, cookies: object[]) {
