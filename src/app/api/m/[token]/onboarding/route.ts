@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { currencyConfig } from "@/lib/referral-currency";
 import { selfServiceInput, selfServiceAction, selfServiceHandoff, selfServiceConfirm } from "@/lib/self-service-input";
+import { formatName } from "@/lib/format-name";
 import { proxyPurchaseLimits } from "@/services/proxy-cheap";
 import { emailSetupConfig, EmailSetupError } from "@/lib/onboarding-email-policy";
 import { requireEmailSetup } from "@/lib/onboarding-email";
@@ -81,7 +82,7 @@ export async function POST(req: Request, context: Context) {
       const id = await adoptOnboarding(me, appId);
       return json({ session: await onboardingSummary(id, me.id) });
     }
-    const parsed = selfServiceInput.safeParse(body);
+    const parsed = selfServiceInput.safeParse(body && typeof body === "object" && typeof (body as { fullName?: unknown }).fullName === "string" ? { ...body, fullName: formatName((body as { fullName: string }).fullName) } : body);
     if (!parsed.success) return json({ error: parsed.error.issues[0]?.message || "Please check the details." }, 400);
     const id = await reserveOnboarding(me, parsed.data);
     return json({ session: await onboardingSummary(id, me.id) });
