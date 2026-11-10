@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CurrencySelector, useDisplayCurrency } from "@/components/display-currency";
 import { balancePair, configuredText, configuredOffer, offerPair, offerRange } from "@/lib/display-currency";
 import { CURRENCY_CONFIG } from "@/lib/referral-currency";
+import { onboardingEta } from "@/lib/onboarding-eta";
 import UnlockGuide, { type ScreenId } from "./unlock-guide";
 
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
@@ -324,7 +325,10 @@ export default function Portal({ token }: { token: string }) {
   // verified). The right-hand "onboard yourself" card advertises the uplift between them.
   const formBase = config.referralTiers.referral;
   const formTop = config.referralTiers.computer.verified;
-  const queueText = queueCount >= 100 ? "100+" : String(queueCount);
+  // Live onboarding backlog → honest wait estimate, used to steer referrers off the passive form
+  // (we do all the setup, slowest) and toward the guided flow where they do email/2FA themselves.
+  const eta = onboardingEta(queueCount);
+  const queueText = eta.queueText;
   const setupOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].setupAmount, actualCurrency, preference.currency);
   const monthlyOffer = configuredOffer(CURRENCY_CONFIG[actualCurrency].monthlyAmount, actualCurrency, preference.currency);
   const firstName = me.name.split(" ")[0];
@@ -532,13 +536,19 @@ export default function Portal({ token }: { token: string }) {
               </div>
             </div>
 
-            {/* send the form */}
+            {/* send the form — the slow, hands-off path: they join the team's queue and we do all the
+                setup. Framed as the fallback, with the live queue cost, to push the guided flow above. */}
             <div style={card}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 5 }}>
                 <div style={{ font: `700 15.5px/1.3 ${JAK}`, color: C.ink }}>Just send them the form</div>
-                <span style={{ marginLeft: "auto", flex: "none", font: `700 11px ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, padding: "5px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>{baseD}</span>
+                <span style={{ marginLeft: "auto", flex: "none", font: `700 11px ${JAK}`, color: C.muted, background: C.inputBg, border: `1px solid ${C.inputBorder}`, padding: "5px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>Lowest · {baseD}</span>
               </div>
-              <p style={{ font: `500 13px/1.5 ${JAK}`, color: C.slate, margin: "0 0 13px" }}>Can&apos;t onboard them now? They fill in your form and a LinkedVelocity team member takes it from there.</p>
+              <p style={{ font: `500 13px/1.5 ${JAK}`, color: C.slate, margin: "0 0 11px" }}>Can&apos;t onboard them now? They fill in your form and wait for a {brand} team member to set up the email, 2FA and sign-in. It&apos;s the slowest route and pays the least.</p>
+              {/* live queue cost — how long the team queue really is right now */}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, background: eta.busy ? C.warnBg : C.inputBg, border: `1px solid ${eta.busy ? C.warnBorder : C.inputBorder}`, borderRadius: 11, padding: "10px 12px", marginBottom: 11 }}>
+                <span style={{ width: 7, height: 7, borderRadius: 999, flex: "none", background: eta.busy ? "#d97706" : "#16a34a" }} />
+                <span style={{ font: `600 12.5px/1.4 ${JAK}`, color: C.slate }}><b style={{ color: C.ink }}>~{queueText} ahead</b> in our onboarding queue{eta.busy ? ", busier than usual" : ""} · about {eta.wait} to onboard.</span>
+              </div>
               <div style={{ display: "flex", gap: 9 }}>
                 <button onClick={copyLink} style={{ flex: 1, font: `700 13.5px ${JAK}`, color: C.ink, background: "#f1f3f6", border: `1px solid ${C.inputBorder}`, padding: 13, borderRadius: 12, cursor: "pointer" }}>{linkCopied ? "Copied ✓" : "Send my link"}</button>
                 <button onClick={() => setQrOpen(true)} style={{ flex: 1, font: `700 13.5px ${JAK}`, color: C.ink, background: "#f1f3f6", border: `1px solid ${C.inputBorder}`, padding: 13, borderRadius: 12, cursor: "pointer" }}>Show my QR</button>
@@ -547,6 +557,9 @@ export default function Portal({ token }: { token: string }) {
                 <span style={{ font: `700 13px ${JAK}`, color: "#c2410c", flex: "none" }}>!</span>
                 <span style={{ font: `600 12.5px/1.45 ${JAK}`, color: C.warn }}>A form with no booked call almost never gets onboarded — and unonboarded means unpaid. Stay with them until a call is picked.</span>
               </div>
+              {/* the faster alternative: do email + 2FA with them now, skip the queue, earn more */}
+              <button onClick={() => setReadyOpen(true)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 11, font: `700 13.5px ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, padding: 13, borderRadius: 12, cursor: "pointer" }}>Faster: do the email + 2FA with them now →</button>
+              <div style={{ font: `500 11.5px/1.45 ${JAK}`, color: C.muted, textAlign: "center", marginTop: 7 }}>5 minutes on their phone, they skip the queue, and you earn up to {fmtAmt(formTop)}.</div>
               <div style={{ marginTop: 11, paddingTop: 11, borderTop: `1px solid ${C.line2}`, font: `500 12px ${JAK}`, color: C.slate }}>Can&apos;t scan? Give them your code: <b style={{ font: `700 13px ${GRO}`, color: C.ink }}>{me.slug}</b></div>
             </div>
 

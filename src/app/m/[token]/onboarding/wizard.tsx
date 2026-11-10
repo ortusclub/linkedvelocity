@@ -6,6 +6,7 @@ import { OnboardingPrice } from "@/components/onboarding-price";
 import { CurrencySelector, useDisplayCurrency } from "@/components/display-currency";
 import { configuredText, configuredOffer, offerRange } from "@/lib/display-currency";
 import { type CurrencyConfig, currencyConfig } from "@/lib/referral-currency";
+import { onboardingEta } from "@/lib/onboarding-eta";
 import styles from "./wizard.module.css";
 import { countries, countryCode } from "@/lib/countries";
 import BrowserStep from "./browser-step";
@@ -54,7 +55,7 @@ const PAGE_TOURS: Record<string, TourStep[]> = {
     { title: "Handing it to us", body: "No computer, so you're handing the sign-in to our team. Set a temporary password with the owner below. They still get paid the same; you earn a little less than the laptop path." },
   ],
   donePhone: [
-    { target: "done-phone", title: "That's your part done", body: "Nothing more for you here. Our team sets up the protected browser and signs in after about 24 hours, then verifies the account. The setup payment follows, and your commission at the same time — we'll message you if anything is needed." },
+    { target: "done-phone", title: "That's your part done", body: "Nothing more for you here. Our team sets up the protected browser and signs in once we reach you — the timing's on this screen — then verifies the account. The setup payment follows, and your commission at the same time; we'll message you if anything is needed." },
   ],
   donePc: [
     { target: "done-summary", title: "Onboarded — here's the deal", body: "Their setup and monthly payments, and your commission, are now locked to your code. This is what everyone gets for this account." },
@@ -75,7 +76,7 @@ type Session = {
   confirmedAt: string | null; accountFreshness: string | null; setupDueAt: string | null; setupAmount: string;
   monthlyAmount: string; commission: string; verified: boolean;
 };
-type Bootstrap = { displayCurrency?: string; emailEnabled: boolean; phoneVerificationEnabled: boolean; countries: string[]; autoPurchase: boolean; config: CurrencyConfig; configured: boolean; doneComputer: boolean; donePhone: boolean; sessions: { id: string; state: string; name: string; done: boolean }[] };
+type Bootstrap = { displayCurrency?: string; emailEnabled: boolean; phoneVerificationEnabled: boolean; countries: string[]; autoPurchase: boolean; config: CurrencyConfig; configured: boolean; queueCount?: number; doneComputer: boolean; donePhone: boolean; sessions: { id: string; state: string; name: string; done: boolean }[] };
 
 const PAYOUT_FIELDS: Record<string, { label: string; type?: string; placeholder: string; help: string }> = {
   GCash: { label: "GCash mobile number", type: "tel", placeholder: "+63 9XX XXX XXXX", help: "Enter the mobile number registered to their GCash account." },
@@ -166,7 +167,7 @@ export default function SelfServiceWizard({ token, endpoint: endpointProp, selfM
   // --- Demo mode: fabricate everything the UI would otherwise fetch, with no writes. ---
   const demoProgress = useRef<{ twoFa: boolean; email: "add" | "verify" | "primary" | "done"; browser: "reserved" | "ready" | "opened"; confirmed: boolean }>({ twoFa: false, email: "add", browser: "reserved", confirmed: false });
   function demoBootstrap(): Bootstrap {
-    return { displayCurrency: "PHP", emailEnabled: true, phoneVerificationEnabled: false, countries: ["Philippines"], autoPurchase: true, config: currencyConfig("demo"), configured: true, doneComputer: false, donePhone: false, sessions: [] };
+    return { displayCurrency: "PHP", emailEnabled: true, phoneVerificationEnabled: false, countries: ["Philippines"], autoPurchase: true, config: currencyConfig("demo"), configured: true, queueCount: 60, doneComputer: false, donePhone: false, sessions: [] };
   }
   function demoEmailSetup(stage: "add" | "verify" | "primary" | "done"): EmailSetup {
     const base = { configured: true, domains: ["linkedvelocity.com"], address: "owner.demo@linkedvelocity.com", destination: "owner.personal@gmail.com", previouslyVerifiedEmail: null, forwardingUntil: null, primaryConfirmedAt: null, latestCodeAt: new Date().toISOString() };
@@ -837,10 +838,11 @@ export default function SelfServiceWizard({ token, endpoint: endpointProp, selfM
                   <div style={sbody}>{body}</div>
                 </div>
               </div>;
+              const eta = onboardingEta(bootstrap?.queueCount);
               return <div style={{ margin: "8px 0 2px" }}>
                 <div className={styles.stepLabel} style={{ marginBottom: 12 }}>What happens next</div>
                 {row("done", "Account saved", "just now", "We set up the protected browser today.")}
-                {row("active", "We sign in", "in about 24 hours", "The short wait lowers the chance of an ID check.")}
+                {row("active", "We sign in", `in about ${eta.wait}`, eta.busy ? "We're busier than usual right now, so it may take a little longer. The wait also keeps LinkedIn's ID-check risk down." : "The short wait lowers the chance of an ID check.")}
                 {row("locked", "We check the account", checkWindow(session.accountFreshness), "We make sure it’s ready before payout.")}
                 {row("locked", selfMode ? "You get paid" : "Everyone gets paid", "", selfMode ? <>Your {moneyText(session.setupAmount)} setup payment goes out once it clears, and you’ll get a receipt.</> : <>The owner’s {moneyText(session.setupAmount)} setup fee and your commission go out the same day. You’ll both get a receipt.</>, true)}
               </div>;
@@ -854,7 +856,7 @@ export default function SelfServiceWizard({ token, endpoint: endpointProp, selfM
             {setupOptions()}
           </> : browserMode === "phone" ? <>
             <button className={styles.linkBtn} disabled={busy} onClick={() => setBrowserMode("")}>← Back to computer or phone</button>
-            <PhoneHandoff selfMode={selfMode} demo={demo} busy={busy} error={error} submit={handoff} />
+            <PhoneHandoff selfMode={selfMode} demo={demo} busy={busy} error={error} submit={handoff} eta={onboardingEta(bootstrap?.queueCount)} />
           </> : <>
             <button className={styles.linkBtn} disabled={busy} onClick={() => setBrowserMode("")}>← Back to computer or phone</button>
             <BrowserStep
