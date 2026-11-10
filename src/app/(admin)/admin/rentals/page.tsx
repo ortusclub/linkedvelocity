@@ -77,11 +77,13 @@ export default function AdminRentalsPage() {
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
   const [sheetConfigured, setSheetConfigured] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
+  const [renterId, setRenterId] = useState<string | null>(null); // ?renter=<userId> deep-link from Renters v3
 
   const refresh = () => fetch("/api/admin/rentals").then((r) => r.json()).then((d) => setRentals(d.rentals || []));
   useEffect(() => {
     refresh().finally(() => setLoading(false));
     fetch("/api/admin/rentals/export-url").then((r) => r.json()).then((d) => { setSheetConfigured(!!d.configured); setSheetUrl(d.url || null); }).catch(() => setSheetConfigured(false));
+    try { setRenterId(new URLSearchParams(window.location.search).get("renter")); } catch {}
   }, []);
 
   const handleAccess = async (rentalId: string, action: "grant" | "revoke" | "end", manualGrant = false) => {
@@ -197,12 +199,18 @@ export default function AdminRentalsPage() {
     return [...map.values()];
   }, [rentals]);
 
+  // ?renter=<userId> deep-link (from Renters v3): scope the board to one renter.
+  const scopedGroups = useMemo(() => (renterId ? groups.filter((g) => g.key === renterId) : groups), [groups, renterId]);
+  const scopedRentals = useMemo(() => (renterId ? rentals.filter((r) => r.user.id === renterId) : rentals), [rentals, renterId]);
+  const renterUser = useMemo(() => (renterId ? groups.find((g) => g.key === renterId)?.user ?? null : null), [groups, renterId]);
+  const clearRenter = () => { setRenterId(null); try { const u = new URL(window.location.href); u.searchParams.delete("renter"); window.history.replaceState({}, "", u.toString()); } catch {} };
+
   const summary = useMemo(() => ({
-    live: rentals.length,
-    renters: groups.length,
-    attn: rentals.filter(attnOf).length,
-    healthy: rentals.filter((r) => !attnOf(r)).length,
-  }), [rentals, groups]);
+    live: scopedRentals.length,
+    renters: scopedGroups.length,
+    attn: scopedRentals.filter(attnOf).length,
+    healthy: scopedRentals.filter((r) => !attnOf(r)).length,
+  }), [scopedRentals, scopedGroups]);
 
   const matches = (r: Rental) => {
     const q = query.trim().toLowerCase();
@@ -267,15 +275,23 @@ export default function AdminRentalsPage() {
         </div>
       </div>
 
+      {/* renter deep-link filter banner */}
+      {renterId && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, padding: "9px 14px", borderRadius: 10, background: "var(--blue-chip-bg)", border: "1px solid var(--blue-chip-text)" }}>
+          <span style={{ font: `600 12.5px ${F_SANS}`, color: "var(--blue-chip-text)" }}>Showing one renter{renterUser ? ` · ${renterUser.company || renterUser.fullName}` : ""}</span>
+          <button onClick={clearRenter} style={{ font: `600 12px ${F_SANS}`, color: "var(--blue-chip-text)", background: "transparent", border: "1px solid var(--blue-chip-text)", padding: "5px 11px", borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap" }}>Show all rentals</button>
+        </div>
+      )}
+
       {/* groups */}
       <div style={{ background: "var(--panel)", border: "1px solid var(--panel-border)", borderRadius: 16, overflow: "hidden", boxShadow: "var(--panel-shadow)" }}>
         <div style={{ display: "grid", gridTemplateColumns: F.GRID, gap: 18, padding: "11px 22px", borderBottom: "1px solid var(--divider)" }}>
           <span style={labelCss}>Account</span><span style={labelCss}>Billing</span><span style={labelCss}>Status</span><span style={labelCss}>Notes</span><span style={{ ...labelCss, textAlign: "right" }}>Manage</span>
         </div>
 
-        {rentals.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", font: `500 13px ${F_SANS}`, color: "var(--muted)" }}>No rentals yet.</div>
-        ) : groups.map((g) => {
+        {scopedGroups.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", font: `500 13px ${F_SANS}`, color: "var(--muted)" }}>{renterId ? "No live rentals for this renter." : "No rentals yet."}</div>
+        ) : scopedGroups.map((g) => {
           const visible = g.rentals.filter(matches);
           if (visible.length === 0) return null;
           const isCollapsed = collapsed.has(g.key);
@@ -301,6 +317,7 @@ export default function AdminRentalsPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, flex: "none" }}>
+                  <a href={`/admin/renters?q=${encodeURIComponent(g.user.email)}`} onClick={(e) => e.stopPropagation()} title="Open this renter in Renters (CRM)" style={{ font: `600 11.5px ${F_SANS}`, color: "var(--link)", textDecoration: "none", padding: "5px 10px", borderRadius: 999, background: "var(--link-bg)", whiteSpace: "nowrap" }}>Renters ↗</a>
                   {pocEdit === g.key ? (
                     <input autoFocus onClick={(e) => e.stopPropagation()} defaultValue={g.poc || ""} placeholder="Type a name…"
                       onBlur={(e) => { savePoc(g.rentals, e.target.value.trim()); setPocEdit(null); }}
