@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { rentalReadyStatus, type ChecklistState } from "@/lib/rental-ready";
+import { rentalReadyStatus, rentalReadyAuto, type ChecklistState } from "@/lib/rental-ready";
 
 // Inventory v2 read endpoint. Returns the SAME per-account shape as
 // /api/admin/accounts (so the v2 page has every field the live inventory has),
@@ -150,6 +150,25 @@ export async function GET(_req: NextRequest) {
       const ownedMs = Math.max(DAY, now - new Date(a.createdAt).getTime());
       const rentedMs = rentedMsByAccount.get(a.id) ?? 0;
       const earnedTotal = Math.max(0, Math.round(((cryptoByAccount.get(a.id) ?? 0) + (txnByAccount.get(a.id) ?? 0)) * 100) / 100);
+      // "Ready to promote" — a construction account that has earned its way to Available:
+      // ≥1 month old, ≥2 weeks maturing with NO restriction in that window (survived the
+      // weed-out), ≥100 connections, setup fee paid, and every rental-ready AUTO check
+      // passing (not restricted, 2FA not pending, proxy assigned, no leftover GoLogin share).
+      // The manual housekeeping ticks are NOT required here — they matter for accounts coming
+      // off a renter, not ones we built; listing still runs the full gated flip. Surfaced as a
+      // flag so the operator can one-click list from inventory instead of accounts sitting in
+      // Construction forever (Sam, 2026-11-10).
+      const matStart = a.maturingStartedAt ? new Date(a.maturingStartedAt).getTime() : 0;
+      const restrLog = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string; event?: string }[]) : [];
+      const restrictedDuringMaturing = matStart > 0 && restrLog.some((e) => e?.event === "restricted" && Date.parse(e.at || "") >= matStart);
+      const readyToPromote =
+        ["under_construction", "construction_immature"].includes(a.status) &&
+        now - new Date(a.createdAt).getTime() >= 30 * DAY &&
+        matStart > 0 && now - matStart >= 14 * DAY &&
+        (a.connectionCount ?? 0) >= 100 &&
+        !restrictedDuringMaturing &&
+        rentalReadyAuto({ ...a, gologinShared: gologinSharedSet.has(a.id) }).length === 0 &&
+        (app ? !!app.paidAt : true);
       return {
         ...a,
         mailNeedsReview: mailNeedsReviewByAccount.get(a.id) ?? 0,
@@ -157,6 +176,7 @@ export async function GET(_req: NextRequest) {
         // Whether the rental-ready housekeeping checklist passes (for the sweep flag on the row).
         gologinStillShared: gologinSharedSet.has(a.id),
         rentalReady: rentalReadyStatus({ ...a, gologinShared: gologinSharedSet.has(a.id) }, a.rentalReadyChecklist as ChecklistState).ready,
+        readyToPromote,
         // Carry pipeline (application) profile data into inventory when the account's own is blank.
         linkedinUrl: a.linkedinUrl || app?.linkedinUrl || null,
         location: a.location || app?.location || null,
