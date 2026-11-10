@@ -1,5 +1,29 @@
 import { prisma } from "@/lib/prisma";
 
+const DAY_MS = 86_400_000;
+const CYCLE_MS = 30 * DAY_MS;
+
+// Downtime credit for a restricted rental, in ms, capped so that total working time inside the
+// current paid cycle can never exceed one 30-day cycle. A renter is owed at most (30 days − the
+// days the account actually worked this cycle) of free extension; raw elapsed downtime is NOT
+// credited beyond that. Without the cap an account that sat restricted for weeks — or a
+// permanently-restricted one, which skips the recovery-hold gate — would push the next-payment
+// date out day-for-day, handing the renter unlimited free time while they aren't paying.
+//   daysActive = restrictedAt − periodStart  (periodStart = currentPeriodEnd − 30d), clamped 0–30d
+//   credit     = min(elapsed downtime, 30d − daysActive)
+// With no currentPeriodEnd (nothing to measure the cycle against) the cap is a full 30 days.
+export function cappedDowntimeMs(
+  restrictedAt: Date | string,
+  currentPeriodEnd: Date | string | null | undefined,
+): number {
+  const restrictedMs = new Date(restrictedAt).getTime();
+  const downtimeMs = Math.max(0, Date.now() - restrictedMs);
+  if (!currentPeriodEnd) return Math.min(downtimeMs, CYCLE_MS);
+  const periodStart = new Date(currentPeriodEnd).getTime() - CYCLE_MS;
+  const activeMs = Math.min(CYCLE_MS, Math.max(0, restrictedMs - periodStart));
+  return Math.min(downtimeMs, CYCLE_MS - activeMs);
+}
+
 // Append-only restriction/recovery history for an account. `restrictedAt` only ever
 // holds the CURRENT open restriction (wiped on recover), so the log is the record of
 // every time an account was restricted or recovered. Both the pipeline and the
@@ -126,13 +150,17 @@ export async function restrictionUpdate(
   if (!account.restrictedAt) return { restrictedAt: null };
   let creditedDays = 0;
   if (applyCredit) {
-    const downtimeMs = Date.now() - new Date(account.restrictedAt).getTime();
     const active = await prisma.rental.findFirst({
       where: { linkedinAccountId: account.id, status: { in: ["active", "pending_access"] } },
     });
-    if (active?.currentPeriodEnd && downtimeMs > 0) {
-      const extended = new Date(new Date(active.currentPeriodEnd).getTime() + downtimeMs);
-      creditedDays = Math.round(downtimeMs / 86400000);
+    // Cap the credit at (30d − days active this cycle) so a long restriction can't extend the
+    // renewal date indefinitely (see cappedDowntimeMs).
+    const creditMs = active?.currentPeriodEnd
+      ? cappedDowntimeMs(account.restrictedAt, active.currentPeriodEnd)
+      : 0;
+    if (active?.currentPeriodEnd && creditMs > 0) {
+      const extended = new Date(new Date(active.currentPeriodEnd).getTime() + creditMs);
+      creditedDays = Math.round(creditMs / 86400000);
       // Also bank the credited days on the rental so the dashboard can show the applied figure
       // (cause-agnostic running total), not just the live "accruing" estimate.
       await prisma.rental.update({

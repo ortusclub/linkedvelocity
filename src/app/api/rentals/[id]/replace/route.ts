@@ -6,6 +6,7 @@ import { requireAuth } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { monthlyRentalPrice } from "@/lib/account-pricing";
 import { canReplaceNow } from "@/lib/replacement";
+import { cappedDowntimeMs } from "@/lib/restriction";
 import { grantRentalAccess, revokeRentalAccess } from "@/lib/rental-access";
 import { PUBLIC_AVAILABLE_WHERE } from "@/lib/public-inventory";
 
@@ -46,8 +47,10 @@ export async function POST(
     const oldPrice = monthlyRentalPrice(oldAcct);
 
     // Carry over the remaining paid time plus a credit for the downtime so far (mirrors the
-    // recovery credit in restriction.ts: currentPeriodEnd + time-restricted).
-    const downtimeMs = Math.max(0, Date.now() - new Date(oldAcct.restrictedAt).getTime());
+    // recovery credit in restriction.ts: currentPeriodEnd + time-restricted). The credit is
+    // capped at (30d − days active this cycle) so a stale or permanent restriction can't carry
+    // unlimited free time onto the replacement while the renter isn't paying (see cappedDowntimeMs).
+    const downtimeMs = cappedDowntimeMs(oldAcct.restrictedAt!, old.currentPeriodEnd);
     const base = old.currentPeriodEnd ? new Date(old.currentPeriodEnd).getTime() : Date.now();
     const carriedPeriodEnd = new Date(base + downtimeMs);
     // Bank the carried downtime on the new rental so the dashboard shows the applied figure.
