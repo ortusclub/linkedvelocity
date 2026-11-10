@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { tierPricing } from "@/lib/account-pricing";
 import { formatName } from "@/lib/utils";
-import { isCompanyEmail } from "@/lib/company";
+import { canonicalStatus } from "@/lib/inventory-stage";
 import { RENTAL_READY_ITEMS, RENTAL_READY_OPTIONAL, rentalReadyStatus, type ChecklistState } from "@/lib/rental-ready";
 import { SHARED_TOGGLES, OFFBOARDING_ITEMS, offboardingAuto, offboardingLeft, type Offboarding, type SharedWithRenter } from "@/lib/offboarding";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
@@ -139,22 +139,6 @@ const checkable = (a: Account) => a.status !== "retired" && !isDummy(a);
 // Settable statuses for the inline row quick-edit (rented/trial are driven by rentals, not set here).
 const STATUS_OPTS: [string, string][] = [["available", "Available"], ["unavailable", "Unavailable"], ["maintenance", "Maintenance"], ["under_construction", "Construction"], ["construction_immature", "Construction (immature)"], ["under_review", "Under review"], ["retired", "Retired"]];
 
-function canonicalStatus(a: Account): string {
-  if (a.status === "retired") return "Permanently restricted/Inaccessible";
-  if (a.status === "removed") return "Removed";
-  // Owner exits (status unavailable + an exit reason): the account is out of our hands —
-  // returned to the owner or our access was cut. Group it as inaccessible, never Construction.
-  if (a.status === "unavailable" && a.exitReason) return "Permanently restricted/Inaccessible";
-  if (a.status !== "rented" && a.ownerApplicationId && !a.ownerSetupPaidAt) return "Initial";
-  if (a.restrictedAt || a.status === "maintenance") return "Maintenance";
-  if (a.status === "rented") return "Rented";
-  if (a.ownerApplicationId && !a.ownerOnboarded) return "Construction";
-  if (a.status === "construction_immature" || a.status === "under_construction") return a.ownerOnboarded ? "Construction" : "Initial";
-  if (a.status === "available") return a.twoFactorResetNeeded ? "Maintenance" : "Available";
-  if (a.status === "trial") return "Trial";
-  if (!a.loginEmail || !isCompanyEmail(a.loginEmail) || !a.accountPassword) return "Initial";
-  return a.ownerOnboarded ? "Construction" : "Initial";
-}
 
 // Which action-needed flags an account currently carries — the key set that drives the "Needs
 // attention" filter. KEEP IN SYNC with the row flag block in the render loop (search "Flag

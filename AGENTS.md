@@ -1,5 +1,8 @@
 # LinkedVelocity — assistant starting point
 
+## Owners sheet Construction grouping — Samuel, 10 November 2026
+Make construction accounts easy to find together in the automated Owners sheet. Use the same account-stage classification as Inventory. Preserve every owner once, existing column positions and relationship values; append filterable construction indicators and names rather than replacing the existing profile list. Keep mixed-stage owners intact.
+
 ## LV reserve rental trigger — Samuel, 9 November 2026
 On a real customer rental, notify the engine to stop that profile's LV reserve sending, introductions and monitoring across campaigns. Prefer the rental trigger and durable engine-local checks over LV API calls before every action. Reconcile current rental records periodically to recover missed notifications. Preserve customer access, payments, unrelated profiles and confirmed campaign history; no automatic replacement of the selected five accounts. Verify engine acknowledgement before granting new customer access.
 

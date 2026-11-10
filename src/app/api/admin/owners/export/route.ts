@@ -3,6 +3,7 @@ import { getOwners, type Owner } from "@/lib/owners";
 import { decryptSecret } from "@/lib/crypto-creds";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
 import { setupFeeReadyDate } from "@/lib/referrals";
+import { constructionAccounts } from "@/lib/owner-construction";
 
 // CSV export of Account Owners for Google Sheets via
 // =IMPORTDATA("https://linkedvelocity.com/api/admin/owners/export?key=XXXX").
@@ -118,6 +119,7 @@ export async function GET(req: NextRequest) {
     "Registered name", "Monthly payout", "Payout method", "Payout details",
     // Payment status
     "Setup fee", "Monthly payments paid", "Total paid", "Missing fields",
+    "Has construction accounts", "Construction account count", "Construction profiles",
   ];
   const width = headers.length;
 
@@ -131,6 +133,7 @@ export async function GET(req: NextRequest) {
       o.monthlyPayouts.reduce((s, p) => s + (Number(p.amount) || 0), 0) +
       (o.setupFeePaidAt && !hasSetupRecord ? o.setupAmount : 0);
     const missing = missingFields(o);
+    const construction = constructionAccounts(o);
     return [
       // Owner
       o.fullName,
@@ -156,12 +159,23 @@ export async function GET(req: NextRequest) {
       String(monthlyOnly.length),
       totalPaid > 0 ? money(totalPaid) : "",
       missing.length ? missing.join("; ") : "—",
+      construction.length ? "Yes" : "No",
+      String(construction.length),
+      construction.map(a => a.linkedinName).join("; "),
     ];
   };
 
   const out: string[][] = [headers];
+  const constructionOwners = owners.filter(o => constructionAccounts(o).length > 0);
+  if (constructionOwners.length) {
+    const section = new Array(width).fill("");
+    const count = constructionOwners.reduce((sum, o) => sum + constructionAccounts(o).length, 0);
+    section[0] = `— CONSTRUCTION (${count} accounts · ${constructionOwners.length} owners) —`;
+    out.push(section);
+    for (const o of constructionOwners) out.push(rowFor(o));
+  }
   for (const [status, label] of SECTIONS) {
-    const group = owners.filter((o) => ownerStatus(o.applicationStatus) === status);
+    const group = owners.filter((o) => ownerStatus(o.applicationStatus) === status && constructionAccounts(o).length === 0);
     if (group.length === 0) continue;
     const section = new Array(width).fill("");
     section[0] = `— ${label} (${group.length}) —`;
