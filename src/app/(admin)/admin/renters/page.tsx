@@ -176,6 +176,8 @@ export default function RentersV3Page() {
     } catch { flash("Failed to load"); } finally { setLoading(false); }
   }, [flash]);
   useEffect(() => { load(); }, [load]);
+  // Deep-link from other admin boards (e.g. Rentals "Renters ↗"): ?q=<email|name> pre-fills search.
+  useEffect(() => { try { const v = new URLSearchParams(window.location.search).get("q"); if (v) setQ(v); } catch {} }, []);
 
   const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
   const personById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
