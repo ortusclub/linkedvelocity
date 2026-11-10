@@ -50,13 +50,21 @@ export async function GET() {
     const userIds = people.map((p) => p.userId).filter((x): x is string => !!x);
     const leadIds = people.map((p) => p.inboundLeadId).filter((x): x is string => !!x);
 
-    const [deposits, txns, leads, companiesRaw, dupeRows] = await Promise.all([
+    const [deposits, txns, leads, companiesRaw, dupeRows, bookings] = await Promise.all([
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds }, type: "deposit" }, select: { userId: true, description: true } }) : Promise.resolve([]),
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds } }, select: { userId: true, type: true, amount: true } }) : Promise.resolve([]),
-      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true, commsLog: true } }) : Promise.resolve([]),
+      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true, commsLog: true, addedToAmbassadorPipeline: true, addedToReferralPipeline: true, addedToClientCrm: true } }) : Promise.resolve([]),
       prisma.company.findMany(),
       prisma.duplicateSuggestion.findMany({ where: { dismissedAt: null } }),
+      // Calls/meetings for the CRM lens — booked via Google Calendar, keyed to the originating lead.
+      leadIds.length ? prisma.inboundBooking.findMany({ where: { leadId: { in: leadIds } }, select: { key: true, leadId: true, scheduledAt: true, cancelled: true }, orderBy: { scheduledAt: "desc" } }) : Promise.resolve([]),
     ]);
+    const bookingsByLead = new Map<string, { key: string; scheduledAt: string; cancelled: boolean }[]>();
+    for (const b of bookings) {
+      const arr = bookingsByLead.get(b.leadId) || [];
+      arr.push({ key: b.key, scheduledAt: b.scheduledAt.toISOString(), cancelled: b.cancelled });
+      bookingsByLead.set(b.leadId, arr);
+    }
 
     const fundingByUser = new Map<string, "Card" | "Crypto Wallet">();
     for (const d of deposits) {
@@ -113,8 +121,20 @@ export async function GET() {
         source: p.source,
         pocOwner: (p.pocOwner as "Ardi" | "Milee" | "Sam" | null) ?? null,
         followUp: p.followUp ? p.followUp.toISOString() : null,
-        leadStage: (p.leadStage as "warm" | "cold" | null) ?? null,
+        leadStage: (p.leadStage as "hot" | "warm" | "cold" | null) ?? null,
         statusOverride: (p.statusOverride as "renting" | "dormant" | null) ?? null,
+        // CRM sales-lens fields (crm_people overlay)
+        nextStep: p.nextStep ?? null,
+        interest: p.interest ?? null,
+        dealValue: p.dealValue ?? null,
+        direction: (p.direction as "in" | "out" | null) ?? null,
+        // Lead routing (from the originating inbound lead) so the CRM lens can hide
+        // contacts that were triaged purely to the Ambassador / Referrer pipelines.
+        routedAmbassador: lead?.addedToAmbassadorPipeline ?? false,
+        routedReferrer: lead?.addedToReferralPipeline ?? false,
+        routedCrm: lead?.addedToClientCrm ?? false,
+        // Booked calls / meetings (lead-linked), newest first.
+        calls: (p.inboundLeadId ? bookingsByLead.get(p.inboundLeadId) : null) ?? [],
         vetting: u ? vettingLabel(u.vettingReview, u.vettedAt) : "Not vetted",
         paymentMethod: (u && fundingByUser.get(u.id)) || null,
         paymentFailed: rentals.some((r) => r.status === "payment_failed"),
@@ -170,10 +190,11 @@ export async function PATCH(req: Request) {
 
     // CRM layer → crm_people
     const data: Record<string, unknown> = {};
-    for (const k of ["name", "email", "channel", "contact", "role", "source", "pocOwner", "leadStage", "notes"] as const) {
+    for (const k of ["name", "email", "channel", "contact", "role", "source", "pocOwner", "leadStage", "notes", "nextStep", "interest", "direction"] as const) {
       if (b[k] !== undefined) data[k] = b[k] === "" ? null : b[k];
     }
     if (b.followUp !== undefined) data.followUp = b.followUp ? new Date(b.followUp) : null;
+    if (b.dealValue !== undefined) data.dealValue = b.dealValue === "" || b.dealValue == null ? null : (Number.isFinite(+b.dealValue) ? Math.max(0, Math.round(+b.dealValue)) : null);
     // Manual status pin: 'renting' | 'dormant' | '' / 'auto' → null (back to derived)
     if (b.statusOverride !== undefined) data.statusOverride = (b.statusOverride === "renting" || b.statusOverride === "dormant") ? b.statusOverride : null;
     // Company: existing id, clear, or create-new by name

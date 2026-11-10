@@ -1,425 +1,575 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
-import { Poppins, Inter, JetBrains_Mono } from "next/font/google";
-import { assignedCrmOwnerOptions, crmOwnerOptions, matchesCrmOwner, ownerKey, type CrmOwner } from "@/lib/crm-owners";
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v2 — "Contacts & Comms". The SALES / RELATIONSHIP lens over the unified
+// crm_people overlay (same layer /admin/renters reads). Renters = renter-ops lens;
+// CRM = lead → client → past lens. Both read /api/admin/renters, so notes, AI
+// summaries and renter numbers stay in sync. Relationship + temperature are derived;
+// PoC / next-step / follow-up / interest / value / direction / status pin persist
+// to crm_people via PATCH. Timeline + composer use the shared conversation endpoint.
+// ─────────────────────────────────────────────────────────────────────────────
 
-const poppins = Poppins({ subsets: ["latin"], weight: ["500", "600", "700", "800"], variable: "--lv-poppins" });
-const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--lv-inter" });
-const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["500", "600"], variable: "--lv-mono" });
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { PocFilter } from "@/components/admin/poc-filter";
-
-interface Comm { ts: string; channel: string; body: string; authorName?: string; authorEmail?: string }
-interface Lead {
-  addedToClientCrm?: boolean; id: string; channel: string; name: string; handle: string | null; companyEmail: string | null;
-  type: string | null; message: string | null; status: string; stage: string; ownerEmail: string | null;
-  commsLog: Comm[] | null; source: string | null; notes: string | null;
-  followUpDate: string | null; firstContactAt: string; lastContactAt: string;
-}
-
-const STAGES = [
-  { key: "new", label: "New" },
-  { key: "warm", label: "Warm" },
-  { key: "active", label: "Active" },
-  { key: "cold", label: "Cold" },
-  { key: "previously_active", label: "Previously active" },
-  { key: "lost", label: "Lost" },
-];
-const CHANNELS = ["note", "email", "linkedin", "telegram", "whatsapp", "viber", "call", "meeting"];
-
-// ---- design palette helpers (exact from the shared mockup) ----
-const stageColor = (key: string, dark: boolean) => {
-  const light: Record<string, { fg: string; bg: string; dot: string }> = {
-    new: { fg: "#0A66C2", bg: "#EAF2FC", dot: "#0A66C2" },
-    warm: { fg: "#946011", bg: "#FBF0DA", dot: "#E0A43B" },
-    active: { fg: "#067A45", bg: "#E4F6EC", dot: "#00B85C" },
-    cold: { fg: "#5A6473", bg: "#EEF1F4", dot: "#96A0AD" },
-    previously_active: { fg: "#6551A4", bg: "#F0EBFA", dot: "#9275CC" },
-    lost: { fg: "#B23150", bg: "#FBE7EB", dot: "#D8607A" },
-  };
-  const dk: Record<string, { fg: string; bg: string; dot: string }> = {
-    new: { fg: "#7FB2EE", bg: "#12314F", dot: "#4B9BEA" },
-    warm: { fg: "#E6BE6C", bg: "#3A2E14", dot: "#E0A43B" },
-    active: { fg: "#5FD79A", bg: "#123526", dot: "#00B85C" },
-    cold: { fg: "#9DA9B6", bg: "#1E2A38", dot: "#7C8A99" },
-    previously_active: { fg: "#C4ADEE", bg: "#2B2043", dot: "#AA8DE0" },
-    lost: { fg: "#EC8AA1", bg: "#3A1B24", dot: "#D8607A" },
-  };
-  return (dark ? dk : light)[key] || (dark ? dk : light).cold;
-};
-const chanColor = (c: string, dark: boolean) => {
-  const key = (c || "").toLowerCase();
-  const light: Record<string, { fg: string; bg: string }> = {
-    telegram: { fg: "#2AA2E0", bg: "#E7F1FB" }, email: { fg: "#7A5CE0", bg: "#F1EFFB" },
-    linkedin: { fg: "#0A66C2", bg: "#EAF2FC" }, website: { fg: "#0E7C74", bg: "#DEF3F1" },
-    whatsapp: { fg: "#067A45", bg: "#E4F6EC" }, call: { fg: "#067A45", bg: "#E4F6EC" },
-    meeting: { fg: "#5747C9", bg: "#F1EFFB" }, note: { fg: "#946011", bg: "#FBF0DA" },
-  };
-  const dk: Record<string, { fg: string; bg: string }> = {
-    telegram: { fg: "#5CBAF0", bg: "#12303F" }, email: { fg: "#A48CF0", bg: "#231F3D" },
-    linkedin: { fg: "#7FB2EE", bg: "#12314F" }, website: { fg: "#4FC7BC", bg: "#0F3330" },
-    whatsapp: { fg: "#5FD79A", bg: "#123526" }, call: { fg: "#5FD79A", bg: "#123526" },
-    meeting: { fg: "#A48CF0", bg: "#231F3D" }, note: { fg: "#E6BE6C", bg: "#3A2E14" },
-  };
-  return (dark ? dk : light)[key] || { fg: "#9DA9B6", bg: dark ? "#1E2A38" : "#EEF1F4" };
+type Conv = { id: string; type: string; text: string; meta: string; author: string | null; ts: string };
+type Call = { key: string; scheduledAt: string; cancelled: boolean };
+type Person = {
+  id: string; kind: "user" | "lead"; userId: string | null; leadId: string | null;
+  name: string; email: string | null; channel: "WA" | "TG" | null; contact: string | null;
+  role: string | null; source: string | null;
+  pocOwner: "Ardi" | "Milee" | "Sam" | null; followUp: string | null;
+  leadStage: "hot" | "warm" | "cold" | null; statusOverride: "renting" | "dormant" | null;
+  nextStep: string | null; interest: string | null; dealValue: number | null; direction: "in" | "out" | null;
+  routedAmbassador: boolean; routedReferrer: boolean; routedCrm: boolean;
+  vetting: string; paymentMethod: "Card" | "Crypto Wallet" | null; paymentFailed: boolean;
+  isTest: boolean; notes: string | null;
+  liveRentals: number; totalRentals: number; autoRenewOn: number; mrr: number;
+  paidTotal: number; discount: string | null;
+  joinedAt: string; lastActivityAt: string;
+  companyDomain: string | null;
+  commsSummary: string | null; commsSummaryStale: boolean;
+  calls: Call[];
+  conversations: Conv[];
 };
 
-const fmt = (d: string | null) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
-const fmtDay = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "");
-const initials = (n: string) => { const s = (n || "?").replace(/[@"()]/g, "").trim(); return (s[0] || "?").toUpperCase(); };
+const F = "var(--font-sans),system-ui,sans-serif";
+const G = "var(--font-grotesk),system-ui,sans-serif";
+
+const POCS = ["Ardi", "Milee", "Sam"] as const;
+const POC_COLOR: Record<string, string> = { Ardi: "var(--accent)", Milee: "var(--orange)", Sam: "var(--green)", Unassigned: "var(--neutral-dot)" };
+
+type Rel = "lead" | "client" | "past";
+const REL_LABEL: Record<Rel, string> = { lead: "Lead", client: "Client", past: "Past client" };
+const relChip = (r: Rel) => r === "client"
+  ? { bg: "var(--green-chip-bg)", fg: "var(--green-chip-text)", dot: "var(--green)" }
+  : r === "lead" ? { bg: "var(--blue-chip-bg)", fg: "var(--blue-chip-text)", dot: "var(--accent)" }
+  : { bg: "var(--neutral-chip-bg)", fg: "var(--neutral-chip-text)", dot: "var(--neutral-dot)" };
+
+type Temp = "Hot" | "Warm" | "Cold";
+const tempChip = (t: Temp) => t === "Hot"
+  ? { bg: "var(--pri-p1-bg)", fg: "var(--pri-p1-fg)", dot: "var(--danger)" }
+  : t === "Warm" ? { bg: "var(--warn-badge-bg)", fg: "var(--warn-badge-text)", dot: "var(--orange)" }
+  : { bg: "var(--neutral-chip-bg)", fg: "var(--neutral-chip-text)", dot: "var(--neutral-dot)" };
+
+// Conversation channel badge colours (reuse the shell's inbound palette).
+const chChip = (type: string): { bg: string; fg: string } => {
+  const t = (type || "").toLowerCase();
+  if (t === "telegram") return { bg: "var(--pf-tg-bg)", fg: "var(--pf-tg-fg)" };
+  if (t === "whatsapp") return { bg: "var(--st-new-bg)", fg: "var(--st-new-fg)" };
+  if (t === "email") return { bg: "var(--st-replied-bg)", fg: "var(--st-replied-fg)" };
+  if (t === "call") return { bg: "var(--blue-chip-bg)", fg: "var(--blue-chip-text)" };
+  return { bg: "var(--tag-bg)", fg: "var(--tag-fg)" };
+};
+const convGroup = (type: string): "calls" | "msgs" | "notes" => {
+  const t = (type || "").toLowerCase();
+  if (t === "call") return "calls";
+  if (t === "whatsapp" || t === "telegram" || t === "email") return "msgs";
+  return "notes";
+};
+
+const ENTRY_TYPES = ["Note", "Call", "Email", "WhatsApp", "Telegram"] as const;
+
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const day = 86_400_000;
+const fmtDay = (iso: string | null) => { if (!iso) return ""; const d = new Date(iso); return `${MON[d.getMonth()]} ${d.getDate()}`; };
+const fmtFull = (iso: string | null) => { if (!iso) return "—"; const d = new Date(iso); return `${MON[d.getMonth()]} ${d.getDate()}, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`; };
+const dInput = (iso: string | null) => (iso ? new Date(iso).toISOString().slice(0, 10) : "");
+const initials = (n: string) => (n || "?").replace(/[@"()]/g, "").trim().charAt(0).toUpperCase() || "?";
+const money = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
+const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / day);
+const lastTouch = (iso: string) => { const n = daysSince(iso); return n <= 0 ? "Today" : n === 1 ? "Yesterday" : `${n}d ago`; };
 
 export default function CrmPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
-  const [search, setSearch] = useState("");
-  const [owners, setOwners] = useState<CrmOwner[]>([]);
-  const [ownerFilter, setOwnerFilter] = useState("all");
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<"list" | "table">("list");
+  const [rel, setRel] = useState<"all" | Rel>("all");
+  const [temp, setTemp] = useState<"all" | Temp>("all");
+  const [poc, setPoc] = useState<string>("all");
+  const [dir, setDir] = useState<"all" | "in" | "out">("all");
+  const [due, setDue] = useState(false);
+  const [q, setQ] = useState("");
   const [selId, setSelId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<string, { channel: string; body: string }>>({});
-  const logLock = useRef(false);
-  const logRequest = useRef<{ id: string; channel: string; text: string; requestId: string } | null>(null);
+  const [drawer, setDrawer] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [entryType, setEntryType] = useState<string>("Note");
+  const [entryText, setEntryText] = useState("");
+  const [tlTab, setTlTab] = useState<"all" | "calls" | "msgs" | "notes">("all");
+  const [summarising, setSummarising] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: "", companyEmail: "", type: "Potential Renter", stage: "new", message: "", ownerEmail: "" });
-  const [sheetUrl, setSheetUrl] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const dark = theme === "dark";
+  const [form, setForm] = useState({ name: "", email: "", pocOwner: "" });
+  const entryLock = useRef(false);
 
-  // Follow the admin shell's theme (set in the layout; broadcast on toggle).
-  useEffect(() => {
-    const read = () => { const t = typeof window !== "undefined" ? localStorage.getItem("lv-admin-theme") : null; if (t === "light" || t === "dark") setTheme(t); };
-    read();
-    const onEvt = (e: Event) => { const t = (e as CustomEvent).detail; if (t === "light" || t === "dark") setTheme(t); };
-    window.addEventListener("lv-admin-theme", onEvt);
-    window.addEventListener("storage", read);
-    return () => { window.removeEventListener("lv-admin-theme", onEvt); window.removeEventListener("storage", read); };
-  }, []);
+  const load = () =>
+    fetch("/api/admin/renters")
+      .then(async (r) => { if (!r.ok) throw new Error("Could not load contacts."); return r.json(); })
+      .then((d) => setPeople((d.people || []) as Person[]))
+      .catch(() => setError("Could not load contacts. Please refresh."))
+      .finally(() => setLoading(false));
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const load = () => fetch("/api/admin/inbound").then(async (r) => { if (!r.ok) throw new Error("Could not load CRM contacts."); return r.json(); }).then((d) => { setLeads((d.leads || []).filter((lead: Lead) => lead.addedToClientCrm === true)); setOwners(d.owners || []); }).finally(() => setLoading(false));
-  useEffect(() => { load().catch(() => setError("Could not load CRM contacts. Please refresh.")); }, []);
-  useEffect(() => { fetch("/api/admin/inbound/export-url").then((r) => r.json()).then((d) => { if (d.configured) setSheetUrl(d.url); }).catch(() => {}); }, []);
-  const copyFormula = () => { if (!sheetUrl) return; navigator.clipboard.writeText(`=IMPORTDATA("${sheetUrl}")`); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  // ── derivations ──
+  const relationship = (p: Person): Rel => {
+    if (p.liveRentals > 0 || p.statusOverride === "renting") return "client";
+    if (p.totalRentals > 0 || p.statusOverride === "dormant") return "past";
+    return "lead";
+  };
+  const upcomingCall = (p: Person) => p.calls.some((c) => !c.cancelled && new Date(c.scheduledAt).getTime() > Date.now());
+  const autoTemp = (p: Person): Temp => {
+    if (upcomingCall(p) || daysSince(p.lastActivityAt) <= 3) return "Hot";
+    return daysSince(p.lastActivityAt) <= 14 ? "Warm" : "Cold";
+  };
+  const temperature = (p: Person): Temp => {
+    const o = p.leadStage;
+    if (o === "hot") return "Hot"; if (o === "warm") return "Warm"; if (o === "cold") return "Cold";
+    return autoTemp(p);
+  };
+  const dueDays = (p: Person) => (p.followUp ? Math.round((new Date(p.followUp).getTime() - Date.now()) / day) : null);
+  const isDue = (p: Person) => !!p.nextStep && p.followUp != null && (dueDays(p) ?? 1) <= 0;
 
+  // Sales lens: drop test rows and leads triaged purely to Ambassador/Referrer.
+  const base = useMemo(() => people.filter((p) => {
+    if (p.isTest) return false;
+    if (p.kind === "lead" && !p.userId && (p.routedAmbassador || p.routedReferrer) && !p.routedCrm) return false;
+    return true;
+  }), [people]);
+
+  const counts = useMemo(() => {
+    const c = { all: base.length, lead: 0, client: 0, past: 0, Hot: 0, Warm: 0, Cold: 0, due: 0 } as Record<string, number>;
+    for (const p of base) { c[relationship(p)]++; c[temperature(p)]++; if (isDue(p)) c.due++; }
+    return c;
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [base]);
+  const pocCount = (k: string) => base.filter((p) => (p.pocOwner || "Unassigned") === k).length;
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return base
+      .filter((p) => {
+        if (rel !== "all" && relationship(p) !== rel) return false;
+        if (temp !== "all" && temperature(p) !== temp) return false;
+        if (poc !== "all" && (p.pocOwner || "Unassigned") !== poc) return false;
+        if (dir !== "all" && p.direction !== dir) return false;
+        if (due && !isDue(p)) return false;
+        if (needle) {
+          const hay = `${p.name} ${p.email || ""} ${p.companyDomain || ""} ${p.contact || ""} ${p.interest || ""} ${p.nextStep || ""} ${p.conversations.map((e) => e.text).join(" ")}`.toLowerCase();
+          if (!hay.includes(needle)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [base, rel, temp, poc, dir, due, q]);
+
+  useEffect(() => { if (!loading && (!selId || !rows.some((p) => p.id === selId))) setSelId(rows[0]?.id ?? null); }, [rows, loading, selId]);
+  const cur = useMemo(() => people.find((p) => p.id === selId) || null, [people, selId]);
+
+  // ── mutations ──
+  const patchLocal = (id: string, body: Partial<Person>) => setPeople((prev) => prev.map((p) => (p.id === id ? { ...p, ...body } : p)));
   const patch = async (id: string, body: Record<string, unknown>) => {
-    setBusy(id);
+    patchLocal(id, body as Partial<Person>);
     setError(null);
     try {
-      const response = await fetch("/api/admin/inbound", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
-      if (!response.ok) throw new Error("Save failed");
-      await load();
-      return true;
-    } catch { setError("Could not save the change. Please try again."); return false; }
-    finally { setBusy(null); }
+      const r = await fetch("/api/admin/renters", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
+      if (!r.ok) throw new Error();
+    } catch { setError("Could not save that change. Reloading…"); load(); }
   };
 
-  const logComm = async (id: string) => {
-    const d = draft[id];
-    if (!d || !d.body.trim() || logLock.current) return;
-    logLock.current = true; setBusy(id); setError(null);
-    const text = d.body.trim();
-    if (logRequest.current?.id !== id || logRequest.current?.text !== text || logRequest.current?.channel !== d.channel) logRequest.current = { id, channel: d.channel, text, requestId: crypto.randomUUID() };
+  const addEntry = async (p: Person) => {
+    const text = entryText.trim();
+    if (!text || entryLock.current) return;
+    entryLock.current = true; setBusy(p.id); setError(null);
     try {
-      const response = await fetch("/api/admin/inbound/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(logRequest.current) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not save the entry.");
-      setLeads(prev => prev.map(lead => lead.id === id ? data.lead : lead));
-      setDraft(prev => ({ ...prev, [id]: { channel: d.channel, body: "" } }));
-      logRequest.current = null;
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not save the entry. Your draft has been kept."); }
-    finally { logLock.current = false; setBusy(null); }
+      const r = await fetch("/api/admin/renters/conversation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ personId: p.id, type: entryType, text }) });
+      const d = await r.json();
+      if (!r.ok || !d.conversation) throw new Error(d.error || "Could not save the entry.");
+      patchLocal(p.id, { conversations: [d.conversation, ...p.conversations], lastActivityAt: d.conversation.ts, commsSummaryStale: !!p.leadId });
+      setEntryText("");
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not save the entry."); }
+    finally { entryLock.current = false; setBusy(null); }
+  };
+
+  const regenSummary = async (p: Person) => {
+    if (!p.leadId || summarising) return;
+    setSummarising(true); setError(null);
+    try {
+      const r = await fetch("/api/admin/inbound/summarise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadId: p.leadId, force: true }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Could not summarise.");
+      patchLocal(p.id, { commsSummary: d.summary || null, commsSummaryStale: false });
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not summarise."); }
+    finally { setSummarising(false); }
   };
 
   const addContact = async () => {
     if (!form.name.trim()) return;
-    setBusy("new");
-    const res = await fetch("/api/admin/inbound", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: "manual", source: "manual", ...form, addedToClientCrm: true }) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { setError("Could not add the contact. Please try again."); setBusy(null); return; }
-    setForm({ name: "", companyEmail: "", type: "Potential Renter", stage: "new", message: "", ownerEmail: "" });
-    setAdding(false);
-    await load();
-    if (data?.lead?.id) setSelId(data.lead.id);
-    setBusy(null);
+    setBusy("new"); setError(null);
+    try {
+      const r = await fetch("/api/admin/renters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.name.trim(), email: form.email.trim() || null, pocOwner: form.pocOwner || null, leadStage: "warm" }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error();
+      setForm({ name: "", email: "", pocOwner: "" }); setAdding(false);
+      await load();
+      if (d.id) { setSelId(d.id); setDrawer(true); }
+    } catch { setError("Could not add the contact."); }
+    finally { setBusy(null); }
   };
 
-  const deleteLead = async (id: string, name: string) => {
-    if (!confirm(`Delete "${name}"? This removes the contact and its comms history.`)) return;
-    setBusy(id);
-    await fetch(`/api/admin/inbound?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (selId === id) setSelId(null);
-    await load();
-    setBusy(null);
-  };
+  const openPerson = (id: string) => { setSelId(id); setDrawer(true); setTlTab("all"); setEntryText(""); };
 
-  const ownerOptions = useMemo(() => crmOwnerOptions(owners, leads), [owners, leads]);
-  const filterOwnerOptions = useMemo(() => assignedCrmOwnerOptions(owners, leads), [owners, leads]);
-  const activeOwnerFilter = ownerFilter === "all" || ownerFilter === "unassigned" || filterOwnerOptions.some(o => o.value === ownerFilter) ? ownerFilter : "all";
-  const ownerLabels = useMemo(() => new Map(ownerOptions.map(o => [o.value, o.label])), [ownerOptions]);
-  const ownerLeads = useMemo(() => leads.filter(l => matchesCrmOwner(l.ownerEmail, activeOwnerFilter)), [leads, activeOwnerFilter]);
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: ownerLeads.length };
-    STAGES.forEach((s) => (c[s.key] = ownerLeads.filter((l) => (l.stage || "new") === s.key).length));
-    return c;
-  }, [ownerLeads]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const ts = (l: Lead) => new Date(l.lastContactAt || l.firstContactAt).getTime() || 0;
-    return ownerLeads
-      .filter((l) => {
-        if (filter !== "all" && (l.stage || "new") !== filter) return false;
-        if (!q) return true;
-        return `${l.name} ${l.companyEmail || ""} ${l.type || ""} ${l.source || ""} ${l.handle || ""} ${l.notes || ""} ${l.message || ""} ${l.ownerEmail || ""} ${ownerLabels.get(ownerKey(l.ownerEmail)) || ""}`.toLowerCase().includes(q);
-      })
-      // most recently contacted first — whoever we talked to latest floats to the top
-      .sort((a, b) => ts(b) - ts(a));
-  }, [ownerLeads, filter, search, ownerLabels]);
-
-  const cur = useMemo(() => filtered.find((l) => l.id === selId) || filtered[0] || null, [filtered, selId]);
-
-  const CHIPS = [["all", "All", "#96A0AD"] as const, ...STAGES.map((s) => [s.key, s.label, stageColor(s.key, false).dot] as const)];
-
-  // segmented pipeline health bar (design order)
-  const segOrder = [["active", "#00B85C"], ["warm", "#E0A43B"], ["new", "#0A66C2"], ["cold", dark ? "#3A4A5A" : "#B7C0CB"], ["previously_active", "#9275CC"], ["lost", "#D8607A"]] as const;
-  const segs = segOrder.filter(([k]) => counts[k] > 0).map(([k, c]) => ({ w: counts.all ? (counts[k] / counts.all) * 100 : 0, color: c }));
-
-  const V = {
-    bg: dark ? "#0A1420" : "#EEF1F4", surface: dark ? "#0F1C2B" : "#FFFFFF", surface2: dark ? "#13212F" : "#F8FAFC",
-    border: dark ? "#22323f" : "#E7EBF0", border2: dark ? "#1A2937" : "#EEF1F4",
-    ink: dark ? "#EAF0F6" : "#0B1220", body: dark ? "#C4D0DC" : "#37424F", muted: dark ? "#93A2B2" : "#5A6473",
-    muted2: dark ? "#7F8E9D" : "#8A93A2", faint: dark ? "#66788A" : "#96A0AD",
-    inputBg: dark ? "#13212F" : "#FFFFFF", inputBorder: dark ? "#2A3B49" : "#DCE0E6", rowActive: dark ? "#12283B" : "#F3F8FE", pillTrack: dark ? "#1A2937" : "#EEF1F4",
-  };
-  const font = { p: "var(--lv-poppins),sans-serif", i: "var(--lv-inter),sans-serif", m: "var(--lv-mono),monospace" };
-  const input = { fontFamily: font.i, color: V.ink, background: V.inputBg, border: `1px solid ${V.inputBorder}`, borderRadius: 10, outline: "none", padding: "9px 12px", fontSize: 13.5 } as const;
-  const micro = { fontFamily: font.m, fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase" } as const;
+  // ── style atoms ──
+  const card: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--card-border)", borderRadius: 14, boxShadow: "var(--card-shadow)" };
+  const input: React.CSSProperties = { font: `500 13px ${F}`, color: "var(--input-fg)", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 9, padding: "8px 11px", outline: "none" };
+  const micro: React.CSSProperties = { font: `700 10px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "var(--label)" };
+  const pill = (active: boolean): React.CSSProperties => ({ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", font: `600 12.5px ${F}`, color: active ? "#fff" : "var(--text)", background: active ? "var(--accent)" : "var(--card)", border: `1px solid ${active ? "var(--accent)" : "var(--card-border)"}`, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" });
+  const count = (active: boolean): React.CSSProperties => ({ font: `700 11px ${G}`, color: active ? "#fff" : "var(--faint-num)", marginLeft: 1 });
 
   return (
-    <div className={`${poppins.variable} ${inter.variable} ${mono.variable}`} id="lv-crm" style={{ fontFamily: font.i, color: V.ink, background: V.bg, borderRadius: 16, padding: "4px 4px 8px" }}>
-      <style>{`#lv-crm input::placeholder,#lv-crm textarea::placeholder{color:${V.faint};} #lv-crm input:focus,#lv-crm select:focus,#lv-crm textarea:focus{border-color:#0A66C2;box-shadow:0 0 0 3px rgba(10,102,194,0.2);} #lv-crm select option{background:${V.surface};color:${V.ink};} #lv-crm textarea{resize:vertical;line-height:1.55;font-family:${font.i};}`}</style>
+    <div style={{ font: `400 14px ${F}`, color: "var(--text)" }}>
+      {/* header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 20, flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ maxWidth: 720 }}>
+          <h1 style={{ font: `700 28px ${G}`, letterSpacing: "-.01em", margin: "0 0 5px", color: "var(--text)" }}>Contacts &amp; Comms</h1>
+          <p style={{ font: `500 13.5px/1.5 ${F}`, color: "var(--muted)", margin: 0 }}>Every lead and client in one place — pipeline, next steps and a full conversation history. The same people and notes as Renters; this is the sales lens.</p>
+        </div>
+        <button onClick={() => setAdding((v) => !v)} style={{ font: `700 12.5px ${F}`, color: "#fff", background: "var(--btn-primary-bg)", border: "none", borderRadius: 10, padding: "10px 15px", cursor: "pointer", whiteSpace: "nowrap" }}>{adding ? "Cancel" : "+ Add contact"}</button>
+      </div>
 
-      {/* header row */}
-      <div style={{ padding: "16px 20px 0" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
-          <div>
-            <h1 style={{ fontFamily: font.p, fontWeight: 700, fontSize: 26, letterSpacing: "-0.02em", margin: "0 0 4px", color: V.ink }}>Contacts &amp; Comms</h1>
-            <p style={{ fontSize: 14, color: V.muted, margin: 0, maxWidth: 680 }}>Every lead &amp; client in one place — pipeline, notes, and a timestamped comms history. Telegram logs automatically; add the rest manually.</p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {sheetUrl && (
-              <span onClick={copyFormula} title="Paste into cell A1 of a blank Google Sheet to mirror this view" style={{ display: "inline-flex", alignItems: "center", gap: 8, background: V.surface, border: `1px solid ${V.inputBorder}`, borderRadius: 10, padding: "9px 14px", fontSize: 13, fontWeight: 600, color: V.body, cursor: "pointer" }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0A66C2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" /></svg>{copied ? "Copied ✓" : "Copy Sheets link"}
-              </span>
-            )}
-            <span onClick={() => setAdding((v) => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#0A66C2", color: "#fff", borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 6px 16px rgba(10,102,194,0.24)" }}>
-              {!adding && <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>}{adding ? "Cancel" : "Add contact"}
-            </span>
+      {error && <p role="alert" style={{ color: "var(--delete-color)", font: `600 13px ${F}` }}>{error}</p>}
+
+      {adding && (
+        <div style={{ ...card, padding: 14, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ ...input, flex: "1 1 180px" }} />
+          <input placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={{ ...input, flex: "1 1 180px" }} />
+          <select aria-label="PoC owner" value={form.pocOwner} onChange={(e) => setForm({ ...form, pocOwner: e.target.value })} style={input}>
+            <option value="">Unassigned PoC</option>{POCS.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <button onClick={addContact} disabled={busy === "new" || !form.name.trim()} style={{ font: `700 12.5px ${F}`, color: "#fff", background: "var(--green)", border: "none", borderRadius: 10, padding: "9px 16px", cursor: "pointer", opacity: form.name.trim() ? 1 : 0.5 }}>Save</button>
+        </div>
+      )}
+
+      {/* filter bar */}
+      <div style={{ ...card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {([["all", "All"], ["lead", "Leads"], ["client", "Clients"], ["past", "Past clients"]] as const).map(([k, l]) => {
+            const active = rel === k; const c = k === "all" ? null : relChip(k as Rel);
+            return (
+              <button key={k} onClick={() => setRel(k)} style={pill(active)}>
+                {c && <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.dot }} />}{l}
+                <span style={count(active)}>{counts[k] ?? 0}</span>
+              </button>
+            );
+          })}
+          <span style={{ width: 1, height: 22, background: "var(--divider)", margin: "0 2px" }} />
+          {(["Hot", "Warm", "Cold"] as const).map((k) => {
+            const active = temp === k; const c = tempChip(k);
+            return (
+              <button key={k} onClick={() => setTemp(active ? "all" : k)} style={{ ...pill(active), ...(active ? { background: c.fg, borderColor: c.fg } : {}) }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: active ? "#fff" : c.dot }} />{k}
+                <span style={count(active)}>{counts[k] ?? 0}</span>
+              </button>
+            );
+          })}
+          <div style={{ flex: 1 }} />
+          <div style={{ display: "flex", background: "var(--seg-bg)", border: "1px solid var(--seg-border)", borderRadius: 10, padding: 3, gap: 2 }}>
+            {(["list", "table"] as const).map((v) => (
+              <button key={v} onClick={() => { setView(v); setDrawer(false); }} style={{ border: "none", cursor: "pointer", borderRadius: 7, padding: "6px 12px", font: `700 12.5px ${F}`, background: view === v ? "var(--accent)" : "transparent", color: view === v ? "#fff" : "var(--muted)" }}>{v === "list" ? "List + detail" : "Table"}</button>
+            ))}
           </div>
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: "1px solid var(--divider)", paddingTop: 10 }}>
+          <span style={{ ...micro, marginRight: 2 }}>PoC</span>
+          {["all", ...POCS, "Unassigned"].map((k) => {
+            const active = poc === k;
+            return (
+              <button key={k} onClick={() => setPoc(k)} style={{ ...pill(active), paddingLeft: k === "all" ? 12 : 5 }}>
+                {k !== "all" && <span style={{ width: 20, height: 20, borderRadius: "50%", background: POC_COLOR[k] || "var(--neutral-dot)", color: "#fff", font: `700 9px ${F}`, display: "grid", placeItems: "center" }}>{k[0]}</span>}
+                {k === "all" ? "All" : k}<span style={count(active)}>{k === "all" ? base.length : pocCount(k)}</span>
+              </button>
+            );
+          })}
+          <span style={{ width: 1, height: 22, background: "var(--divider)", margin: "0 2px" }} />
+          <button onClick={() => setDue((v) => !v)} style={{ ...pill(due), ...(due ? { background: "var(--danger)", borderColor: "var(--danger)" } : {}) }}>
+            Follow-up due<span style={{ font: `700 11px ${G}`, background: "var(--pri-p1-bg)", color: "var(--pri-p1-fg)", borderRadius: 999, padding: "1px 7px", marginLeft: 1 }}>{counts.due}</span>
+          </button>
+          <select aria-label="Direction" value={dir} onChange={(e) => setDir(e.target.value as typeof dir)} style={input}>
+            <option value="all">Inbound + outbound</option><option value="in">Inbound only</option><option value="out">Outbound only</option>
+          </select>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, company, email or message…" style={{ ...input, flex: 1, minWidth: 220 }} />
+        </div>
+      </div>
 
-        {error && <p role="alert" style={{ color: "#D8607A" }}>{error}</p>}
-        {adding && (
-          <div style={{ background: V.surface, border: `1px solid ${V.border}`, borderRadius: 14, padding: 16, marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-            <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ ...input, flex: "1 1 180px" }} />
-            <input placeholder="Company / email" value={form.companyEmail} onChange={(e) => setForm({ ...form, companyEmail: e.target.value })} style={{ ...input, flex: "1 1 180px" }} />
-            <select aria-label="New contact PoC owner" value={form.ownerEmail} onChange={e => setForm({ ...form, ownerEmail: e.target.value })} style={input}>
-              <option value="">Unassigned PoC</option>
-              {ownerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} style={input}>
-              <option>Potential Renter</option><option>Potential Ambassador</option><option>Renter</option><option>Partner</option><option>Other</option>
-            </select>
-            <select aria-label="CRM state" value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value })} style={input}>
-              {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-            </select>
-            <button onClick={addContact} disabled={busy === "new" || !form.name.trim()} style={{ fontFamily: font.i, fontSize: 13, fontWeight: 600, color: "#fff", background: "#00B85C", border: "none", borderRadius: 10, padding: "9px 18px", cursor: "pointer", opacity: !form.name.trim() ? 0.5 : 1 }}>Save</button>
+      {/* master / detail */}
+      <div style={{ display: "grid", gridTemplateColumns: view === "list" ? "minmax(320px,380px) minmax(0,1fr)" : "minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+
+        {view === "list" ? (
+          <div style={{ ...card, overflow: "hidden", position: "sticky", top: 16, maxHeight: "calc(100vh - 40px)", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "11px 16px", borderBottom: "1px solid var(--divider)", display: "flex", justifyContent: "space-between", ...micro }}><span>{rows.length} contacts</span><span>Last touch</span></div>
+            <div style={{ overflowY: "auto" }}>{renderList()}</div>
+          </div>
+        ) : (
+          <div style={{ ...card, overflowX: "auto" }}>
+            <div style={{ minWidth: 1020 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.6fr) 110px 86px minmax(170px,1.3fr) minmax(190px,1.4fr) 140px 44px", gap: 14, padding: "11px 18px", borderBottom: "1px solid var(--divider)", ...micro }}>
+                <span>{rows.length} contacts</span><span>Relationship</span><span>Temp</span><span>Interest</span><span>Next step</span><span>Last touch</span><span>PoC</span>
+              </div>
+              {renderTable()}
+            </div>
           </div>
         )}
 
-        <div style={{ marginTop: 18 }}><PocFilter owners={owners} leads={leads} value={activeOwnerFilter} onChange={value => { setOwnerFilter(value); setSelId(null); }} /></div>
-
-        {/* pipeline bar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 18, background: V.surface, border: `1px solid ${V.border}`, borderRadius: 14, padding: "14px 18px", boxShadow: "0 1px 3px rgba(16,24,40,0.04)", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
-            <span style={{ fontFamily: font.p, fontWeight: 800, fontSize: 22, color: V.ink }}>{counts.all}</span>
-            <span style={{ ...micro, fontSize: 10.5, color: V.muted2 }}>in CRM</span>
-          </div>
-          <div style={{ flex: 1, display: "flex", height: 8, borderRadius: 999, overflow: "hidden", background: V.pillTrack, minWidth: 120 }}>
-            {segs.map((s, i) => <div key={i} style={{ width: s.w + "%", background: s.color }} />)}
-          </div>
-          <div aria-label="CRM states" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", maxWidth: "100%" }}>
-            <span style={{ ...micro, fontSize: 10.5, color: V.muted2 }}>States</span>
-            {CHIPS.map(([k, label, dot]) => {
-              const on = filter === k;
-              const onBg = dark ? "#0A66C2" : "#0B1220";
-              return (
-                <button key={k} onClick={() => setFilter(k)} style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontFamily: font.i, fontSize: 12.5, fontWeight: on ? 600 : 500, color: on ? "#fff" : V.body, background: on ? onBg : V.surface, border: `1px solid ${on ? onBg : V.inputBorder}`, borderRadius: 999, padding: "6px 12px" }}>
-                  {k !== "all" && <span style={{ width: 7, height: 7, borderRadius: "50%", background: dot as string, display: "inline-block" }} />}
-                  {label}<span style={{ fontFamily: font.m, fontSize: 11, fontWeight: 600, color: on ? "#fff" : V.faint, marginLeft: 2 }}>{counts[k]}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {view === "list" && <div style={{ ...card, overflow: "hidden", minHeight: 440 }}>{renderDetail(false)}</div>}
       </div>
 
-      {/* MASTER-DETAIL */}
-      <div style={{ padding: "18px 20px 20px", display: "grid", gridTemplateColumns: "360px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
+      {/* table drawer */}
+      {view === "table" && drawer && cur && (
+        <>
+          <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(8,11,18,.42)", zIndex: 40 }} />
+          <div style={{ position: "fixed", top: 0, right: 0, height: "100vh", width: "min(760px,100vw)", zIndex: 50, overflowY: "auto", background: "var(--card)", borderLeft: "1px solid var(--card-border)", boxShadow: "-12px 0 40px rgba(8,11,18,.3)" }}>{renderDetail(true)}</div>
+        </>
+      )}
+    </div>
+  );
 
-        {/* LIST */}
-        <div style={{ background: V.surface, border: `1px solid ${V.border}`, borderRadius: 16, boxShadow: "0 1px 3px rgba(16,24,40,0.04)", overflow: "hidden", position: "sticky", top: 16 }}>
-          <div style={{ padding: "14px 14px 12px", borderBottom: `1px solid ${V.border2}` }}>
-            <div style={{ position: "relative" }}>
-              <span style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", color: V.faint, pointerEvents: "none", display: "flex" }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
-              </span>
-              <input aria-label="Search contacts and PoC owners" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search contact, PoC or message…" style={{ ...input, width: "100%", padding: "11px 13px 11px 38px", fontSize: 13.5 }} />
+  // ── list rows ──
+  function renderList() {
+    if (loading) return [0, 1, 2, 3, 4].map((i) => <div key={i} style={{ height: 70, borderBottom: "1px solid var(--divider)", background: "var(--band)" }} />);
+    if (!rows.length) return <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--muted)", font: `500 13px ${F}` }}>No contacts in this view.</div>;
+    return rows.map((p) => {
+      const r = relationship(p), t = temperature(p), rc = relChip(r), on = cur?.id === p.id;
+      const last = p.conversations[0];
+      return (
+        <div key={p.id} onClick={() => setSelId(p.id)} style={{ display: "flex", gap: 11, padding: "12px 16px", borderBottom: "1px solid var(--divider)", cursor: "pointer", background: on ? "var(--row-selected-bg)" : "transparent", boxShadow: on ? "inset 3px 0 0 var(--accent)" : "none" }}>
+          <span style={{ flex: "none", width: 34, height: 34, borderRadius: 10, background: "var(--avatar-bg)", color: "var(--avatar-fg)", display: "grid", placeItems: "center", font: `700 13px ${G}` }}>{initials(p.name)}</span>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span style={{ font: `700 14px ${F}`, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+              <span style={{ flex: "none", font: `700 10px ${F}`, padding: "2px 8px", borderRadius: 999, background: rc.bg, color: rc.fg }}>{REL_LABEL[r]}</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ flex: "none", font: `500 11.5px ${F}`, color: "var(--muted2)", whiteSpace: "nowrap" }}>{lastTouch(p.lastActivityAt)}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              {last && <span style={{ flex: "none", font: `700 9.5px ${F}`, letterSpacing: ".04em", textTransform: "uppercase", padding: "2px 5px", borderRadius: 4, ...chChip(last.type) }}>{last.type}</span>}
+              <span style={{ font: `500 12.5px ${F}`, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{last?.text || p.email || "No messages yet"}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, font: `600 11.5px ${F}`, color: "var(--muted)", minWidth: 0 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 5, flex: "none" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: tempChip(t).dot }} />{t}</span>
+              {p.nextStep && <span style={{ color: isDue(p) ? "var(--danger)" : "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>→ {p.nextStep}</span>}
+              <span style={{ flex: 1 }} />
+              <span title={p.pocOwner || "Unassigned"} style={{ flex: "none", width: 18, height: 18, borderRadius: "50%", background: POC_COLOR[p.pocOwner || "Unassigned"], color: "#fff", display: "grid", placeItems: "center", font: `700 8.5px ${F}` }}>{(p.pocOwner || "U")[0]}</span>
             </div>
           </div>
-          <div style={{ maxHeight: "calc(100vh - 210px)", overflowY: "auto" }}>
-            {loading ? (
-              [1, 2, 3, 4, 5].map((i) => <div key={i} style={{ height: 64, borderBottom: `1px solid ${V.border2}`, background: V.surface2, opacity: 0.6 }} />)
-            ) : filtered.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 16px", color: V.muted, fontSize: 13 }}>No contacts in this view.</div>
-            ) : filtered.map((l) => {
-              const on = cur?.id === l.id;
-              const sc = stageColor(l.stage || "new", dark);
-              const cc = chanColor(l.channel, dark);
-              const log = Array.isArray(l.commsLog) ? l.commsLog : [];
-              return (
-                <div key={l.id} onClick={() => setSelId(l.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 15px", cursor: "pointer", borderBottom: `1px solid ${V.border2}`, borderLeft: `3px solid ${on ? "#0A66C2" : "transparent"}`, background: on ? V.rowActive : "transparent" }}>
-                  <span style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 10, background: cc.bg, color: cc.fg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font.p, fontWeight: 700, fontSize: 14 }}>{initials(l.name)}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <span style={{ fontWeight: 600, fontSize: 14, color: V.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</span>
-                      <span style={{ fontFamily: font.m, fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", color: cc.fg, background: cc.bg, borderRadius: 5, padding: "2px 6px", flexShrink: 0 }}>{l.channel}</span>
-                    </div>
-                    <div style={{ fontSize: 12.5, color: V.muted2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{l.companyEmail || l.type || l.handle || "—"}</div>
-                    <div title={`PoC: ${ownerLabels.get(ownerKey(l.ownerEmail)) || "Unassigned"}`} style={{ fontSize: 12, fontWeight: l.ownerEmail ? 600 : 400, color: l.ownerEmail ? V.body : V.faint, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>PoC: {ownerLabels.get(ownerKey(l.ownerEmail)) || "Unassigned"}</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: sc.fg, background: sc.bg, borderRadius: 999, padding: "3px 9px" }}>
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: sc.dot }} />{(STAGES.find((s) => s.key === (l.stage || "new")) || STAGES[0]).label}
-                    </span>
-                    <span style={{ fontSize: 11, color: V.faint, whiteSpace: "nowrap" }}>{fmtDay(l.lastContactAt)}{log.length ? ` · ${log.length}` : ""}</span>
-                  </div>
-                </div>
-              );
-            })}
+        </div>
+      );
+    });
+  }
+
+  // ── table rows ──
+  function renderTable() {
+    if (loading) return [0, 1, 2, 3, 4].map((i) => <div key={i} style={{ height: 56, borderBottom: "1px solid var(--divider)", background: "var(--band)" }} />);
+    if (!rows.length) return <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--muted)", font: `500 13px ${F}` }}>No contacts in this view.</div>;
+    return rows.map((p) => {
+      const r = relationship(p), t = temperature(p), rc = relChip(r), on = cur?.id === p.id && drawer;
+      return (
+        <div key={p.id} onClick={() => openPerson(p.id)} style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.6fr) 110px 86px minmax(170px,1.3fr) minmax(190px,1.4fr) 140px 44px", gap: 14, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--divider)", cursor: "pointer", background: on ? "var(--row-selected-bg)" : "transparent", boxShadow: on ? "inset 3px 0 0 var(--accent)" : "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <span style={{ flex: "none", width: 30, height: 30, borderRadius: 9, background: "var(--avatar-bg)", color: "var(--avatar-fg)", display: "grid", placeItems: "center", font: `700 12px ${G}` }}>{initials(p.name)}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: `700 14px ${F}`, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+              <div style={{ font: `500 12px ${F}`, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{[p.companyDomain, p.email || p.contact].filter(Boolean).join(" · ") || "—"}</div>
+            </div>
+          </div>
+          <span><span style={{ font: `700 11px ${F}`, padding: "3px 9px", borderRadius: 999, background: rc.bg, color: rc.fg, whiteSpace: "nowrap" }}>{REL_LABEL[r]}</span></span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6, font: `600 12.5px ${F}`, color: "var(--text2)" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: tempChip(t).dot }} />{t}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ font: `600 12.5px ${F}`, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.interest || "—"}</div>
+            <div style={{ font: `600 11.5px ${G}`, color: "var(--muted)" }}>{p.liveRentals > 0 ? `${money(p.mrr)}/mo` : p.dealValue ? `${money(p.dealValue)}/mo pot.` : ""}</div>
+          </div>
+          <span style={{ font: `600 12.5px ${F}`, color: p.nextStep && isDue(p) ? "var(--danger)" : "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.nextStep || "No next step"}</span>
+          <span style={{ font: `500 12.5px ${F}`, color: "var(--muted)", whiteSpace: "nowrap" }}>{lastTouch(p.lastActivityAt)}</span>
+          <span title={p.pocOwner || "Unassigned"} style={{ width: 24, height: 24, borderRadius: "50%", background: POC_COLOR[p.pocOwner || "Unassigned"], color: "#fff", display: "grid", placeItems: "center", font: `700 10px ${F}` }}>{(p.pocOwner || "U")[0]}</span>
+        </div>
+      );
+    });
+  }
+
+  // ── detail ──
+  function renderDetail(inDrawer: boolean) {
+    const p = cur;
+    if (!p) return <div style={{ display: "grid", placeItems: "center", height: 440, color: "var(--muted)", font: `500 14px ${F}` }}>Select a contact to view their history.</div>;
+    const r = relationship(p), t = temperature(p), rc = relChip(r), tc = tempChip(t);
+    const dd = dueDays(p);
+    const isClient = p.liveRentals > 0 || p.totalRentals > 0 || !!p.userId;
+    const tl = tlTab === "all" ? p.conversations : p.conversations.filter((e) => convGroup(e.type) === tlTab);
+    const tabN = (k: "all" | "calls" | "msgs" | "notes") => (k === "all" ? p.conversations.length : p.conversations.filter((e) => convGroup(e.type) === k).length);
+    const sorted = [...p.calls].sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
+    const metaSel: React.CSSProperties = { ...input, width: "100%", padding: "7px 9px", fontWeight: 600 };
+    const openInRenters = `/admin/renters?q=${encodeURIComponent(p.email || p.name)}`;
+
+    return (
+      <>
+        {/* header */}
+        <div style={{ padding: "20px 22px", display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", borderBottom: "1px solid var(--divider)" }}>
+          <span style={{ flex: "none", width: 50, height: 50, borderRadius: 14, background: "var(--avatar-bg)", color: "var(--avatar-fg)", display: "grid", placeItems: "center", font: `700 20px ${G}` }}>{initials(p.name)}</span>
+          <div style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", gap: 7 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ font: `700 21px ${G}`, letterSpacing: "-.01em", color: "var(--text)" }}>{p.name}</span>
+              {p.companyDomain && <span style={{ font: `600 12px ${F}`, color: "var(--text2)", background: "var(--tag-bg)", borderRadius: 6, padding: "2px 8px" }}>{p.companyDomain}</span>}
+              <span style={{ font: `700 11px ${F}`, padding: "3px 9px", borderRadius: 999, background: rc.bg, color: rc.fg }}>{REL_LABEL[r]}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5, font: `700 11px ${F}`, padding: "3px 9px", borderRadius: 999, background: tc.bg, color: tc.fg }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: tc.dot }} />{t}{p.leadStage ? " · set" : ""}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {p.email && <span style={{ font: `500 12.5px ${F}`, color: "var(--text2)", border: "1px solid var(--card-border)", borderRadius: 999, padding: "3px 10px" }}>{p.email}</span>}
+              {p.contact && <span style={{ font: `500 12.5px ${F}`, color: "var(--text2)", border: "1px solid var(--card-border)", borderRadius: 999, padding: "3px 10px" }}>{p.channel === "TG" ? "TG " : p.channel === "WA" ? "WA " : ""}{p.contact}</span>}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {isClient && <a href={openInRenters} style={{ font: `700 12.5px ${F}`, color: "var(--link)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "8px 12px", textDecoration: "none", whiteSpace: "nowrap" }}>Open in Renters →</a>}
+            {inDrawer && <button onClick={() => setDrawer(false)} style={{ border: "1px solid var(--card-border)", background: "var(--card)", borderRadius: 10, width: 34, height: 34, font: `700 15px ${F}`, color: "var(--muted)", cursor: "pointer" }}>×</button>}
           </div>
         </div>
 
-        {/* DETAIL */}
-        <div style={{ background: V.surface, border: `1px solid ${V.border}`, borderRadius: 16, boxShadow: "0 1px 3px rgba(16,24,40,0.04)", overflow: "hidden", minHeight: 420 }}>
-          {!cur ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 420, color: V.muted, fontSize: 14 }}>Select a contact to view their history.</div>
-          ) : (() => {
-            const sc = stageColor(cur.stage || "new", dark);
-            const cc = chanColor(cur.channel, dark);
-            // Newest first — entries are appended to the array so raw order isn't reliably
-            // chronological; sort by ts descending (ISO strings sort chronologically).
-            const log = (Array.isArray(cur.commsLog) ? [...cur.commsLog] : []).sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
-            if (cur.notes) log.push({ ts: "", channel: "note", body: cur.notes });
-            const d = draft[cur.id] || { channel: "note", body: "" };
-            const metaCell = { background: V.surface, padding: "16px 26px" } as const;
-            return (
-              <>
-                {/* detail header */}
-                <div style={{ padding: "22px 26px", borderBottom: `1px solid ${V.border2}`, display: "flex", alignItems: "flex-start", gap: 16 }}>
-                  <span style={{ flexShrink: 0, width: 52, height: 52, borderRadius: 13, background: cc.bg, color: cc.fg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font.p, fontWeight: 700, fontSize: 20 }}>{initials(cur.name)}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: font.p, fontWeight: 700, fontSize: 20, letterSpacing: "-0.01em", color: V.ink }}>{cur.name}</span>
-                      <span style={{ fontFamily: font.m, fontSize: 9.5, letterSpacing: "0.06em", textTransform: "uppercase", color: cc.fg, background: cc.bg, borderRadius: 6, padding: "3px 8px" }}>{cur.channel}</span>
-                    </div>
-                    <div style={{ fontSize: 13.5, color: V.muted2, marginTop: 3 }}>{cur.companyEmail || cur.handle || cur.type || "—"}</div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ position: "relative" }}>
-                      <select aria-label="CRM state" value={cur.stage || "new"} onChange={(e) => patch(cur.id, { stage: e.target.value })} style={{ ...input, appearance: "none", WebkitAppearance: "none", padding: "9px 34px 9px 14px", fontWeight: 600, cursor: "pointer", color: sc.fg }}>
-                        {STAGES.map((s) => <option key={s.key} value={s.key} style={{ color: V.ink }}>{s.label}</option>)}
-                      </select>
-                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: V.muted2, fontSize: 10 }}>▼</span>
-                    </div>
-                    <span onClick={() => deleteLead(cur.id, cur.name)} style={{ fontSize: 12.5, fontWeight: 600, color: "#C2334E", cursor: "pointer", opacity: busy === cur.id ? 0.5 : 1 }}>Delete</span>
-                  </div>
-                </div>
-
-                {/* meta grid */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 1, background: V.border2, borderBottom: `1px solid ${V.border2}` }}>
-                  <div style={metaCell}>
-                    <div style={{ ...micro, color: V.faint, marginBottom: 6 }}>Source</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: V.ink }}>{cur.source || cur.channel}</div>
-                  </div>
-                  <div style={metaCell}>
-                    <label htmlFor="lead-poc-owner" style={{ ...micro, display: "block", color: V.faint, marginBottom: 6 }}>PoC owner</label>
-                    <select id="lead-poc-owner" value={ownerKey(cur.ownerEmail)} disabled={busy !== null} onChange={e => { void patch(cur.id, { ownerEmail: e.target.value || null }); }} style={{ ...input, width: "100%", padding: "6px 10px" }}>
-                      <option value="">Unassigned</option>
-                      {ownerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </div>
-                  <div style={metaCell}>
-                    <div style={{ ...micro, color: V.faint, marginBottom: 6 }}>Follow-up</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: cur.followUpDate ? V.ink : V.faint }}>{cur.followUpDate ? fmtDay(cur.followUpDate) : "None set"}</div>
-                  </div>
-                </div>
-
-                {/* log a touchbase */}
-                <div style={{ padding: "20px 26px", background: V.surface2, borderBottom: `1px solid ${V.border2}` }}>
-                  <div style={{ ...micro, fontSize: 10.5, color: V.muted2, marginBottom: 10 }}>Notes & conversations</div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "stretch", flexWrap: "wrap" }}>
-                    <div style={{ position: "relative", flexShrink: 0 }}>
-                      <select aria-label="Entry type" disabled={busy === cur.id} value={d.channel} onChange={(e) => setDraft((p) => ({ ...p, [cur.id]: { ...d, channel: e.target.value } }))} style={{ ...input, appearance: "none", WebkitAppearance: "none", height: "100%", padding: "11px 32px 11px 13px", fontWeight: 600, cursor: "pointer" }}>
-                        {CHANNELS.map((c) => <option key={c} value={c}>{c === "note" ? "Note" : c === "linkedin" ? "LinkedIn" : c === "whatsapp" ? "WhatsApp" : c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-                      </select>
-                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: V.muted2, fontSize: 10 }}>▼</span>
-                    </div>
-                    <textarea aria-label="Add a note or conversation" disabled={busy === cur.id} maxLength={10000} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void logComm(cur.id); } }} value={d.body} onChange={(e) => setDraft((p) => ({ ...p, [cur.id]: { ...d, body: e.target.value } }))} placeholder="Add a note or record what was said…" style={{ ...input, flex: 1, minHeight: 46, padding: "12px 14px", fontSize: 14 }} />
-                    <button onClick={() => logComm(cur.id)} disabled={busy === cur.id || !d.body.trim()} style={{ flexShrink: 0, alignSelf: "stretch", background: d.body.trim() ? "#0A66C2" : (dark ? "#274155" : "#B7C7DA"), color: "#fff", border: "none", borderRadius: 10, padding: "0 22px", fontFamily: font.i, fontSize: 14, fontWeight: 600, cursor: d.body.trim() ? "pointer" : "default" }}>{busy === cur.id ? "Adding…" : "Add entry"}</button>
-                  </div>
-                </div>
-
-                <p style={{ margin: 0, padding: "8px 26px", fontSize: 12, color: V.muted2 }}>Enter to save · Shift+Enter for a new line. Entries are shared with Inbound.</p>
-
-                {/* timeline */}
-                <div style={{ padding: "22px 26px 26px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-                    <span style={{ ...micro, fontSize: 10.5, color: V.muted2 }}>History</span>
-                    <span style={{ fontSize: 12, color: V.faint }}>{log.length} logged</span>
-                  </div>
-                  {log.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: V.muted2, fontStyle: "italic" }}>No notes or conversations yet.</div>
-                  ) : (
-                    <div style={{ position: "relative", paddingLeft: 26 }}>
-                      <div style={{ position: "absolute", left: 6, top: 4, bottom: 4, width: 2, background: V.border }} />
-                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                        {log.map((c, i) => {
-                          const tc = chanColor(c.channel, dark);
-                          return (
-                            <div key={i} style={{ position: "relative" }}>
-                              <span style={{ position: "absolute", left: -26, top: 3, width: 12, height: 12, borderRadius: "50%", background: V.surface, border: `2.5px solid ${tc.fg}` }} />
-                              <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
-                                <span style={{ fontFamily: font.m, fontSize: 9.5, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: tc.fg, background: tc.bg, borderRadius: 5, padding: "3px 8px" }}>{c.channel}</span>
-                                <span style={{ fontSize: 12, color: V.faint }}>{c.ts ? fmt(c.ts) : "Previous notes · date not recorded"} · {c.authorName?.split(/\s+/)[0] || c.authorEmail?.split("@")[0] || "Author not recorded"}</span>
-                              </div>
-                              <p style={{ fontSize: 14, lineHeight: 1.6, color: V.body, margin: 0, whiteSpace: "pre-wrap" }}>{c.body}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {cur.message && <div style={{ marginTop: 18, fontSize: 12.5, color: V.muted }}><strong style={{ color: V.ink }}>Intake:</strong> {cur.message}</div>}
-                </div>
-              </>
-            );
-          })()}
+        {/* meta grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", borderBottom: "1px solid var(--divider)" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, padding: "13px 20px", borderRight: "1px solid var(--divider)" }}>
+            <span style={micro}>Status</span>
+            <select value={p.statusOverride || "auto"} onChange={(e) => patch(p.id, { statusOverride: e.target.value === "auto" ? "" : e.target.value })} style={metaSel}>
+              <option value="auto">Auto · {REL_LABEL[r]}</option><option value="renting">Pin: Client (renting)</option><option value="dormant">Pin: Past (dormant)</option>
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, padding: "13px 20px", borderRight: "1px solid var(--divider)" }}>
+            <span style={micro}>Temperature</span>
+            <select value={p.leadStage || "auto"} onChange={(e) => patch(p.id, { leadStage: e.target.value === "auto" ? "" : e.target.value })} style={metaSel}>
+              <option value="auto">Auto · {autoTemp(p)}</option><option value="hot">Hot (set)</option><option value="warm">Warm (set)</option><option value="cold">Cold (set)</option>
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, padding: "13px 20px", borderRight: "1px solid var(--divider)" }}>
+            <span style={micro}>PoC owner</span>
+            <select value={p.pocOwner || ""} onChange={(e) => patch(p.id, { pocOwner: e.target.value })} style={metaSel}>
+              <option value="">Unassigned</option>{POCS.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, padding: "13px 20px" }}>
+            <span style={micro}>Direction</span>
+            <select value={p.direction || ""} onChange={(e) => patch(p.id, { direction: e.target.value })} style={metaSel}>
+              <option value="">— not set —</option><option value="in">Inbound</option><option value="out">Outbound</option>
+            </select>
+          </label>
         </div>
-      </div>
+
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* cards: next step / calls / interest */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+            <div style={{ border: `1px solid ${p.nextStep && dd != null && dd < 0 ? "var(--danger-border)" : "var(--card-border)"}`, borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={micro}>Next step</span>
+                <span style={{ font: `700 11.5px ${F}`, color: dd != null && dd < 0 ? "var(--danger)" : "var(--muted)" }}>{p.followUp ? (dd != null && dd < 0 ? `Overdue · ${fmtDay(p.followUp)}` : dd === 0 ? "Due today" : `Due ${fmtDay(p.followUp)}`) : "No date"}</span>
+              </div>
+              <textarea rows={2} defaultValue={p.nextStep || ""} key={`ns-${p.id}`} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.nextStep || "")) patch(p.id, { nextStep: v }); }} placeholder="What happens next?" style={{ ...input, resize: "none", border: "none", background: "transparent", padding: 0, font: `600 13.5px/1.4 ${F}` }} />
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="date" value={dInput(p.followUp)} onChange={(e) => patch(p.id, { followUp: e.target.value || null })} style={{ ...input, flex: 1, padding: "5px 8px" }} />
+                <button onClick={() => patch(p.id, { nextStep: "", followUp: null })} style={{ border: "1px solid var(--card-border)", background: "var(--st-new-bg)", color: "var(--st-new-fg)", borderRadius: 8, padding: "6px 10px", font: `700 12px ${F}`, cursor: "pointer" }}>Done</button>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--card-border)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={micro}>Calls</span>
+              {sorted.length === 0 ? <span style={{ font: `500 12.5px ${F}`, color: "var(--muted2)" }}>No calls booked.</span> : sorted.slice(0, 3).map((c) => {
+                const up = !c.cancelled && new Date(c.scheduledAt).getTime() > Date.now();
+                return (
+                  <div key={c.key} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+                    <span style={{ flex: "none", marginTop: 4, width: 8, height: 8, borderRadius: "50%", border: `2px solid ${up ? "var(--accent)" : "var(--green)"}`, background: up ? "var(--accent)" : "transparent" }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ font: `700 13px ${F}`, color: "var(--text)" }}>{up ? "Upcoming" : "Call"}{c.cancelled ? " · cancelled" : ""}</div>
+                      <div style={{ font: `500 12px ${F}`, color: up ? "var(--link)" : "var(--muted)" }}>{fmtFull(c.scheduledAt)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ border: "1px solid var(--card-border)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={micro}>Interested in</span>
+              <textarea rows={2} defaultValue={p.interest || ""} key={`int-${p.id}`} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.interest || "")) patch(p.id, { interest: v }); }} placeholder="What do they want to rent?" style={{ ...input, resize: "none", border: "none", background: "transparent", padding: 0, font: `600 13.5px/1.4 ${F}` }} />
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ font: `500 12px ${F}`, color: "var(--muted2)" }}>$/mo potential</span>
+                <input type="number" min={0} defaultValue={p.dealValue ?? ""} key={`dv-${p.id}`} onBlur={(e) => { const v = e.target.value === "" ? null : Number(e.target.value); if (v !== p.dealValue) patch(p.id, { dealValue: v }); }} placeholder="—" style={{ ...input, width: 90, padding: "4px 8px", font: `700 13px ${G}` }} />
+              </div>
+            </div>
+          </div>
+
+          {/* from renters */}
+          {isClient && (
+            <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap", background: "var(--band)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "12px 16px" }}>
+              <span style={micro}>From Renters</span>
+              <Stat n={`${p.liveRentals}`} sub={`of ${p.totalRentals}`} label="Live accounts" />
+              <Stat n={money(p.mrr)} label="Per month" />
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ font: `700 11.5px ${F}`, padding: "3px 9px", borderRadius: 999, alignSelf: "flex-start", whiteSpace: "nowrap", background: p.paymentFailed ? "var(--pri-p1-bg)" : p.paymentMethod === "Crypto Wallet" ? "var(--pay-crypto-bg)" : "var(--pay-card-bg)", color: p.paymentFailed ? "var(--pri-p1-fg)" : p.paymentMethod === "Crypto Wallet" ? "var(--pay-crypto-fg)" : "var(--pay-card-fg)" }}>{p.paymentFailed ? "Payment failed" : p.paymentMethod || "No payment yet"}</span>
+                <span style={{ font: `600 11.5px ${F}`, color: "var(--muted)" }}>Payment</span>
+              </div>
+              <Stat n={fmtDay(p.joinedAt)} label={r === "client" ? "Client since" : "Since"} />
+            </div>
+          )}
+
+          {/* AI summary */}
+          {p.leadId && p.conversations.length > 0 && (
+            <div style={{ border: "1px solid var(--chip-active-border)", background: "var(--link-bg)", borderRadius: 12, padding: "13px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ ...micro, color: "var(--link)" }}>Summary</span>
+                <button onClick={() => regenSummary(p)} disabled={summarising} style={{ border: "none", background: "none", padding: 0, font: `700 11.5px ${F}`, color: "var(--link)", cursor: "pointer" }}>{summarising ? "Summarising…" : p.commsSummaryStale || !p.commsSummary ? "Generate ↻" : "Refresh ↻"}</button>
+              </div>
+              <p style={{ margin: 0, font: `500 13.5px/1.5 ${F}`, color: p.commsSummary ? "var(--text)" : "var(--muted2)" }}>{p.commsSummary || "No summary yet — generate one from the thread below."}{p.commsSummary && p.commsSummaryStale ? " (newer messages since — refresh)" : ""}</p>
+            </div>
+          )}
+
+          {/* composer */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "var(--band)", border: "1px solid var(--card-border)", borderRadius: 12, padding: 10 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {ENTRY_TYPES.map((k) => { const on = entryType === k; const c = chChip(k); return <button key={k} onClick={() => setEntryType(k)} style={{ border: `1px solid ${on ? c.fg : "var(--card-border)"}`, background: on ? c.bg : "var(--card)", color: on ? c.fg : "var(--muted)", borderRadius: 999, padding: "4px 11px", font: `700 12px ${F}`, cursor: "pointer" }}>{k}</button>; })}
+            </div>
+            <textarea rows={2} value={entryText} onChange={(e) => setEntryText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); addEntry(p); } }} placeholder={`Log a ${entryType.toLowerCase()}…`} style={{ ...input, resize: "vertical", font: `500 13.5px/1.45 ${F}` }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ font: `500 11.5px ${F}`, color: "var(--muted2)" }}>Enter to save · Shift+Enter for a new line · Shows in Renters too</span>
+              <button onClick={() => addEntry(p)} disabled={busy === p.id || !entryText.trim()} style={{ border: "none", background: entryText.trim() ? "var(--btn-primary-bg)" : "var(--toggle-off)", color: "#fff", borderRadius: 10, padding: "8px 14px", font: `700 12.5px ${F}`, cursor: entryText.trim() ? "pointer" : "default" }}>{busy === p.id ? "Adding…" : "Add entry"}</button>
+            </div>
+          </div>
+
+          {/* timeline */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ ...micro, marginRight: 4 }}>History</span>
+              {([["all", "All"], ["calls", "Calls"], ["msgs", "Messages"], ["notes", "Notes"]] as const).map(([k, l]) => <button key={k} onClick={() => setTlTab(k)} style={{ border: "none", background: tlTab === k ? "var(--accent)" : "var(--neutral-chip-bg)", color: tlTab === k ? "#fff" : "var(--text2)", borderRadius: 999, padding: "4px 10px", font: `700 12px ${F}`, cursor: "pointer" }}>{l} <span style={{ font: `700 11px ${G}`, opacity: 0.7 }}>{tabN(k)}</span></button>)}
+            </div>
+            {tl.length === 0 ? <div style={{ font: `500 12.5px ${F}`, color: "var(--muted2)", fontStyle: "italic" }}>Nothing logged in this view.</div> : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {tl.map((e) => { const c = chChip(e.type); const who = e.author?.split(/\s+/)[0] || "—"; const when = e.ts ? fmtFull(e.ts) : "date not recorded"; return (
+                  <div key={e.id} style={{ display: "grid", gridTemplateColumns: "16px minmax(0,1fr)", gap: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ flex: "none", marginTop: 5, width: 10, height: 10, borderRadius: "50%", border: `2px solid ${c.fg}`, background: "var(--card)" }} /><span style={{ flex: 1, width: 1.5, background: "var(--divider)" }} /></div>
+                    <div style={{ paddingBottom: 16, display: "flex", flexDirection: "column", gap: 5 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ font: `700 10px ${F}`, letterSpacing: ".05em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 5, background: c.bg, color: c.fg }}>{e.type}</span>
+                        <span style={{ font: `500 12px ${F}`, color: "var(--muted2)" }}>{when} · {who}</span>
+                      </div>
+                      <span style={{ font: `500 13.5px/1.55 ${F}`, color: "var(--text2)", whiteSpace: "pre-wrap" }}>{e.text}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  }
+}
+
+function Stat({ n, sub, label }: { n: string; sub?: string; label: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <span style={{ font: `700 18px ${G}`, color: "var(--text)" }}>{n}{sub && <span style={{ font: `500 12px ${F}`, color: "var(--muted2)" }}> {sub}</span>}</span>
+      <span style={{ font: `600 11.5px ${F}`, color: "var(--muted)" }}>{label}</span>
     </div>
   );
 }
