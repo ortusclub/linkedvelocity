@@ -1,7 +1,7 @@
 # LinkedVelocity — assistant starting point
 
 ## Inventory Dashboard Construction — Samuel, 10 November 2026
-Include Construction accounts in the automated Inventory Dashboard accounts export, grouped contiguously at the top with Status = Construction. Use the shared Inventory classifier and per-profile owner application matching. Preserve existing columns and credential gating; keep Initial/pipeline accounts on Onboarding.
+Include Construction accounts in the automated Inventory Dashboard accounts export, grouped contiguously at the top with Status = Construction. Use the shared Inventory classifier and per-profile owner application matching. Preserve existing columns and credential gating; keep Initial/pipeline accounts on Onboarding. Export dates as dd-mmm-yyyy (01-Jan-2023); preserve date values and use that display format when formatting the connected sheet.
 
 ## Owners sheet Construction grouping — Samuel, 10 November 2026
 Make construction accounts easy to find together in the automated Owners sheet. Use the same account-stage classification as Inventory. Preserve every owner once, existing column positions and relationship values; append filterable construction indicators and names rather than replacing the existing profile list. Keep mixed-stage owners intact.

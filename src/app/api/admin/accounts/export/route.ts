@@ -25,7 +25,9 @@ function csvCell(v: unknown): string {
 
 function fmtDate(d: Date | null): string {
   if (!d) return "";
-  return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  return `${day}-${month}-${d.getUTCFullYear()}`;
 }
 
 // Match Inventory's stage classification; keep the existing sheet hold label.
