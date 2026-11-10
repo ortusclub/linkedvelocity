@@ -51,15 +51,18 @@ export async function GET(req: Request, context: Context) {
     const id = new URL(req.url).searchParams.get("id");
     if (id && !selfServiceAction.shape.id.safeParse(id).success) return json({ error: "Invalid onboarding reference." }, 400);
     if (id) return json({ session: await onboardingSummary(id, me.id) });
-    const [countries, sessions, doneMethods] = await Promise.all([
+    const [countries, sessions, doneMethods, queueCount] = await Promise.all([
       onboardingCountries(),
       prisma.selfServiceOnboarding.findMany({ where: { referrerId: me.id }, orderBy: { createdAt: "desc" }, take: 30, select: { id: true, state: true, application: { select: { fullName: true, status: true, onboardedAt: true, paidAt: true } } } }),
       // Which onboarding paths this referrer has done — the first-timer tour keeps
       // showing until they've completed a computer AND a phone onboarding at least once.
       prisma.ambassadorApplication.findMany({ where: { referredBy: me.slug, onboardingMethod: { not: null } }, select: { onboardingMethod: true } }),
+      // The LV team's onboarding backlog (same definition as the portal route) — drives the honest
+      // wait estimate on the hand-off "what happens next" screen. Global, same for every referrer.
+      prisma.ambassadorApplication.count({ where: { onboardedAt: null, paidAt: null, withdrawnAt: null, status: { notIn: ["rejected", "onboarded"] }, referralSource: { not: "self-service" }, selfServiceOnboarding: { is: null } } }),
     ]);
     const methods = new Set(doneMethods.map((m) => m.onboardingMethod));
-    return json({ displayCurrency: me.displayCurrency, emailEnabled: emailSetupConfig().enabled, phoneVerificationEnabled: phoneVerificationConfigured(), countries, autoPurchase: proxyPurchaseLimits().enabled, config: currencyConfig(me.slug), configured: !!process.env.GOLOGIN_API_TOKEN_KLABBER,
+    return json({ displayCurrency: me.displayCurrency, emailEnabled: emailSetupConfig().enabled, phoneVerificationEnabled: phoneVerificationConfigured(), countries, autoPurchase: proxyPurchaseLimits().enabled, config: currencyConfig(me.slug), configured: !!process.env.GOLOGIN_API_TOKEN_KLABBER, queueCount,
       doneComputer: methods.has("computer"), donePhone: methods.has("phone"),
       // `done` = no longer resumable (signed in / handed to us / onboarded / paid). The saved
       // list shows these as a summary, not a "Resume" that would restart an onboarded account.

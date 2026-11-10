@@ -1,16 +1,18 @@
 "use client";
 import { useState } from "react";
 import styles from "./wizard.module.css";
+import type { OnboardingEta } from "@/lib/onboarding-eta";
 
 // Phone hand-off: the referrer can't run GoLogin (desktop-only), so they give us a
 // temporary password and we do the sign-in on our side. The 2FA key was captured in the
 // dedicated two-step-verification step before this, so it's sent along by the wizard.
-export default function PhoneHandoff({ busy, error, submit, selfMode = false, demo = false }: {
+export default function PhoneHandoff({ busy, error, submit, selfMode = false, demo = false, eta }: {
   selfMode?: boolean;
   demo?: boolean;
   busy: boolean;
   error?: string;
   submit: (password: string) => Promise<void>;
+  eta?: OnboardingEta;
 }) {
   const [password, setPassword] = useState(demo ? "LinkedVel2026!" : "");
   const [agree, setAgree] = useState(demo);
@@ -59,6 +61,6 @@ export default function PhoneHandoff({ busy, error, submit, selfMode = false, de
     </div>
 
     <button className={styles.primary} style={{ marginTop: 18 }} disabled={busy || !ready} onClick={() => void submit(password.trim())}>{busy ? "Handing off…" : "Hand off to the team →"}</button>
-    <p className={styles.hint} style={{ textAlign: "center" }}>We&apos;ll sign in within 24 hours. Only ever share this with LinkedVelocity.</p>
+    <p className={styles.hint} style={{ textAlign: "center" }}>We&apos;ll sign in {eta ? `in about ${eta.wait}${eta.busy ? " — we're busier than usual right now" : ""}` : "within 24 hours"}. Only ever share this with LinkedVelocity.</p>
   </>;
 }
