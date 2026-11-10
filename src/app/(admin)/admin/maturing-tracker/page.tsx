@@ -153,7 +153,7 @@ export default function MaturingTrackerPage() {
                         <td style={td}>{r.connections ?? "—"}</td>
                         <td style={{ ...td, maxWidth: 320, opacity: 0.8 }}>{r.detail}{r.reason === "relogin" && (
                           <div style={{ marginTop: 6 }}>
-                            <button onClick={() => void doRecheck(r.id)} disabled={recheck[r.id] === "…"} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border,#2a2a2a)", background: "var(--card,#141414)", cursor: "pointer", fontWeight: 600 }} title="Re-check this account on the engine now (use after you've logged it back in)">⚡ Re-check now</button>
+                            <button onClick={() => void doRecheck(r.id)} disabled={recheck[r.id] === "…"} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border,#2a2a2a)", background: "var(--card,#141414)", cursor: "pointer", fontWeight: 600 }} title="Resume this account's parked campaign on the engine (use after you've logged it back in). If the login works it continues; if not it parks again.">⚡ Re-check / resume</button>
                             {recheck[r.id] && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.75 }}>{recheck[r.id]}</span>}
                           </div>
                         )}</td>

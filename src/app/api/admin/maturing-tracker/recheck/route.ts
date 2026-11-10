@@ -3,11 +3,13 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { list, control } from "@/lib/maturing/service.mjs";
 
-// "Re-check" from the tracker: the operator has re-logged-in a parked (needs_review)
-// account and wants the engine to try again now. Finds this account's live campaigns on
-// the engine and fires check-now on each — the same ⚡ the profile-maturing board does.
-// If the login now works, the campaign moves off review and the ⚠️ flag clears on the next
-// reconcile. Idempotent; a no-op campaign just reports already-running.
+// "Re-check / resume" from the tracker: the operator has re-logged-in a parked
+// (needs_review) account and wants the engine to continue it now. Finds the account's live
+// campaigns and RESUMES each (control 'resume' → the engine's restart / "Resume sending").
+// check-now alone does NOT clear needs_review — it only re-checks acceptances; resume is
+// what re-activates a parked campaign (verified 2026-11-10: ella/jann/ricky stayed in
+// needs_review after check-now, cleared on resume). If the login still fails, the engine just
+// flips it back to needs_review — harmless. Idempotent; a running campaign reports no-op.
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
@@ -39,7 +41,7 @@ export async function POST(req: NextRequest) {
     );
     if (!targets.length) return NextResponse.json({ ok: true, rechecked: 0, note: "No live campaign found to re-check." });
 
-    const results = await Promise.allSettled(targets.map((c) => control(c.id, "check")));
+    const results = await Promise.allSettled(targets.map((c) => control(c.id, "resume")));
     const rechecked = results.filter((r) => r.status === "fulfilled").length;
     return NextResponse.json({ ok: true, rechecked, total: targets.length });
   } catch (error) {
