@@ -86,6 +86,10 @@
     {
       "path": "/api/cron/auto-start-maturing?pipelineOnly=true",
       "schedule": "7,22,37,52 * * * *"
+    },
+    {
+      "path": "/api/cron/proxy-reclaim",
+      "schedule": "30 2 * * *"
     }
   ]
 }

@@ -46,6 +46,13 @@ export type PickedProxy = {
   country: string | null;
 };
 
+// The /24 of an IPv4 host (its first three octets). Subnet concentration — too many
+// accounts on one /24 — is the dominant LinkedIn restriction driver, so assignment
+// steers toward the least-populated subnet, not just the least-full IP.
+function subnetOf(host: string): string {
+  return host.split(".").slice(0, 3).join(".");
+}
+
 export async function pickAvailableProxy(opts: {
   provider: string; // "proxy-cheap" | "Proxy 6"
   type: string; // "residential" | "datacenter"
@@ -59,23 +66,47 @@ export async function pickAvailableProxy(opts: {
   const claimed = opts.claimed ?? new Set<string>();
   const exclude = opts.exclude ?? new Set<string>();
 
+  // Hard geo-match: a PH persona on a US IP (and vice-versa) is a top restriction cause,
+  // so if we know the account's country AND stock any proxy of that country, only assign
+  // that country — return null (caller flags for purchase) rather than a mismatched IP.
+  // If we stock nothing for that country, fall back to any (unchanged behaviour).
+  const stockForCountry =
+    !!wantCountry && rows.some((r) => canonCountry(r.country) === wantCountry);
+
+  // Live per-/24 population, so we can send new accounts to the emptiest subnet first.
+  const subnetLoad = new Map<string, number>();
+  for (const r of rows) {
+    const s = subnetOf(r.host);
+    subnetLoad.set(s, (subnetLoad.get(s) || 0) + r.accountCount);
+  }
+  // Fold in assignments already made earlier in this same run.
+  for (const key of claimed) {
+    const s = subnetOf(key.split(":")[0]);
+    subnetLoad.set(s, (subnetLoad.get(s) || 0) + 1);
+  }
+
   const candidates = rows.filter((r) => {
     if (r.proxyString.split(":").length < 4) return false;
     if (r.status && ["retired", "error"].includes(r.status.toLowerCase())) return false;
-    // Never assign Proxy 6 / datacenter — it is legacy Ortus infrastructure being retired.
-    // New accounts go only to residential (a full pool makes the caller buy proxy-cheap).
-    const typ = (r.type || "").toLowerCase();
-    const prov = (r.provider || "").toLowerCase();
-    if (typ === "datacenter" || prov.includes("proxy 6") || prov.includes("proxy6")) return false;
     const key = `${r.host}:${r.port}`;
     if (exclude.has(key)) return false;
+    // Enforce geo-match when we have stock for the account's country.
+    if (stockForCountry && canonCountry(r.country) !== wantCountry) return false;
     const used = r.accountCount + (claimed.has(key) ? 1 : 0);
     return used < cap;
   });
 
   const pool = candidates;
   if (pool.length === 0) return null;
-  pool.sort((a, b) => Number(canonCountry(b.country) === wantCountry) - Number(canonCountry(a.country) === wantCountry) || b.accountCount - a.accountCount);
+  // Spread, don't stack: least-populated /24 first (de-concentrate), then the least-full
+  // IP within it. Country is already hard-filtered above when stock exists, so when it
+  // doesn't we still prefer a matching-country IP as a soft tiebreak.
+  pool.sort(
+    (a, b) =>
+      Number(canonCountry(b.country) === wantCountry) - Number(canonCountry(a.country) === wantCountry) ||
+      (subnetLoad.get(subnetOf(a.host)) || 0) - (subnetLoad.get(subnetOf(b.host)) || 0) ||
+      a.accountCount - b.accountCount,
+  );
   const chosen = pool[0];
   claimed.add(`${chosen.host}:${chosen.port}`);
 
