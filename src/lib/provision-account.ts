@@ -91,7 +91,7 @@ export async function provisionAccount(
         if (!dryRun) {
           await prisma.linkedInAccount.update({ where: { id: accountId }, data: { gologinProfileId: profileId } });
           if (newlyAssigned && proxyForGologin) {
-            try { await gologin.updateProxy(profileId, proxyForGologin); }
+            try { await gologin.updateProxy(profileId, proxyForGologin, token); }
             catch (e) { res.errors.push(`gologin proxy push: ${msg(e)}`); }
           }
         }
@@ -109,7 +109,7 @@ export async function provisionAccount(
   } else {
     res.profile = "existing";
     if (newlyAssigned && !dryRun && proxyForGologin) {
-      try { await gologin.updateProxy(profileId, proxyForGologin); }
+      try { await gologin.updateProxy(profileId, proxyForGologin, token); }
       catch (e) { res.errors.push(`gologin proxy push: ${msg(e)}`); }
     }
   }
