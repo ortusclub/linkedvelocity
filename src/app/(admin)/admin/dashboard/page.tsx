@@ -7,7 +7,7 @@ import { formatCurrency, formatDate, formatPeso } from "@/lib/utils";
 interface Stats {
   netProfit: number; mrr: number; payouts: number; activeRentals: number;
   payoutsPhp?: number | null;
-  collected: number; collectedCount: number;
+  collected: number; collectedCount: number; depositsThisMonth: number;
   expected: number;
   dueLaterAmount: number; dueLaterCount: number;
   overdueAmount: number; overdueCount: number;
@@ -232,7 +232,7 @@ export default function AdminDashboardPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
               <div>
                 <div style={panelTitle}>Cash this month</div>
-                <div style={{ ...cardSub, marginTop: 3 }}>Collected so far against every charge scheduled this month — live.</div>
+                <div style={{ ...cardSub, marginTop: 3 }}>Rent + add-ons collected against what&apos;s due this calendar month — live. Below Monthly rev. because that&apos;s the run-rate, including rentals that renew next month.</div>
               </div>
               <button onClick={() => router.push("/admin/transactions")} style={{ font: `600 11.5px ${F_SANS}`, color: "var(--link)", background: "transparent", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Transactions →</button>
             </div>
@@ -253,6 +253,9 @@ export default function AdminDashboardPage() {
               <CashTile color="var(--danger)" value={formatCurrency(stats.failedAmount)} sub={`Failed · ${stats.failedCount} payment${stats.failedCount === 1 ? "" : "s"}`} href="/admin/rentals" />
               <CashTile color="var(--orange)" value={formatCurrency(stats.overdueAmount)} sub={`Overdue · ${stats.overdueCount} renter${stats.overdueCount === 1 ? "" : "s"}`} href="/admin/rentals" />
             </div>
+            {stats.depositsThisMonth > 0 && (
+              <div style={{ ...cardSub, marginTop: 11 }}>+ {formatCurrency(stats.depositsThisMonth)} in wallet top-ups this month, held as prepaid balance — counted as collected when it&apos;s drawn down for rent.</div>
+            )}
           </div>
 
           {/* OPERATIONS */}
