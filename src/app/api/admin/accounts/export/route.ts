@@ -93,9 +93,9 @@ export async function GET(req: NextRequest) {
     return { ...a, ownerApplicationId: app?.id || null,
       ownerSetupPaidAt: app?.paidAt || null, ownerOnboarded: app?.status === "onboarded" };
   });
-  // Contiguous Construction rows at the top; Status remains directly filterable.
+  // Contiguous Construction rows immediately after Rented; Status remains directly filterable.
   // Initial/pipeline accounts stay on Onboarding, rather than appearing as inventory.
-  const rankByLabel: Record<string, number> = { Construction: -1, Available: 0, Trial: 2, Rented: 3, "Restricted / Maintenance": 5, "Permanently restricted/Inaccessible": 6, Removed: 7 };
+  const rankByLabel: Record<string, number> = { Construction: 4, Available: 0, Trial: 2, Rented: 3, "Restricted / Maintenance": 5, "Permanently restricted/Inaccessible": 6, Removed: 7 };
   const sorted = staged.filter(a => displayStatus(a) !== "Initial").sort((a, b) => (rankByLabel[displayStatus(a)] ?? 9) - (rankByLabel[displayStatus(b)] ?? 9));
 
   // Grouped left->right: identity/quality, rental state, money, profile detail, access.
