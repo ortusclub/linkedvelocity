@@ -40,6 +40,7 @@ const sections = [
     { href: "/admin/payouts", label: "Payouts" },
     { href: "/admin/inventory-v2", label: "Inventory" },
     { href: "/admin/profile-maturing", label: "Profile Maturing" },
+    { href: "/admin/maturing-tracker", label: "Maturing Tracker" },
     { href: "/admin/restrictions", label: "Restrictions" },
     { href: "/admin/restrictions-v2", label: "Recovery" },
     { href: "/admin/proxies", label: "Proxies" },
