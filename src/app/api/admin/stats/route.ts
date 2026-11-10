@@ -99,33 +99,58 @@ export async function GET(req: NextRequest) {
     const netProfit = mrr - payouts;
     const utilization = totalAccounts > 0 ? Math.round((rentedAccounts / totalAccounts) * 100) : 0;
 
-    // Cash actually collected in the selected month = money IN from customers:
-    // on-platform USDC top-ups (deposit) + off-platform weekly rental payments the
-    // TRON cron records (positive rental_payment). Excludes internal sweeps/refunds.
-    // Computed straight from the ledger, so it's accurate for any month.
-    const collectedAgg = await prisma.transaction.aggregate({
+    // Revenue actually COLLECTED in the selected month — everything a customer paid us:
+    //   • rental_payment (both signs): wallet-funded renewals post a NEGATIVE amount
+    //     (balance debited), while card/Stripe and off-platform TRON renewals post a
+    //     POSITIVE one. Either way a month's rent was collected, so we take the absolute
+    //     value.
+    //   • a NEGATIVE adjustment: an extra charge billed to the customer, e.g. a Sales
+    //     Navigator / add-on seat at a managed rate debited from balance.
+    // Excluded: deposits (wallet top-ups are prepaid float — recognised as rent only when
+    // debited, above), sweeps (internal transfers), refunds (money out), and POSITIVE
+    // adjustments (goodwill credits / comps we grant, not money collected). Computed
+    // straight from the ledger, so it's exact for any month.
+    const collectedTxns = await prisma.transaction.findMany({
+      where: {
+        createdAt: { gte: mStart, lt: mEnd },
+        type: { in: ["rental_payment", "adjustment"] },
+        ...(includeTest ? {} : { user: { isTest: false } }),
+      },
+      select: { amount: true, type: true },
+    });
+    let collected = 0, collectedCount = 0;
+    for (const t of collectedTxns) {
+      const amt = Number(t.amount);
+      // rental_payment counts both directions; an adjustment counts only when it's a charge.
+      const charge = t.type === "rental_payment" ? Math.abs(amt) : amt < 0 ? -amt : 0;
+      if (charge > 0) { collected += charge; collectedCount++; }
+    }
+    // Wallet top-ups received this month — prepaid balance (float), surfaced separately so
+    // cash-in isn't lost; not counted as collected (that happens when it's debited as rent).
+    const depositsAgg = await prisma.transaction.aggregate({
       _sum: { amount: true },
-      _count: true,
       where: {
         createdAt: { gte: mStart, lt: mEnd },
         amount: { gt: 0 },
-        type: { in: ["deposit", "rental_payment"] },
+        type: "deposit",
         ...(includeTest ? {} : { user: { isTest: false } }),
       },
     });
-    const collected = Number(collectedAgg._sum.amount ?? 0);
-    const collectedCount = collectedAgg._count;
+    const depositsThisMonth = Number(depositsAgg._sum.amount ?? 0);
 
     // ── Cash-this-month breakdown (live state of the current calendar month) ──────
     // The four buckets partition every charge scheduled this month, so they sum to
     // `expected` ("charged this month"):
-    //   collected = money already in this month (computed above)
+    //   collected = rent + add-ons actually collected this month (computed above)
     //   dueLater  = active rentals still renewing before month-end
     //   overdue   = active rentals whose charge date lapsed, not yet collected
     //   failed    = rentals whose last charge failed
-    // Amounts use the locked (or list) price of each rental, like MRR. These are
-    // live (current state); for a past month the headline cards switch to snapshot
-    // but this panel still reflects today — the UI banner says so.
+    // dueLater/overdue/failed use the locked (or list) rent of each rental. This panel is
+    // THIS calendar month's billing, not the MRR run-rate: rentals that already renewed
+    // into next month sit in `collected`, not in the forward buckets, so the total here is
+    // below MRR by whatever renews next month. Amounts are live (current state); for a
+    // past month the headline cards switch to snapshot but this panel still reflects
+    // today — the UI banner says so.
     const priceOf = (r: { lockedPrice: unknown; linkedinAccount: { monthlyPrice: unknown } }) =>
       Number((r.lockedPrice as number | null) ?? (r.linkedinAccount.monthlyPrice as number | null) ?? 0);
     const curMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -207,7 +232,7 @@ export async function GET(req: NextRequest) {
         // money (live for the current month, snapshot for a past month)
         netProfit: disp.netProfit, mrr: disp.mrr, payouts: disp.payouts, activeRentals: disp.activeRentals,
         payoutsPhp, // native ₱ figure of actual payouts in the selected month
-        collected, collectedCount,
+        collected, collectedCount, depositsThisMonth,
         // cash-this-month breakdown (live): buckets sum to `expected`
         expected, dueLaterAmount, dueLaterCount, overdueAmount, overdueCount, failedAmount, failedCount,
         // demand
