@@ -70,6 +70,7 @@ export async function GET() {
       const arr = Array.isArray(log) ? (log as { event?: string }[]) : [];
       return arr.length ? arr[arr.length - 1]?.event || "" : "";
     };
+    const validUrl = (u: string | null) => /^https:\/\/(?:[a-z]+\.)?linkedin\.com\/in\//i.test(String(u || ""));
 
     for (const a of accountsRaw) {
       // Shape inventoryGroup() expects (hasPassword mirrors canonicalStatus's accountPassword).
@@ -98,18 +99,33 @@ export async function GET() {
       b.total++;
 
       const base = { id: a.id, name: a.linkedinName || "", email: a.loginEmail || "", status: a.status, group, level4: pipeline, connections: a.connectionCount };
+      // Level-4 (pipeline) accounts are in the ~1-week maturing hold before onboarding.
+      // Show when they're due (verified + 7d) so an overdue account is obvious.
+      const vAt = app?.verifiedAt ? new Date(app.verifiedAt).getTime() : 0;
+      const dueSuffix =
+        pipeline && vAt
+          ? (() => {
+              const due = vAt + 7 * 86400000;
+              const n = Math.round((due - Date.now()) / 86400000);
+              const d = new Date(due).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              return ` · Due to onboard ${d} (${n < 0 ? `${-n}d overdue` : n === 0 ? "due today" : `${n}d left`}).`;
+            })()
+          : "";
       if (a.maturingStartedAt) {
         b.maturing++;
         maturing.push({ ...base, reason: "maturing", detail: lastEvent(a.restrictionLog) === "recovered" ? "re-maturing (recovered)" : "healthy", since: a.maturingStartedAt.toISOString() });
       } else if (a.maturingStalledAt) {
         b.stalled++;
-        needsReview.push({ ...base, reason: "relogin", detail: a.maturingStalledReason || "login / identity review — campaign not sending", since: a.maturingStalledAt.toISOString() });
+        needsReview.push({ ...base, reason: "relogin", detail: `Campaign parked on a login/identity check${a.maturingStalledReason ? ` (${a.maturingStalledReason})` : ""}. Logging the account back in does NOT resume it on its own — re-check/resume the campaign and, if the login works, it continues and the flag clears.${dueSuffix}`, since: a.maturingStalledAt.toISOString() });
       } else if (a.maturingStartFailedAt) {
         b.startFailed++;
-        needsReview.push({ ...base, reason: "start-failed", detail: a.maturingStartFailedReason || "engine could not launch the campaign", since: a.maturingStartFailedAt.toISOString() });
+        needsReview.push({ ...base, reason: "start-failed", detail: `Engine couldn't launch it${a.maturingStartFailedReason ? ` — ${a.maturingStartFailedReason}` : ""}. Fix the cause (usually a missing/invalid LinkedIn URL or a login issue); it auto-retries after a cooldown.${dueSuffix}`, since: a.maturingStartFailedAt.toISOString() });
       } else {
         b.notEnrolled++;
-        needsReview.push({ ...base, reason: "not-enrolled", detail: "eligible but no maturing campaign yet", since: null });
+        const detail = !validUrl(a.linkedinUrl)
+          ? "No valid LinkedIn URL on the account — add it in Inventory so maturing can start."
+          : "Queued for auto-start. The system switches on a few accounts at a time (on purpose, to avoid restrictions), so this is just waiting its turn — nothing is wrong with it.";
+        needsReview.push({ ...base, reason: "not-enrolled", detail: detail + dueSuffix, since: null });
       }
     }
 
