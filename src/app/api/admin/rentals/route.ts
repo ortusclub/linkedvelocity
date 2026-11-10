@@ -10,9 +10,14 @@ export async function GET() {
     await requireAdmin();
 
     const rentals = await prisma.rental.findMany({
-      // Cancelled/ended rentals aren't "live" — keep them out of the list so ending a
-      // rental makes it disappear (and it stops being counted / showing a fake renewal).
-      where: { status: { not: "cancelled" } },
+      // Only genuinely LIVE rentals belong on this board. "active"/"pending_access" are
+      // current; "payment_failed" is live-but-in-grace (keep it visible so a bounced
+      // renewal gets chased, not lost). Everything ended — "cancelled", "replaced"
+      // (superseded by a replacement rental) and "expired" (lapsed) — drops off so the
+      // count and the list reflect real live rentals. Nothing is deleted: the full
+      // history (and every note) stays in the DB and the Google Sheet export, which is
+      // unfiltered.
+      where: { status: { in: ["active", "pending_access", "payment_failed"] } },
       include: {
         user: {
           select: {
