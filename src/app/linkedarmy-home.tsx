@@ -146,7 +146,7 @@ export function LinkedArmyHome({ roster }: { roster: ArmyRosterCard[] }) {
                   {p.rented && (
                     // Honest social proof: rented/showcase profiles are clearly marked, never
                     // presented as hireable alongside the available operators above them.
-                    <span style={{ position: "absolute", right: 10, top: 10, background: "var(--coral)", color: "var(--ink)", fontFamily: "var(--mono)", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", padding: "3px 8px" }}>rented</span>
+                    <span style={{ position: "absolute", right: 10, top: 10, background: "var(--coral)", color: "var(--ink)", fontFamily: "var(--mono)", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", padding: "3px 8px" }}>hired</span>
                   )}
                   <span style={{ position: "absolute", left: 10, bottom: 10, background: "rgba(7,42,50,0.82)", color: "#9cc3c7", fontFamily: "var(--mono)", fontSize: 11, padding: "3px 7px" }}>operator{p.industry ? " · " + p.industry.toLowerCase() : ""}</span>
                 </div>
