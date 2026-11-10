@@ -200,6 +200,23 @@ export default function RestrictionAnalysisPage() {
     return { rows, maxInvRate: Math.max(0.0001, ...rows.map((r) => r.invRate)), maxPipe: Math.max(1, ...rows.map((r) => r.pipeR)) };
   }, [base, allAccts, now]);
 
+  // Survivor test (Sam's "selection" theory). Among accounts we actually paid for (reached
+  // inventory, wentLiveAt set), does an EARLY restriction — one during the build, before we
+  // paid — predict FEWER restrictions once live? Split the paid accounts by whether they were
+  // ever restricted pre-live, then compare how many of each re-restricted after going live.
+  // Same wentLiveAt boundary as the inventory/pipeline split above (via isInvEp), so it stays
+  // consistent. Accounts never paid for (no wentLiveAt) are excluded — the theory is only
+  // about the ones we invested in.
+  const survivor = useMemo(() => {
+    const paid = base.filter((a) => a.wentLiveAt != null);
+    const hadPipe = (a: Acct) => a.episodes.some((e) => !isInvEp(a, e.at)); // restricted before paying
+    const hadInv = (a: Acct) => a.episodes.some((e) => isInvEp(a, e.at)); // restricted after paying
+    const row = (list: Acct[]) => ({ list, n: list.length, re: list.filter(hadInv).length, rate: list.length ? list.filter(hadInv).length / list.length : null });
+    const early = row(paid.filter(hadPipe));
+    const clean = row(paid.filter((a) => !hadPipe(a)));
+    return { early, clean, excluded: base.length - paid.length };
+  }, [base]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Six-month buckets: metric × half, with change.
   const halves = useMemo(() => {
     const keys = [...new Set(base.map((a) => (a.createdAt ? halfOf(a.createdAt) : null)).filter((x): x is string => !!x))].sort();
@@ -426,6 +443,28 @@ export default function RestrictionAnalysisPage() {
             </div>
           </div>
           <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Pipeline is a count, not a rate: a restricted account stalls in the pipeline (it can&apos;t graduate), so a pipeline % would race toward 100% in a bad month and mislead — the honest read is volume. * current month is partial. &ldquo;Went live&rdquo; keys off the setup-fee-paid date (or first-rental date), NOT verification — an account can be verified while still being warmed up in the pipeline, before we&apos;ve paid for it. Falls back to created date only for accounts currently in the live fleet (available / rented / trial) that are missing milestone dates; an account we never paid for and never rented (e.g. a build that died or a self-service recruit that never finished onboarding) counts as a pipeline loss, not inventory. Events come from manual restricted/recovered marking and only go back to ~Mar 2026, so rates are exact going forward and undercount older history.</span>
+        </div>
+
+        {/* ===== Survivor test: does an early restriction protect the account? (Sam's theory) ===== */}
+        <div style={{ ...card }}>
+          <div>
+            <span style={h3}>Does an early restriction make an account tougher?</span>
+            <p style={sub}>Sam&apos;s theory: an account that gets restricted <i>during build</i> (before we pay its setup fee) and survives should be hardier — restricted <b>less</b> once it&apos;s live. Below: of the accounts we actually paid for, how many got restricted <b>again</b> after going live — split by whether they&apos;d had an early restriction. If the theory holds, the left number is lower.</p>
+          </div>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            {([
+              { key: "early", label: "Restricted early, then paid", note: "had a restriction during build, survived, we paid for them", c: survivor.early, good: true },
+              { key: "clean", label: "Clean through build, then paid", note: "no early restriction — looked fine when we paid", c: survivor.clean, good: false },
+            ] as const).map((g) => (
+              <div key={g.key} style={{ flex: "1 1 260px", minWidth: 0, border: "1px solid #e6e9ee", borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ font: `700 11px ${F}`, letterSpacing: ".04em", textTransform: "uppercase", color: "#8a93a3" }}>{g.label}</span>
+                <span style={{ font: `700 30px ${G}`, color: rateColor(g.c.rate) }}>{pct(g.c.rate, 0)}</span>
+                <button onClick={() => openDrawer(`${g.label} — restricted again after going live`, `${g.c.re} of ${g.c.n} such accounts`, g.c.list.filter((a) => a.episodes.some((e) => isInvEp(a, e.at))))} style={{ alignSelf: "flex-start", border: "none", background: "none", padding: 0, font: `600 12.5px ${F}`, color: "#2563eb", cursor: "pointer" }}>{g.c.re} of {g.c.n} restricted again</button>
+                <span style={{ font: `500 11.5px ${F}`, color: "#8a93a3", lineHeight: 1.4 }}>{g.note}</span>
+              </div>
+            ))}
+          </div>
+          <span style={{ font: `500 11px ${F}`, color: "#8a93a3" }}>Only accounts we paid for (reached inventory) are counted; {survivor.excluded} never-paid accounts are excluded. &ldquo;Restricted again&rdquo; = a restriction on or after the went-live date. Correlation, not proof of cause — an early restriction may just force us to fix the proxy/setup properly. Mostly pre-Nov accounts for now; re-check once the current maturing cohort has had time to be paid and exposed.</span>
         </div>
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
