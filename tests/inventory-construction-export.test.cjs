@@ -1,0 +1,12 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+function load(file,deps){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:n=>{if(!(n in deps))throw Error(n);return deps[n]},process:{env:{RENTALS_EXPORT_KEY:'test'}},Date});return exports;}
+const stage=load('src/lib/inventory-stage.ts',{'@/lib/company':{isCompanyEmail:()=>true}});
+test('inventory includes Construction together, matches profile-specific onboarding and retains columns and secret gate',async()=>{
+ const accounts=['ready','building','initial','held','rented'].map((id)=>({id,linkedinName:id,linkedinUrl:'https://linkedin.com/in/'+id,status:({ready:'available',building:'under_construction',initial:'under_construction',held:'under_construction',rented:'rented'})[id],notes:'Owner: same@example.com',rentals:[],restrictedAt:id==='held'?new Date():null,loginEmail:'private',accountPassword:'secret'}));
+ const apps=accounts.map(a=>({id:a.id,email:'same@example.com',linkedinUrl:a.linkedinUrl,status:a.id==='initial'?'new':'onboarded',paidAt:a.id==='initial'?null:new Date()}));
+ class Response{constructor(body){this.body=body;}}
+ const route=load('src/app/api/admin/accounts/export/route.ts',{'next/server':{NextResponse:Response},'@/lib/prisma':{prisma:{linkedInAccount:{findMany:async()=>accounts},user:{findMany:async()=>[]},ambassadorApplication:{findMany:async()=>apps}}},'@/lib/crypto-creds':{decryptSecret:()=>{throw Error('secret gate failed')}},'@/lib/company':{isCompanyEmail:()=>false},'@/lib/referral-currency':{currencyConfigFor:()=>({currency:'PHP'}),formatMoney:String},'@/lib/account-pricing':{monthlyRentalPrice:()=>50},'@/lib/inventory-stage':stage});
+ const result=await route.GET({nextUrl:new URL('https://test/?key=test')});const lines=result.body.split('\n');
+ assert.equal(lines.length,5);assert.match(lines[1],/^building,,Construction,/);assert.match(lines.find(l=>l.startsWith('held,')),/,Restricted \/ Maintenance,/);assert.match(lines.find(l=>l.startsWith('rented,')),/,Rented,/);
+ assert.equal(lines[0].split(',')[2],'Status');assert.equal(lines[0].split(',').length,17);assert.ok(!result.body.includes('secret'));assert.ok(!lines.some(l=>l.startsWith('initial,')));
+});

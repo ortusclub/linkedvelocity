@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/crypto-creds";
 import { isCompanyEmail } from "@/lib/company";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
+import { canonicalStatus, type InventoryStageAccount } from "@/lib/inventory-stage";
 import { monthlyRentalPrice } from "@/lib/account-pricing";
 
 // CSV export of the inventory, for Google Sheets to auto-pull via
@@ -27,20 +28,10 @@ function fmtDate(d: Date | null): string {
   return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-// CSV labels combine current restrictions and maintenance holds.
-// Terminal accounts remain separate; database rental status is untouched.
-const CONSTRUCTION_MAX = 100;
-function displayStatus(a: { status: string; restrictedAt: Date | null; connectionCount?: number | null; twoFactorResetNeeded?: boolean }): string {
-  if (a.status === "retired") return "Permanently restricted/Inaccessible";
-  if (a.status === "removed") return "Removed";
-  if (a.restrictedAt || a.status === "maintenance" || (a.status === "available" && a.twoFactorResetNeeded)) return "Restricted / Maintenance";
-  if (a.status === "rented") return "Rented";
-  if (a.status === "construction_immature") return "Construction (Immature)";
-  if (a.status === "under_construction") return "Pipeline";
-  if (a.status === "available") return "Available";
-  if (a.status === "trial") return "Trial";
-  // under_review / maintenance / unavailable / anything else → split by size
-  return (a.connectionCount ?? 0) < CONSTRUCTION_MAX ? "Pipeline" : "Restricted / Maintenance";
+// Match Inventory's stage classification; keep the existing sheet hold label.
+function displayStatus(a: InventoryStageAccount): string {
+  const stage = canonicalStatus(a);
+  return stage === "Maintenance" ? "Restricted / Maintenance" : stage;
 }
 
 export async function GET(req: NextRequest) {
@@ -82,14 +73,28 @@ export async function GET(req: NextRequest) {
   // Also carry payout currency (per-owner override, else the referrer's currency) so
   // the Ambassador Payout column shows $ vs ₱ correctly — not a hardcoded peso sign.
   const ownerApps = ownerEmails.length
-    ? await prisma.ambassadorApplication.findMany({ where: { email: { in: ownerEmails } }, select: { email: true, fullName: true, payoutCurrency: true, referredBy: true } })
+    ? await prisma.ambassadorApplication.findMany({ where: { email: { in: ownerEmails } }, select: { id: true, linkedinUrl: true, status: true, paidAt: true, email: true, fullName: true, payoutCurrency: true, referredBy: true } })
     : [];
   const ownerAppMap = new Map(ownerApps.map((a) => [a.email, a.fullName]));
   const ownerCurrencyMap = new Map(ownerApps.map((a) => [a.email, currencyConfigFor(a.payoutCurrency, a.referredBy).currency]));
 
-  // Keep the combined Restricted / Maintenance label together in the export.
-  const rankByLabel: Record<string, number> = { Available: 0, Trial: 2, Rented: 3, Pipeline: 4, "Construction (Immature)": 4.5, "Restricted / Maintenance": 5, "Permanently restricted/Inaccessible": 6, Removed: 7 };
-  const sorted = accounts.filter(a => displayStatus(a) !== "Pipeline").sort((a, b) => (rankByLabel[displayStatus(a)] ?? 9) - (rankByLabel[displayStatus(b)] ?? 9));
+  // Resolve each profile's own application, as the Inventory API does, so
+  // siblings sharing one owner email retain their individual onboarding stage.
+  const normUrl = (u?: string | null) =>
+    (u || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("?")[0].replace(/\/+$/, "");
+  const appByEmail = new Map(ownerApps.map(a => [a.email.toLowerCase(), a]));
+  const appByUrl = new Map(ownerApps.filter(a => a.linkedinUrl).map(a => [normUrl(a.linkedinUrl), a]));
+  const staged = accounts.map(a => {
+    const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/)?.[1]?.replace(/\.$/, "") || "";
+    const app = (a.linkedinUrl ? appByUrl.get(normUrl(a.linkedinUrl)) : undefined)
+      || appByEmail.get(ownerEmail.toLowerCase());
+    return { ...a, ownerApplicationId: app?.id || null,
+      ownerSetupPaidAt: app?.paidAt || null, ownerOnboarded: app?.status === "onboarded" };
+  });
+  // Contiguous Construction rows at the top; Status remains directly filterable.
+  // Initial/pipeline accounts stay on Onboarding, rather than appearing as inventory.
+  const rankByLabel: Record<string, number> = { Construction: -1, Available: 0, Trial: 2, Rented: 3, "Restricted / Maintenance": 5, "Permanently restricted/Inaccessible": 6, Removed: 7 };
+  const sorted = staged.filter(a => displayStatus(a) !== "Initial").sort((a, b) => (rankByLabel[displayStatus(a)] ?? 9) - (rankByLabel[displayStatus(b)] ?? 9));
 
   // Grouped left->right: identity/quality, rental state, money, profile detail, access.
   const headers = [
