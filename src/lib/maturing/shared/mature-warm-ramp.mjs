@@ -8,8 +8,8 @@ export const WARM_PRESETS = Object.freeze({
   // account looks suspicious, so every stage sends some cold too. The rates below are
   // TOTAL per day across warm + cold. A 0-connection account has no warm pool, so run
   // it cold-only (turn warm off). Every number stays editable on the board.
-  prepayout:    { label: 'Pre-payout maturing — go hard (1 week)',     initialDaily: 5, increaseBy: 0, everyDays: 1, maximumDaily: 5,  stopAfterDays: 7,
-    cold: [{ fromDay: 1, toDay: 7, daily: 5 }] },                 // 10/day, 50:50 — weed out before payout
+  prepayout:    { label: 'Pre-payout maturing — go hard (1 week)',     initialDaily: 15, increaseBy: 0, everyDays: 1, maximumDaily: 15, stopAfterDays: 7,
+    cold: [{ fromDay: 1, toDay: 7, daily: 15 }] },                // 30/day, 50:50 — weed out before payout
   construction: { label: 'Construction — building to rentable',        initialDaily: 4, increaseBy: 0, everyDays: 1, maximumDaily: 4,  stopAfterDays: 28,
     cold: [{ fromDay: 1, toDay: 28, daily: 3 }] },                // ~7/day, warm-lean 60:40
   rentable:     { label: 'Rentable upkeep',                            initialDaily: 3, increaseBy: 0, everyDays: 1, maximumDaily: 3,  stopAfterDays: 60,

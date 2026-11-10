@@ -6,7 +6,7 @@ import { matureWarmDailyAmount, matureColdDailyAmount } from '../src/lib/maturin
 // Agreed per-stage maturing settings (Sam, Nov 2026). Totals are warm + cold per day.
 // Each case: the effective warm and cold amounts on a few representative days.
 const CASES = {
-  prepayout:    { warm: { 1: 5, 7: 5, 8: 0 },  cold: { 1: 5, 7: 5, 8: 0 } },   // 10/day, 50:50, 1wk
+  prepayout:    { warm: { 1: 15, 7: 15, 8: 0 }, cold: { 1: 15, 7: 15, 8: 0 } }, // 30/day, 50:50, 1wk
   construction: { warm: { 1: 4, 28: 4, 29: 0 }, cold: { 1: 3, 28: 3, 29: 0 } }, // ~7/day, 60:40 warm-lean
   rentable:     { warm: { 1: 3, 60: 3 },        cold: { 1: 2, 60: 2 } },        // ~5/day, even
   linkedarmy:   { warm: { 1: 5, 60: 5 },        cold: { 1: 12, 60: 12 } },      // ~17/day, 30:70 cold-lean
@@ -35,7 +35,7 @@ test('warmPreset does not leak the cold schedule into the warm ramp', () => {
   const ramp = warmPreset('prepayout');
   assert.ok(!('cold' in ramp), 'cold stays out of plan.warmRamp');
   assert.equal(ramp.preset, 'prepayout');
-  assert.equal(ramp.initialDaily, 5);
+  assert.equal(ramp.initialDaily, 15);
   assert.equal(ramp.stopMode, 'days');
 });
 
