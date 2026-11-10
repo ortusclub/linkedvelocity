@@ -8,6 +8,8 @@ import { monthlyRentalPrice } from "@/lib/account-pricing";
 // from what the admin sees. Change the shape here and both update together.
 
 export interface OwnerAccount {
+  exitReason?: string | null;
+  twoFactorResetNeeded?: boolean;
   id: string;
   linkedinName: string;
   status: string;
@@ -59,6 +61,8 @@ export interface Owner {
 }
 
 const ACCOUNT_SELECT = {
+  exitReason: true,
+  twoFactorResetNeeded: true,
   id: true,
   linkedinName: true,
   status: true,
@@ -77,6 +81,7 @@ const ACCOUNT_SELECT = {
 } as const;
 
 function toAccount(a: {
+  exitReason: string | null; twoFactorResetNeeded: boolean;
   id: string; linkedinName: string; status: string; linkedinUrl: string | null;
   connectionCount: number; accountAgeMonths: number | null; hasSalesNav: boolean; linkedinVerified: boolean;
   ambassadorPayment: unknown;
@@ -84,6 +89,8 @@ function toAccount(a: {
   restrictedAt: Date | null;
 }): OwnerAccount {
   return {
+    exitReason: a.exitReason,
+    twoFactorResetNeeded: a.twoFactorResetNeeded,
     id: a.id,
     linkedinName: a.linkedinName,
     status: a.status,
