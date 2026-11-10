@@ -41,6 +41,21 @@ export default function MaturingTrackerPage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [recheck, setRecheck] = useState<Record<string, string>>({});
+
+  const doRecheck = useCallback(async (id: string) => {
+    setRecheck((s) => ({ ...s, [id]: "…" }));
+    try {
+      const r = await fetch("/api/admin/maturing-tracker/recheck", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: id }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "failed");
+      setRecheck((s) => ({ ...s, [id]: j.rechecked ? `queued ✓` : "no live campaign" }));
+    } catch (e) {
+      setRecheck((s) => ({ ...s, [id]: `failed: ${(e as Error).message}` }));
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,7 +74,12 @@ export default function MaturingTrackerPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const bucketKeys = ["Available", "Construction", "Level-4 (other)"];
+  const bucketKeys = ["Available", "Construction", "Pipeline"];
+  const bucketLabel: Record<string, string> = {
+    Available: "Available (inventory)",
+    Construction: "Construction (inventory)",
+    Pipeline: "Pipeline Maturing (Level 4)",
+  };
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20 }}>
@@ -97,11 +117,11 @@ export default function MaturingTrackerPage() {
               <tbody>
                 {bucketKeys.map((k) => {
                   const b = data.buckets[k];
-                  if (!b || (!b.total && k === "Level-4 (other)")) return null;
+                  if (!b || (!b.total && k === "Pipeline")) return null;
                   const gap = b.stalled + b.startFailed + b.notEnrolled;
                   return (
                     <tr key={k}>
-                      <td style={td}>{k}</td>
+                      <td style={td}>{bucketLabel[k] || k}</td>
                       <td style={td}>{b.total}</td>
                       <td style={td}><b>{b.maturing}</b></td>
                       <td style={{ ...td, color: b.stalled ? "#f59e0b" : undefined }}>{b.stalled}</td>
@@ -128,10 +148,15 @@ export default function MaturingTrackerPage() {
                     return (
                       <tr key={r.id}>
                         <td style={td}><span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 20, fontSize: 12, background: rc.color + "22", color: rc.color, fontWeight: 600 }}>{rc.label}</span></td>
-                        <td style={td}><Link href={`/admin/accounts/${r.id}`} style={{ fontWeight: 600 }}>{r.email || r.name}</Link>{r.level4 && <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.6 }}>L4</span>}<div style={{ fontSize: 12, opacity: 0.5 }}>{r.name}</div></td>
-                        <td style={td}>{r.status}</td>
+                        <td style={td}><Link href={`/admin/accounts/${r.id}`} style={{ fontWeight: 600 }}>{r.email || r.name}</Link>{r.level4 && <span style={{ marginLeft: 6, fontSize: 11, color: "#6d28d9", background: "#ede9fe", borderRadius: 999, padding: "1px 7px", fontWeight: 600 }}>Pipeline · L4</span>}<div style={{ fontSize: 12, opacity: 0.5 }}>{r.name}</div></td>
+                        <td style={td}><span style={{ fontSize: 12, padding: "2px 7px", borderRadius: 6, background: "var(--chip,#1f1f1f)" }}>{r.status}</span></td>
                         <td style={td}>{r.connections ?? "—"}</td>
-                        <td style={{ ...td, maxWidth: 320, opacity: 0.8 }}>{r.detail}</td>
+                        <td style={{ ...td, maxWidth: 320, opacity: 0.8 }}>{r.detail}{r.reason === "relogin" && (
+                          <div style={{ marginTop: 6 }}>
+                            <button onClick={() => void doRecheck(r.id)} disabled={recheck[r.id] === "…"} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border,#2a2a2a)", background: "var(--card,#141414)", cursor: "pointer", fontWeight: 600 }} title="Re-check this account on the engine now (use after you've logged it back in)">⚡ Re-check now</button>
+                            {recheck[r.id] && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.75 }}>{recheck[r.id]}</span>}
+                          </div>
+                        )}</td>
                         <td style={td}>{ago(r.since)}</td>
                       </tr>
                     );
