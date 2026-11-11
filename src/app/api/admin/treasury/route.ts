@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ethers } from "ethers";
 import { requireAdmin } from "@/lib/auth";
+import { getBaseBalanceProvider } from "@/lib/base-balance-provider";
 import { getStripe } from "@/lib/stripe";
 import { BASE_CHAIN_ID, BASE_TOKENS, TOKEN_ABI, stripeBalances, type TreasurySnapshot, type TreasuryToken } from "@/lib/treasury";
 
@@ -33,9 +34,7 @@ export async function GET() {
       snapshot.crypto.address = ethers.getAddress(address);
       let provider: ethers.JsonRpcProvider | undefined;
       try {
-        const request = new ethers.FetchRequest(process.env.BASE_RPC_URL || "https://mainnet.base.org");
-        request.timeout = 10_000;
-        provider = new ethers.JsonRpcProvider(request);
+        provider = await getBaseBalanceProvider();
         const reader = provider;
         if ((await provider.getNetwork()).chainId !== BigInt(BASE_CHAIN_ID)) throw new Error("Wrong network");
         const prices = fetch("https://api.coinbase.com/v2/exchange-rates?currency=USD", { signal: AbortSignal.timeout(5_000), cache: "no-store" })

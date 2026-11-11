@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getBaseProvider, getUsdcContract, getUsdtContract, formatUsdc, parseUsdc } from "@/lib/wallet";
+import { getUsdcContract, getUsdtContract, formatUsdc, parseUsdc } from "@/lib/wallet";
+import { getBaseBalanceProvider } from "@/lib/base-balance-provider";
 import { sweepDeposits } from "@/lib/deposit-detector";
 import { DepositJobBusy, withDepositJob } from "@/lib/deposit-job";
 import type { DepositRow, DepositSnapshot } from "@/lib/deposit-snapshot";
@@ -25,12 +26,14 @@ export async function GET(req: NextRequest) {
   const denied = await authorize(); if (denied) return denied;
   const page = Number(req.nextUrl.searchParams.get("page") || 0);
   if (!Number.isSafeInteger(page) || page < 0 || page > 100000) return reply({ error: "Invalid page" }, 400);
+  let provider: ethers.JsonRpcProvider | undefined;
   try {
     const deposits = await prisma.depositAddress.findMany({
       orderBy: { id: "asc" }, skip: page * 20, take: 21,
       include: { user: { select: { email: true } } },
     });
-    const provider = getBaseProvider();
+    provider = await getBaseBalanceProvider();
+    const reader = provider;
     if ((await provider.getNetwork()).chainId !== BigInt(8453)) throw new Error("Wrong network");
     const usdc = getUsdcContract(provider), usdt = getUsdtContract(provider);
     const rows: DepositRow[] = [];
@@ -41,7 +44,7 @@ export async function GET(req: NextRequest) {
         const row: DepositRow = { id: deposit.id, address: deposit.address, customer: deposit.user.email,
           eth: null, usdc: null, usdt: null, awaitingCredit: false, error: null };
         try {
-          const [eth, dc, dt]: bigint[] = await Promise.all([provider.getBalance(deposit.address), usdc.balanceOf(deposit.address), usdt.balanceOf(deposit.address)]);
+          const [eth, dc, dt]: bigint[] = await Promise.all([reader.getBalance(deposit.address), usdc.balanceOf(deposit.address), usdt.balanceOf(deposit.address)]);
           row.eth = ethers.formatEther(eth); row.usdc = formatUsdc(dc); row.usdt = formatUsdc(dt);
           row.awaitingCredit = dc > parseUsdc(String(deposit.lastSeenBalance));
         } catch { row.error = "Balance unavailable. Refresh before sweeping."; }
@@ -52,6 +55,7 @@ export async function GET(req: NextRequest) {
       signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE, gasSponsor: await gasSponsorStatus(provider) };
     return reply(snapshot);
   } catch { return reply({ error: "Customer deposit balances could not be loaded. Please retry." }, 503); }
+  finally { provider?.destroy(); }
 }
 
 export async function POST(req: NextRequest) {

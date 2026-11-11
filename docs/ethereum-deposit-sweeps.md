@@ -28,3 +28,12 @@ have happened). No blind replacement or automatic rebroadcast is performed.
 Validation uses mocked providers/signers and test keys only. No real transfer is
 part of implementation, deployment or verification. The admin performs the final
 financial confirmation.
+
+## Treasury balance display availability
+
+Base Treasury and customer-deposit GET routes use `base-balance-provider.ts`.
+It checks chain 8453 and a data read before choosing a provider, fails over from
+an unavailable configured RPC to public Base endpoints, bounds retries and avoids
+retrying failed endpoints for one minute. This provider cannot broadcast. It is
+not used by deposit detection, crediting, sweep execution, or Ethereum transfers.
+A failed balance read remains unavailable, never a fabricated zero.

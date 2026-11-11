@@ -93,6 +93,7 @@ function routeFixture({ authError, stripeError = false, tokenError = false, pric
     'next/server': { NextResponse: { json: (body, init) => ({ body, status: init?.status ?? 200, headers: init?.headers }) } },
     ethers: { ethers: { ...ethers, JsonRpcProvider: Provider, Contract } },
     '@/lib/auth': { requireAdmin: async () => { if (authError) throw Error(authError); return { role: 'admin' }; } },
+    '@/lib/base-balance-provider': { getBaseBalanceProvider: async () => new Provider() },
     '@/lib/stripe': { getStripe: () => ({ balance: { retrieve: async () => {
       stripeReads++; if (stripeError) throw Error('Provider failure with secret information');
       return { available: [{ currency: 'usd', amount: 12345 }], pending: [], livemode: true };
