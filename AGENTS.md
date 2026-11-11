@@ -112,3 +112,6 @@ Provide an explicit Ethereum-mainnet native ETH sweep from customer deposit wall
 
 ## Treasury sweep totals — Samuel, 11 November 2026
 Show the amount awaiting sweep by network and token, including a read-only total across all deposit-wallet pages. Label current-page and partial results clearly; unavailable balances are unknown, never zero. Separate gross funds from amounts passing wallet checks, and show aggregate amounts in the sweep confirmation. Calculating totals must not credit customers or move funds.
+
+## Ethereum payment visibility — Samuel, 11 November 2026
+Put Ethereum customer payments directly below the Treasury heading, before Base balances and the long Base-wallet list. Show the live ETH amount beside each customer and a prominent review button; do not require opening a sweep preview just to see the funds. Support customer-filtered direct links. Keep unknown balances explicit and final transfer confirmation separate.

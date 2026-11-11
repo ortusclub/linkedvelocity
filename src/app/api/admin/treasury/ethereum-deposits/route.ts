@@ -1,3 +1,4 @@
+import { ethers } from "ethers";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -13,7 +14,25 @@ export async function GET(req: NextRequest) {
   try {
     const rows = await prisma.depositAddress.findMany({ where: search ? { user: { OR: [{ email: { contains: search, mode: "insensitive" } }, { fullName: { contains: search, mode: "insensitive" } }] } } : {}, orderBy: { createdAt: "desc" }, take: 20, select: { id: true, address: true, user: { select: { email: true, fullName: true } } } });
     const journals = await prisma.transaction.findMany({ where: { type: "sweep", description: { startsWith: "Ethereum ETH sweep" }, userId: { in: (await prisma.depositAddress.findMany({ where: { id: { in: rows.map(r => r.id) } }, select: { userId: true } })).map(r => r.userId) } }, orderBy: { createdAt: "desc" }, take: 20, select: { txHash: true, description: true } });
-    return reply({ rows, journals });
+    const balances = new Map<string, string>();
+    if (rows.length) {
+      const provider = ethereumProvider();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            if ((await provider.getNetwork()).chainId !== BigInt(1)) return;
+            await Promise.all(rows.map(async row => {
+              try { balances.set(row.id, ethers.formatEther(await provider.getBalance(row.address))); }
+              catch { /* Keep this balance unavailable, not zero. */ }
+            }));
+          })(),
+          new Promise<void>(resolve => { timer = setTimeout(resolve, 8_000); }),
+        ]);
+      } catch { /* Wallet search remains available during an RPC outage. */ }
+      finally { clearTimeout(timer); provider.destroy(); }
+    }
+    return reply({ rows: rows.map(row => ({ ...row, eth: balances.get(row.id) ?? null })), journals });
   } catch { return reply({ error: "Could not load Ethereum deposit wallets." }, 503); }
 }
 export async function POST(req: NextRequest) {
