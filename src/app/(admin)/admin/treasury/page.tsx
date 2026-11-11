@@ -123,6 +123,7 @@ export default function TreasuryPage() {
         <button onClick={() => openTransfer()} disabled={blocked} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><ArrowUpRight size={17} />Move crypto to SwissBorg</button>
       </div>
     </header>
+    <EthereumDeposits />
     {error && <p role="alert" className="rounded-xl p-4" style={{ background: "var(--warn-bg)", color: "var(--warn-num)" }}>{error} {data && "Previously loaded balances below may be stale."}</p>}
     {loading && !data && <p role="status" className="py-12 text-center" style={{ color: "var(--muted)" }}>Loading account balances…</p>}
     {data && <>
@@ -158,7 +159,6 @@ export default function TreasuryPage() {
       <p className="text-xs" style={{ color: "var(--muted)" }}>Checked {new Date(data.checkedAt).toLocaleString()}. USD estimates use Coinbase exchange rates and are not executable quotes. These balances are held funds, not profit.</p>
     </>}
     <TreasuryDeposits onSwept={refresh} />
-    <EthereumDeposits />
     {pending && <section role="status" className="rounded-2xl p-5" style={card}>
       <h2 className="flex items-center gap-2 font-semibold">{receiptState === "confirmed" && <CheckCircle2 size={18} style={{ color: "var(--green)" }} />}{receiptState === "confirmed" ? "Transfer confirmed on Base" : receiptState === "failed" ? "Transfer reverted" : "Transfer submitted · awaiting confirmation"}</h2>
       <p className="mt-2 text-sm">{pending.amount} {pending.token} → <span className="break-all font-mono text-xs">{pending.destination}</span></p>

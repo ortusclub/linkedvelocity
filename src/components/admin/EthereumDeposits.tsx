@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { EthereumReview } from "@/lib/ethereum-sweep";
-type Row = { id: string; address: string; user: { email: string; fullName: string } };
+type Row = { id: string; address: string; eth: string | null; user: { email: string; fullName: string } };
 type Review = { review: EthereumReview; signature: string };
 const card = { background: "var(--card)", border: "1px solid var(--card-border)" };
 export default function EthereumDeposits() {
@@ -24,7 +24,10 @@ export default function EthereumDeposits() {
     } catch (e) { setError(e instanceof Error ? e.message : "Could not load wallets."); }
     finally { lock.current = false; setBusy(false); }
   }
-  useEffect(() => { void load(""); }, []);
+  useEffect(() => {
+    const customer = new URLSearchParams(window.location.search).get("ethereumCustomer") || "";
+    setSearch(customer); void load(customer);
+  }, []);
   async function action(body: object) {
     const r = await fetch("/api/admin/treasury/ethereum-deposits", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await r.json(); if (!r.ok) throw new Error(data.error); return data;
@@ -43,17 +46,18 @@ export default function EthereumDeposits() {
     catch (e) { setError(e instanceof Error ? e.message : "Check transaction history before retrying."); }
     finally { setReview(null); setConfirmed(false); lock.current = false; setBusy(false); }
   }
-  return <section className="rounded-2xl p-5 space-y-4" style={card} aria-labelledby="ethereum-deposits-title">
-    <h2 id="ethereum-deposits-title" className="font-semibold">Ethereum customer deposits</h2>
-    <p className="text-sm" style={{ color: "var(--muted)" }}>Recover native ETH received on Ethereum mainnet. These wallets are separate from the Base balances above. Sweeping moves funds to treasury without adding customer credit.</p>
+  return <section id="ethereum-deposits" className="rounded-2xl border-2 border-blue-500 p-6 space-y-4 scroll-mt-6" style={{ background: "var(--card)" }} aria-labelledby="ethereum-deposits-title">
+    <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Received ETH payments</p>
+    <h2 id="ethereum-deposits-title" className="text-2xl font-semibold">Find an Ethereum payment & sweep to treasury</h2>
+    <p className="text-sm" style={{ color: "var(--muted)" }}>Search the customer below to see their ETH payment balance. Choose “Review ETH payment” to see the gas fee and amount that will reach treasury. This is Ethereum mainnet; Base deposits are further down.</p>
     <form onSubmit={e => { e.preventDefault(); setReview(null); void load(search); }} className="flex gap-3">
-      <input aria-label="Customer name or email" placeholder="Search customer name or email" value={search} onChange={e => setSearch(e.target.value)} disabled={busy} className="min-w-0 flex-1 rounded-lg border p-2" style={card} />
+      <input aria-label="Customer name or email" placeholder="Type the customer’s name or email" value={search} onChange={e => setSearch(e.target.value)} disabled={busy} className="min-w-0 flex-1 rounded-lg border p-2" style={card} />
       <button disabled={busy} className="rounded-lg border px-4 py-2 disabled:opacity-50">{busy ? "Checking…" : "Search / refresh"}</button>
     </form>
-    <p className="text-xs" style={{ color: "var(--muted)" }}>Up to 20 matching wallets. Preview checks the current ETH balance and fee.</p>
+    <p className="text-xs" style={{ color: "var(--muted)" }}>Up to 20 matching wallets. Balances below are live ETH held in customer deposit wallets, before gas fees. Reviewing does not move funds.</p>
     {rows.map(row => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 border-t py-3" style={{ borderColor: "var(--divider)" }}>
       <div><p className="text-sm font-semibold">{row.user.fullName} · {row.user.email}</p><a className="break-all text-xs" style={{ color: "var(--link)" }} href={`https://etherscan.io/address/${row.address}`} target="_blank" rel="noreferrer">{row.address} ↗</a></div>
-      <button disabled={busy} onClick={() => void preview(row.id)} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">Preview ETH sweep</button>
+      <div className="flex flex-wrap items-center gap-4"><p className="text-lg font-semibold">{row.eth === null ? "ETH balance unavailable" : `${row.eth} ETH`}</p><button disabled={busy} onClick={() => void preview(row.id)} className="rounded-lg bg-blue-600 text-white px-4 py-3 text-sm font-semibold disabled:opacity-50">Review ETH payment →</button></div>
     </div>)}
     {!busy && !rows.length && <p>No matching customer deposit wallets.</p>}
     {review && <div className="rounded-xl border p-4 space-y-3" role="region" aria-label="Review Ethereum sweep">
