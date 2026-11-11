@@ -12,7 +12,7 @@ test('Ethereum separates zero, dust and unknown without inventing dates',()=>{
 });
 test('sweep all stops on uncertainty and preserves submitted hashes without retries',async()=>{
  let calls=0;const confirmed=[];const plans=[1,2,3].map(i=>({payment:{key:String(i)}}));
- await assert.rejects(api.executePayments(plans,async()=>({hashes:[`hash${++calls}`],uncertain:calls===2}),(key,hashes)=>confirmed.push({key,hashes})),/Stopped/);
+ await assert.rejects(api.executePayments(plans,async()=>({hashes:[`hash${++calls}`],uncertain:calls===2}),(key,hashes)=>confirmed.push({key,hashes})),/waiting for blockchain confirmation/);
  assert.equal(calls,2);assert.deepEqual(confirmed.map(r=>r.hashes[0]),['hash1','hash2']);
 });
 test('expired Ethereum review prevents send while retaining earlier Base outcome',async()=>{

@@ -24,6 +24,7 @@ export default function PaymentsAwaitingSweep({ onSwept }: { onSwept: () => Prom
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [reviewError, setReviewError] = useState("");
+  const [notice, setNotice] = useState("");
   const [plans, setPlans] = useState<PaymentPlan[]>([]);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [confirmed, setConfirmed] = useState(false);
@@ -90,7 +91,9 @@ export default function PaymentsAwaitingSweep({ onSwept }: { onSwept: () => Prom
           } catch { /* Keep pending: a failed check is not a failed transfer. */ }
           return entry;
         }));
-        if (changed) { saveSubmitted(next); await refresh(); await onSwept(); }
+        if (changed) { saveSubmitted(next);
+          if (next.some((entry, i) => entry.status === "confirmed" && entries[i]?.status === "pending")) setNotice("Payment confirmed on the blockchain. Your treasury balance has been updated.");
+          await refresh(); await onSwept(); }
       } finally { checking = false; }
     }, 15_000);
     return () => clearInterval(timer);
@@ -114,7 +117,7 @@ export default function PaymentsAwaitingSweep({ onSwept }: { onSwept: () => Prom
   }
   async function send() {
     if (actionLock.current || !confirmed || !plans.length) return;
-    actionLock.current = true; setBusy(true); setReviewError("");
+    actionLock.current = true; setBusy(true); setReviewError(""); setNotice("");
     try {
       await executePayments(plans, async plan => {
         const p = plan.payment;
@@ -132,10 +135,14 @@ export default function PaymentsAwaitingSweep({ onSwept }: { onSwept: () => Prom
         }
       }, (key, hashes, uncertain) => {
         const p = plans.find(plan => plan.payment.key === key)!.payment;
-        saveSubmitted([...submittedRef.current.filter(s => s.key !== key), { key, network:p.network, hashes, status:uncertain && !hashes.length ? "needs-check" : p.network === "Ethereum" ? "pending" : uncertain ? "needs-check" : "confirmed" }]);
+        saveSubmitted([...submittedRef.current.filter(s => s.key !== key), { key, network:p.network, hashes, status:uncertain && !hashes.length ? "needs-check" : p.network === "Ethereum" || uncertain ? "pending" : "confirmed" }]);
       });
-      setPlans([]); setConfirmed(false); dialog.current?.close();
-    } catch (e) { setReviewError(e instanceof Error ? e.message : "Result uncertain. Check wallet activity before retrying."); setPlans([]); setConfirmed(false); }
+      setNotice(submittedRef.current.some(s => s.status === "pending") ? "Transfer submitted. Checking blockchain confirmation automatically; do not resend." : "Sweep confirmed. Your treasury balance has been updated."); setPlans([]); setConfirmed(false); dialog.current?.close();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Result uncertain. Check wallet activity before retrying.";
+      if (submittedRef.current.some(s => s.status === "pending" && plans.some(p => p.payment.key === s.key))) { setNotice(message); dialog.current?.close(); }
+      else setReviewError(message);
+      setPlans([]); setConfirmed(false); }
     finally { actionLock.current = false; setBusy(false); setProgress(""); await refresh(); await onSwept(); }
   }
   const known = rows.filter(r => !r.unknown && !r.dust);
@@ -145,6 +152,7 @@ export default function PaymentsAwaitingSweep({ onSwept }: { onSwept: () => Prom
   const ready = known.filter(r => !r.blocked && !held(r));
   return <section className="rounded-2xl border p-6 space-y-5" style={card}>
     <div className="flex flex-wrap justify-between items-center gap-3"><div><h2 className="text-xl font-semibold">Payments awaiting sweep</h2><p className="text-sm mt-1" style={{color:"var(--muted)"}}>Move customer payments to your treasury. Empty wallets are hidden.</p></div><div className="flex gap-2"><button disabled={loading || busy} onClick={() => void refresh()} className="border rounded-lg px-4 py-2 disabled:opacity-50">Refresh</button><button disabled={loading || busy || !!error || !ready.length} onClick={() => void prepare(known)} className="bg-blue-600 text-white rounded-lg px-4 py-2 disabled:opacity-50">Sweep all{ready.length ? ` (${ready.length})` : ""}</button></div></div>
+    {notice && <p role="status" className="text-sm">{notice}</p>}
     {known.length > 5 && <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Find customer" aria-label="Find customer payment" className="w-full border rounded-lg p-3" style={card}/>}
     {loading && <p role="status" className="text-sm">{progress || "Checking for payments…"}</p>}
     {error && <p role="alert" style={{color:"var(--warn-num)"}}>{error} {loaded && "Previously checked payments remain below."}</p>}
