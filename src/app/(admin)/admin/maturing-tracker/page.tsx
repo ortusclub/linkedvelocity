@@ -14,7 +14,8 @@ type Fact = { l: string; v: string };
 type Review = { id: string; kind: string; label: string; email: string; name: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: Fact[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
 type MatRow = { id: string; email: string; name: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
 type Data = { updatedAt: string; kpis: { eligible: number; maturing: number; maturingPct: number; needsReview: number; restricted: number }; buckets: Bucket[]; review: Review[]; rows: MatRow[] };
-type Health = { checkedAt: string; summary: { sending: number; starting: number; attention: number; queued: number; accounts: number }; attention: { email: string; reason: string }[]; starting: { email: string; reason: string }[] };
+type HealthRow = { email: string; state: "sending" | "starting" | "attention"; line: string };
+type Health = { checkedAt: string; summary: { sending: number; starting: number; attention: number; queued: number; accounts: number }; rows: HealthRow[] };
 
 const FLAG_OPTS: { kind: string; label: string; dot: string }[] = [
   { kind: "logged_out", label: "Logged out", dot: "#f59e0b" },
@@ -164,7 +165,7 @@ export default function MaturingTrackerPage() {
                   <div style={{ font: `700 16px ${G}`, color: C.ink }}>Is maturing actually sending?</div>
                   <div style={{ font: `500 12.5px ${F}`, color: C.mut, marginTop: 2 }}>The counts above only show which accounts are <i>meant</i> to mature. This checks the engine for accounts that are <b>actually sending connection requests</b> right now.</div>
                 </div>
-                <button onClick={() => void checkHealth()} disabled={hBusy} style={{ border: "none", background: C.ink, color: "#fff", borderRadius: 10, padding: "10px 16px", font: `700 13px ${F}`, cursor: hBusy ? "default" : "pointer", opacity: hBusy ? 0.6 : 1 }}>{hBusy ? "Checking… (takes ~20s)" : health ? "Check again" : "Check now"}</button>
+                <button onClick={() => void checkHealth()} disabled={hBusy} style={{ border: "none", background: C.ink, color: "#fff", borderRadius: 10, padding: "10px 16px", font: `700 13px ${F}`, cursor: hBusy ? "default" : "pointer", opacity: hBusy ? 0.6 : 1 }}>{hBusy ? "Checking… (takes ~40s)" : health ? "Check again" : "Check now"}</button>
               </div>
 
               {hErr && <div style={{ font: `600 13px ${F}`, color: "#b91c1c" }}>{hErr}</div>}
@@ -189,30 +190,27 @@ export default function MaturingTrackerPage() {
                   <div style={{ font: `600 13px ${F}`, color: health.summary.attention ? "#b91c1c" : "#0f7a3d" }}>
                     {health.summary.attention === 0
                       ? "✓ Everything that should be sending is sending. Nothing to do."
-                      : `${health.summary.attention} account${health.summary.attention === 1 ? "" : "s"} ${health.summary.attention === 1 ? "is" : "are"} not sending and need a look (listed below). If this stays high, tell Sam.`}
+                      : `${health.summary.attention} account${health.summary.attention === 1 ? "" : "s"} ${health.summary.attention === 1 ? "is" : "are"} not sending and need a look (red, at the top). If this stays high, tell Sam.`}
                   </div>
 
-                  {!!health.attention.length && (
-                    <div style={{ border: `1px solid #f5c2c2`, borderRadius: 10, overflow: "hidden" }}>
-                      {health.attention.map((a, i) => (
-                        <div key={a.email} style={{ display: "flex", gap: 10, padding: "9px 12px", background: i % 2 ? "#fff" : "#fff8f8", alignItems: "baseline" }}>
-                          <span style={{ font: `700 12.5px ${F}`, color: C.ink, minWidth: 220 }}>🔴 {a.email}</span>
-                          <span style={{ font: `500 12.5px ${F}`, color: "#9a3412" }}>{a.reason}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {!!health.starting.length && (
-                    <details style={{ font: `500 12.5px ${F}`, color: C.mut }}>
-                      <summary style={{ cursor: "pointer", font: `700 12.5px ${F}`, color: "#92400e" }}>{health.starting.length} just started (normal — no action)</summary>
-                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
-                        {health.starting.map((a) => <span key={a.email}>🟡 {a.email} — {a.reason}</span>)}
+                  {/* Every account with its plain status, red first. Dot colour = the four groups above. */}
+                  {!!health.rows.length && (() => {
+                    const DOT: Record<HealthRow["state"], string> = { attention: "#e03131", starting: "#e0a200", sending: "#12a150" };
+                    const ROWBG: Record<HealthRow["state"], string> = { attention: "#fff8f8", starting: "#fffdf5", sending: "#fff" };
+                    return (
+                      <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+                        {health.rows.map((a, i) => (
+                          <div key={a.email + i} style={{ display: "grid", gridTemplateColumns: "14px minmax(180px,240px) 1fr", gap: 10, padding: "8px 12px", background: ROWBG[a.state], borderTop: i ? `1px solid ${C.bg}` : "none", alignItems: "baseline" }}>
+                            <span style={{ color: DOT[a.state], fontSize: 13, lineHeight: "18px" }}>●</span>
+                            <span style={{ font: `700 12.5px ${F}`, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.email || "(no email)"}</span>
+                            <span style={{ font: `500 12.5px ${F}`, color: a.state === "attention" ? "#9a3412" : C.mut }}>{a.line}</span>
+                          </div>
+                        ))}
                       </div>
-                    </details>
-                  )}
+                    );
+                  })()}
 
-                  <div style={{ font: `500 11px ${F}`, color: C.faint }}>Checked {new Date(health.checkedAt).toLocaleTimeString()} · reads the real send log (sent / errors) from the engine, not just the status label.</div>
+                  <div style={{ font: `500 11px ${F}`, color: C.faint }}>Checked {new Date(health.checkedAt).toLocaleTimeString()} · reads each account’s real send log + live engine status (sent today, when it sends again), not just the status label.</div>
                 </>
               )}
             </div>
