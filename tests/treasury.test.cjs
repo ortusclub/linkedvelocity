@@ -85,7 +85,7 @@ test('changed wallet, network, balance or expired review prevents sending', asyn
   }
 });
 
-function routeFixture({ authError, stripeError = false, tokenError = false, priceError = false } = {}) {
+function routeFixture({ authError, stripeError = false, tokenError = false, priceError = false, ethereumError = false } = {}) {
   let stripeReads = 0;
   class Provider { async getNetwork() { return { chainId: 8453n }; } async getBalance() { return ethers.parseEther('0.01'); } destroy() {} }
   class Contract { async balanceOf() { if (tokenError) throw Error('Unavailable'); return 50_000_000n; } }
@@ -94,6 +94,7 @@ function routeFixture({ authError, stripeError = false, tokenError = false, pric
     ethers: { ethers: { ...ethers, JsonRpcProvider: Provider, Contract } },
     '@/lib/auth': { requireAdmin: async () => { if (authError) throw Error(authError); return { role: 'admin' }; } },
     '@/lib/base-balance-provider': { getBaseBalanceProvider: async () => new Provider() },
+    '@/lib/ethereum-sweep': { withEthereumRead: async fn => { if (ethereumError) throw Error('Ethereum down'); return fn(new Provider()); } },
     '@/lib/stripe': { getStripe: () => ({ balance: { retrieve: async () => {
       stripeReads++; if (stripeError) throw Error('Provider failure with secret information');
       return { available: [{ currency: 'usd', amount: 12345 }], pending: [], livemode: true };
@@ -118,12 +119,21 @@ test('API isolates failures, never reports unavailable balances as zero, and dis
     let r = await routeFixture({ stripeError: true }).GET();
     assert.equal(r.body.stripe.status, 'unavailable');
     assert.equal(r.body.crypto.assets[1].amount, '50.0');
+    assert.equal(r.body.crypto.assets.length,6);
+    assert.equal(r.body.crypto.assets.filter(a=>a.network==='Ethereum').length,3);
+    assert.equal(r.body.crypto.assets.filter(a=>a.network==='Base').length,3);
+    assert.equal(r.body.crypto.assets.reduce((sum,a)=>sum+(a.usdValue||0),0),250);
     assert.equal(r.headers['Cache-Control'], 'private, no-store');
     assert.doesNotMatch(JSON.stringify(r), /secret information/);
     r = await routeFixture({ tokenError: true, priceError: true }).GET();
     assert.equal(r.body.stripe.status, 'ready');
     assert.equal(r.body.crypto.assets.find(a => a.token === 'USDC').amount, null);
     assert.equal(r.body.crypto.assets.find(a => a.token === 'ETH').usdValue, null);
+
+    r = await routeFixture({ethereumError:true}).GET();
+    assert.equal(r.body.crypto.assets.filter(a=>a.network==='Ethereum').every(a=>a.amount===null),true);
+    assert.equal(r.body.crypto.assets.filter(a=>a.network==='Base').every(a=>a.amount!==null),true);
+    assert.match(r.body.crypto.error,/subtotal/);
     delete process.env.TREASURY_WALLET_ADDRESS;
     r = await routeFixture().GET();
     assert.equal(r.body.crypto.address, null);
