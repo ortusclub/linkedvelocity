@@ -56,14 +56,14 @@ function fixture(options = {}) {
     getTreasuryWallet: () => { throw new Error('Sweeps must never access the receiving wallet private key'); },
     getChildWallet: index => {
       assert.equal(index, 7);
-      return { address: options.signerAddress ?? '0xABC' };
+      return { address: options.signerAddress ?? '0xABC', connect(p) { calls.events.push('connect'); assert.equal(p,provider); return this; } };
     },
     getUsdcContract: contract('USDC'),
     getUsdtContract: contract('USDT'),
     parseUsdc: value => ethers.parseUnits(String(value), 6),
     formatUsdc: value => ethers.formatUnits(value, 6),
   };
-  return { calls, ...load('src/lib/deposit-detector.ts', {
+  return { calls, provider, ...load('src/lib/deposit-detector.ts', {
     '@/lib/usdc-gas-sponsor': {
       sponsorshipEnabled: () => !!options.sponsored,
       prepareSponsoredUsdcSweep: async input => {
@@ -132,8 +132,10 @@ test('a failed USDC check does not prevent USDT sweeping', async () => {
 test('sweep endpoint rejects forged cron headers and missing secret', async () => {
   const previous = process.env.CRON_SECRET;
   let runs = 0;
+  let offline = false;
   const route = load('src/app/api/cron/detect-deposits/route.ts', {
     'next/server': { NextResponse: { json: (data, init) => ({ data, status: init?.status ?? 200 }) } },
+    '@/lib/wallet': {getBaseProvider:()=>({getBlockNumber:async()=>{if(offline)throw Error('offline')}})},
     '@/lib/deposit-job': { withDepositJob: fn => fn(async () => {}), DepositJobBusy: class extends Error {} },
     '@/lib/deposit-detector': {
       detectDeposits: async () => { runs++; return []; }, sweepDeposits: async () => [],
@@ -147,6 +149,9 @@ test('sweep endpoint rejects forged cron headers and missing secret', async () =
     assert.equal(runs, 0);
     assert.equal((await route.GET({ headers: new Headers({ authorization: 'Bearer test-secret' }) })).status, 200);
     assert.equal(runs, 1);
+    offline = true;
+    assert.equal((await route.GET({headers:new Headers({authorization:'Bearer test-secret'})})).status,500);
+    assert.equal(runs,1);
   } finally {
     if (previous === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = previous;
@@ -167,7 +172,7 @@ test('sweep endpoint rejects forged cron headers and missing secret', async () =
  });
  test('lost job lock prevents signing', async () => {
  const f = fixture({ USDT: 20_000_000n });
- await f.sweepDeposits('deposit', undefined, async () => { throw new Error('Lock lost'); });
+ await assert.rejects(f.sweepDeposits('deposit', undefined, async () => { throw new Error('Lock lost'); }), /Lock lost/);
  assert.equal(f.calls.sends.length, 0);
  });
 
@@ -239,3 +244,5 @@ test('timed-out relay remains pending and never resets customer credit tracking'
  assert.equal(f.calls.journals.length, 1);
  assert.equal(f.calls.resets.length, 0);
 });
+
+test('manual provider is used for the journalled sponsored transfer and is not retried after broadcast failure',async()=>{const f=fixture({USDC:110_000_000n,lastSeen:'110',sponsored:true,broadcastError:true});await f.sweepDeposits('deposit',undefined,async()=>{},{allowSponsored:true,provider:f.provider});assert.deepEqual(f.calls.events,['connect','prepare','journal','broadcast']);assert.equal(f.calls.sends.length,1);assert.equal(f.calls.resets.length,0);});

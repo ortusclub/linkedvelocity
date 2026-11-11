@@ -1,3 +1,4 @@
+import { getBaseSweepProvider } from "@/lib/base-sweep-provider";
 import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
 import { requireAdmin } from "@/lib/auth";
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
       orderBy: { id: "asc" }, skip: page * 20, take: 21,
       include: { user: { select: { email: true, fullName: true } } },
     });
-    const payments = await prisma.transaction.findMany({ where: { type: "deposit", userId: { in: deposits.map(d => d.userId) }, description: { startsWith: "USDC deposit detected at" } }, orderBy: { createdAt: "desc" }, select: { userId: true, createdAt: true } });
+    const payments = await prisma.transaction.findMany({ where: { type: "deposit", userId: { in: deposits.map(d => d.userId) }, description: { startsWith: "USDC deposit" } }, orderBy: { createdAt: "desc" }, select: { userId: true, createdAt: true } });
     provider = await getBaseBalanceProvider();
     const reader = provider;
     if ((await provider.getNetwork()).chainId !== BigInt(8453)) throw new Error("Wrong network");
@@ -91,12 +92,15 @@ export async function POST(req: NextRequest) {
   if (!input || typeof input.depositId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.depositId) || input.confirmed !== true) return reply({ error: "Select a deposit and confirm the sweep" }, 400);
   if (!treasury || input.treasury?.toLowerCase() !== treasury.toLowerCase()) return reply({ error: "Treasury destination changed. Refresh and review again." }, 409);
   if (!process.env.HD_WALLET_SEED_PHRASE) return reply({ error: "Server wallet signing is not configured." }, 503);
+  let sweepProvider: ethers.JsonRpcProvider | undefined;
   try {
+    sweepProvider = await getBaseSweepProvider();
+    const provider = sweepProvider;
     const result = await withDepositJob(async assertActive => {
       const deposit = await prisma.depositAddress.findUnique({ where: { id: input.depositId } });
       if (!deposit) return null;
       const failures: string[] = [];
-      const sweeps = await sweepDeposits(deposit.id, token => { failures.push(token); }, assertActive, { allowSponsored: true });
+      const sweeps = await sweepDeposits(deposit.id, token => { failures.push(token); }, assertActive, { allowSponsored: true, provider });
       return { sweeps, failures };
     });
     if (!result) return reply({ error: "Deposit address not found" }, 404);
@@ -106,6 +110,6 @@ export async function POST(req: NextRequest) {
       : "No funds were swept. The scheduled job may already have moved them. Refresh balances." });
   } catch (e) {
     if (e instanceof DepositJobBusy) return reply({ error: e.message }, 409);
-    return reply({ error: "Sweep could not complete. Check wallet activity and refresh before retrying." }, 503);
-  }
+    return reply({ error: sweepProvider ? "Sweep could not complete. Check wallet activity and refresh before retrying." : "Base sweep connection is unavailable. No transfer was submitted. Try again shortly." }, 503);
+  } finally { sweepProvider?.destroy(); }
 }
