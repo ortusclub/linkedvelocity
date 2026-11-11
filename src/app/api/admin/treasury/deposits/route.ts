@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getUsdcContract, getUsdtContract, formatUsdc, parseUsdc } from "@/lib/wallet";
-import { getBaseBalanceProvider } from "@/lib/base-balance-provider";
+import { getBaseBalanceProvider, markBaseBalanceProviderFailed } from "@/lib/base-balance-provider";
 import { sweepDeposits } from "@/lib/deposit-detector";
 import { DepositJobBusy, withDepositJob } from "@/lib/deposit-job";
 import type { DepositRow, DepositSnapshot } from "@/lib/deposit-snapshot";
@@ -51,6 +51,28 @@ export async function GET(req: NextRequest) {
         } catch { row.error = "Balance unavailable. Refresh before sweeping."; }
         return row;
       })));
+    }
+    // A healthy block-number response does not guarantee later token reads.
+    // Retry only failed read rows on another verified read-only provider.
+    for (let attempt = 0; attempt < 2 && rows.some(row => row.error); attempt++) {
+      markBaseBalanceProviderFailed(provider);
+      try {
+        const replacement = await getBaseBalanceProvider();
+        provider.destroy(); provider = replacement;
+      } catch { break; }
+      const retryReader = provider;
+      const retryUsdc = getUsdcContract(retryReader), retryUsdt = getUsdtContract(retryReader);
+      const failed = rows.filter(row => row.error);
+      for (let offset = 0; offset < failed.length; offset += 4) {
+        await Promise.all(failed.slice(offset, offset + 4).map(async row => {
+          try {
+            const [eth, dc, dt]: bigint[] = await Promise.all([retryReader.getBalance(row.address), retryUsdc.balanceOf(row.address), retryUsdt.balanceOf(row.address)]);
+            row.eth = ethers.formatEther(eth); row.usdc = formatUsdc(dc); row.usdt = formatUsdc(dt);
+            const deposit = visible.find(d => d.id === row.id)!;
+            row.awaitingCredit = dc > parseUsdc(String(deposit.lastSeenBalance)); row.error = null;
+          } catch { /* Unavailable stays explicit after bounded read retries. */ }
+        }));
+      }
     }
     const snapshot: DepositSnapshot = { rows, page, hasMore: deposits.length > 20, checkedAt: new Date().toISOString(), treasury: destination(),
       signingConfigured: !!process.env.HD_WALLET_SEED_PHRASE, gasSponsor: await gasSponsorStatus(provider) };

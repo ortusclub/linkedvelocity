@@ -121,3 +121,6 @@ Show payment review/loading/errors in a visible dialog at click time, not below 
 
 ## Simple payments queue — Samuel, 11 November 2026
 Treasury should primarily show funded customer payments awaiting sweep, across supported networks, with customer, evidenced receipt/recorded date, amount, individual Sweep and reviewed Sweep all. Hide verified-empty wallets; keep failed reads explicit and small balances below fees separate. Refresh for new payments and remove swept balances only after fresh evidence. Put gas/wallet/treasury details behind expandable sections. Retain confirmation, network checks and duplicate protection; UI work does not authorize an agent to move funds.
+
+## Empty deposit wallets — Samuel, 11 November 2026
+Hide wallets whose supported balances are successfully verified as zero, including unused addresses. A failed RPC lookup is unknown, not proof an address is absent or empty; repair/retry reads and retain an explicit unavailable state until verified. Never hide funded wallets based only on lookup failure.

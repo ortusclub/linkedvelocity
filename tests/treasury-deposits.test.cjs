@@ -17,6 +17,7 @@ process.env.HD_WALLET_SEED_PHRASE = 'fixture';
 delete process.env.TREASURY_PRIVATE_KEY;
 function fixture(options = {}) {
   const calls = [];
+  let providerCount = 0;
   class DepositJobBusy extends Error {}
   const route = load('src/app/api/admin/treasury/deposits/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => ({ body, status: init.status, headers: init.headers }) } },
@@ -27,11 +28,11 @@ function fixture(options = {}) {
       findUnique: async ({ where }) => { calls.push(['find', where.id]); return options.missing ? null : { id: where.id }; },
       findMany: async () => [{ id, address: treasury, user: { email: 'test@example.com' }, lastSeenBalance: '0' }],
     } } },
-    '@/lib/base-balance-provider': { getBaseBalanceProvider: async () => ({ getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n, destroy() {} }) },
+    '@/lib/base-balance-provider': { markBaseBalanceProviderFailed:()=>{}, getBaseBalanceProvider: async () => ({ round: ++providerCount, getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n, destroy() {} }) },
     '@/lib/wallet': {
       getBaseProvider: () => ({ getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n }),
       getUsdcContract: () => ({ balanceOf: async () => 5_000_000n }),
-      getUsdtContract: () => ({ balanceOf: async () => { if (options.rpcError) throw new Error('rpc'); return 1_000_000n; } }),
+      getUsdtContract: provider => ({ balanceOf: async () => { if (options.rpcError || (options.recover && provider.round === 1)) throw new Error('rpc'); return 1_000_000n; } }),
       formatUsdc: x => ethers.formatUnits(x, 6), parseUsdc: x => ethers.parseUnits(x, 6),
     },
     '@/lib/deposit-detector': { sweepDeposits: async (selected, onFailure, _assertActive, relayOptions) => { assert.equal(relayOptions.allowSponsored, true); calls.push(['sweep', selected]); if (options.failed) onFailure('USDT'); return options.failed ? [] : [{ txHash: 'test-hash', token: 'USDT', amount: '1' }]; } },
@@ -98,3 +99,5 @@ test('shared database lock rejects concurrent jobs and checks lock before signin
   assert.equal(await job.withDepositJob(async active => { await active(); return 42; }), 42);
   assert.equal(queries, 2);
 });
+
+test('failed token reads recover on a replacement provider without any sweep',async()=>{const f=fixture({recover:true});const r=await f.GET(request());assert.equal(r.status,200);assert.equal(r.body.rows[0].usdc,'5.0');assert.equal(r.body.rows[0].usdt,'1.0');assert.equal(r.body.rows[0].error,null);assert.equal(r.body.rows[0].awaitingCredit,true);assert.deepEqual(f.calls,[])});
