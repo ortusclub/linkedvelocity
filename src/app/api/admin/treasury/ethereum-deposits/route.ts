@@ -43,7 +43,9 @@ export async function POST(req: NextRequest) {
   if (input.action === "confirm" && input.confirmed !== true) return reply({ error: "Confirm the Ethereum network and destination first." }, 400);
   const provider = ethereumProvider();
   try {
-    return reply(await withDepositJob(async assertActive => input.action === "preview" ? previewEthereumSweep(provider, input.depositId) : executeEthereumSweep(provider, input.review, input.signature, assertActive)));
+    // Preview only reads chain/ledger state; background Base checks must not block it.
+    if (input.action === "preview") return reply(await previewEthereumSweep(provider, input.depositId));
+    return reply(await withDepositJob(assertActive => executeEthereumSweep(provider, input.review, input.signature, assertActive)));
   } catch (e) { return reply({ error: e instanceof SweepError || e instanceof DepositJobBusy ? e.message : "Ethereum sweep could not complete. Refresh and check transaction history before retrying." }, 409); }
   finally { provider.destroy(); }
 }

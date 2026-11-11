@@ -33,17 +33,17 @@ export function verifyReview(review: EthereumReview, signatureValue: string) {
 async function checkNetwork(provider: ethers.JsonRpcProvider) {
   if ((await provider.getNetwork()).chainId !== BigInt(1)) throw new SweepError("The RPC must connect to Ethereum mainnet.");
 }
-async function reconcile(provider: ethers.JsonRpcProvider, depositId: string) {
+async function reconcile(provider: ethers.JsonRpcProvider, depositId: string, persist = true) {
   const entries = await prisma.transaction.findMany({ where: { type: "sweep", description: { startsWith: prefix + depositId + ":" } } });
   for (const entry of entries) {
     const receipt = entry.txHash ? await provider.getTransactionReceipt(entry.txHash) : null;
     if (!receipt) throw new SweepError("An Ethereum sweep is pending or unconfirmed. Check its transaction before retrying.");
-    await prisma.transaction.update({ where: { id: entry.id }, data: { description: (entry.description || "").replace(prefix, receipt.status === 1 ? "Ethereum ETH sweep confirmed:" : "Ethereum ETH sweep reverted:") } });
+    if (persist) await prisma.transaction.update({ where: { id: entry.id }, data: { description: (entry.description || "").replace(prefix, receipt.status === 1 ? "Ethereum ETH sweep confirmed:" : "Ethereum ETH sweep reverted:") } });
   }
 }
 export async function previewEthereumSweep(provider: ethers.JsonRpcProvider, depositId: string) {
   await checkNetwork(provider);
-  await reconcile(provider, depositId);
+  await reconcile(provider, depositId, false);
   const deposit = await prisma.depositAddress.findUnique({ where: { id: depositId }, include: { user: { select: { email: true } } } });
   if (!deposit) throw new SweepError("Deposit wallet not found.");
   const to = destination();
