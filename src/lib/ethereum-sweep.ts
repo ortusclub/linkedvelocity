@@ -10,10 +10,28 @@ export type EthereumReview = {
 };
 export class SweepError extends Error {}
 const prefix = "Ethereum ETH sweep pending:";
-export function ethereumProvider() {
-  const request = new ethers.FetchRequest(process.env.ETH_RPC_URL || "https://eth.drpc.org");
-  request.timeout = 12_000;
-  return new ethers.JsonRpcProvider(request);
+export function ethereumProvider(url = process.env.ETH_RPC_URL || "https://eth.drpc.org") {
+  const request = new ethers.FetchRequest(url);
+  request.timeout = 4_000;
+  request.setThrottleParams({ maxAttempts: 1 });
+  return new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1 });
+}
+// Only read callbacks may fail over. Execution never retries a broadcast here.
+export async function withEthereumRead<T>(read: (provider: ethers.JsonRpcProvider) => Promise<T>): Promise<T> {
+  const urls = [...new Set([process.env.ETH_RPC_URL, "https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"].filter((url): url is string => !!url))];
+  for (const url of urls) {
+    const provider = ethereumProvider(url);
+    // Guard against accidentally using this read-only path for execution.
+    provider.broadcastTransaction = async () => { throw new SweepError("Read-only Ethereum connection cannot broadcast."); };
+    try {
+      await checkNetwork(provider);
+      return await read(provider);
+    } catch (error) {
+      if (error instanceof SweepError) throw error;
+      // Transport errors can contain RPC credentials; never return or log them.
+    } finally { provider.destroy(); }
+  }
+  throw new SweepError("Ethereum network reads are temporarily unavailable. No transfer was submitted by this review. Please retry shortly.");
 }
 function destination() {
   const value = process.env.TREASURY_WALLET_ADDRESS?.trim();
