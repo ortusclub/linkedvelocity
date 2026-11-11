@@ -21,8 +21,8 @@ export interface TreasurySnapshot {
   };
   crypto: {
     address: string | null;
-    network: "Base";
-    assets: { token: TreasuryToken; amount: string | null; usdValue: number | null; error: string | null }[];
+    network: "Base" | "Ethereum + Base";
+    assets: { network?: "Ethereum" | "Base"; token: TreasuryToken; amount: string | null; usdValue: number | null; error: string | null }[];
     error: string | null;
   };
 }

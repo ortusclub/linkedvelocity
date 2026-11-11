@@ -48,7 +48,7 @@ export default function TreasuryPage() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 120_000); return () => clearInterval(timer); }, [refresh]);
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(pendingKey) || "null");
@@ -99,7 +99,7 @@ export default function TreasuryPage() {
       const response = await fetch("/api/admin/treasury", { cache: "no-store" });
       if (!response.ok) throw new Error("Your admin session expired. Sign in again before transferring.");
       const fresh: TreasurySnapshot = await response.json();
-      if (fresh.crypto.error || fresh.crypto.address?.toLowerCase() !== review.source.toLowerCase()) throw new Error("The treasury configuration changed or is unavailable. Refresh and prepare again.");
+      if (fresh.crypto.assets.some(a => a.network !== "Ethereum" && a.amount === null) || fresh.crypto.address?.toLowerCase() !== review.source.toLowerCase()) throw new Error("The treasury configuration changed or is unavailable. Refresh and prepare again.");
       const hash = await requestTreasuryTransfer(walletProvider(), review);
       const submitted = { hash, source: review.source, destination: review.destination, amount: review.amount, token: review.token };
       setPending(submitted); setReceiptState("pending"); setFormOpen(false); setReview(null);
@@ -108,9 +108,9 @@ export default function TreasuryPage() {
     finally { actionLock.current = false; setBusy(false); }
   }
 
-  const blocked = loading || !!error || !!data?.crypto.error || !data?.crypto.address || busy || (!!pending && receiptState === "pending");
+  const blocked = loading || !!error || !!data?.crypto.assets.some(a => a.network !== "Ethereum" && a.amount === null) || !data?.crypto.address || busy || (!!pending && receiptState === "pending");
   const knownValues = data?.crypto.assets.filter(a => a.usdValue !== null) || [];
-  const allValued = data?.crypto.assets.length === 3 && knownValues.length === 3;
+  const allValued = data?.crypto.assets.length === 6 && knownValues.length === 6;
 
   return <div className="space-y-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
@@ -118,21 +118,14 @@ export default function TreasuryPage() {
         <h1 className="text-3xl font-bold" style={{ fontFamily: "var(--font-grotesk)" }}>Treasury</h1>
         <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Customer payments ready to move to your treasury.</p></div>
     </header>
-    <PaymentsAwaitingSweep onSwept={refresh} />
-    <details className="rounded-2xl border p-5" style={card}><summary className="cursor-pointer font-semibold">Treasury balances & transfers</summary><div className="space-y-6 mt-5">
-      <div className="flex gap-2">
-        <button onClick={() => void refresh()} disabled={loading || busy} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm disabled:opacity-50" style={card}><RefreshCw size={16} className={loading ? "animate-spin" : ""} />Refresh</button>
-        <button onClick={() => openTransfer()} disabled={blocked} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><ArrowUpRight size={17} />Move crypto to SwissBorg</button>
-      </div>
-    {error && <p role="alert" className="rounded-xl p-4" style={{ background: "var(--warn-bg)", color: "var(--warn-num)" }}>{error} {data && "Previously loaded balances below may be stale."}</p>}
-    {loading && !data && <p role="status" className="py-12 text-center" style={{ color: "var(--muted)" }}>Loading account balances…</p>}
     {data && <>
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="rounded-2xl p-6" style={card}>
-          <div className="mb-5 flex items-center justify-between"><h2 className="flex items-center gap-2 text-lg font-semibold"><Building2 size={20} />Stripe</h2>
+          <div className="mb-5 flex items-center justify-between"><h2 className="flex items-center gap-2 text-lg font-semibold"><Building2 size={20} />Stripe balance</h2>
             {data.stripe.status === "ready" && <span className="rounded-full px-3 py-1 text-xs" style={{ background: "var(--blue-chip-bg)", color: "var(--blue-chip-text)" }}>{data.stripe.live ? "Live account" : "Test account · no real funds"}</span>}</div>
           {data.stripe.error ? <p role="status" style={{ color: "var(--warn-num)" }}>{data.stripe.error}</p> : data.stripe.balances.length === 0 ? <p>No currency balances returned by Stripe.</p> :
             <div className="space-y-5">{data.stripe.balances.map(b => <div key={b.currency} className="grid grid-cols-2 gap-4">
+              <p className="col-span-2 text-3xl font-semibold">{money(String(Number(b.available) + Number(b.pending)), b.currency)}</p>
               <div><p className="text-xs" style={{ color: "var(--muted)" }}>Available · {b.currency}</p><p className="mt-1 text-2xl font-semibold">{money(b.available, b.currency)}</p></div>
               <div><p className="text-xs" style={{ color: "var(--muted)" }}>Pending · {b.currency}</p><p className="mt-1 text-2xl" style={{ color: "var(--muted)" }}>{money(b.pending, b.currency)}</p></div>
             </div>)}</div>}
@@ -140,20 +133,30 @@ export default function TreasuryPage() {
           <a className="mt-4 inline-flex items-center gap-1 text-sm" style={{ color: "var(--link)" }} href="https://dashboard.stripe.com/balance/overview" target="_blank" rel="noreferrer">View in Stripe<ExternalLink size={13} /></a>
         </section>
         <section className="rounded-2xl p-6" style={{ ...card, background: "var(--money-bg)", borderColor: "var(--money-border)" }}>
-          <h2 className="flex items-center gap-2 text-lg font-semibold"><Wallet size={20} />Crypto treasury <span className="ml-auto text-xs font-normal" style={{ color: "var(--muted)" }}>Base</span></h2>
-          <p className="mt-5 text-4xl font-semibold" style={{ color: "var(--money-num)", fontFamily: "var(--font-grotesk)" }}>{allValued ? usd(knownValues.reduce((sum, a) => sum + (a.usdValue || 0), 0)) : "—"}</p>
-          <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>{allValued ? "Indicative USD value · ETH, USDC and USDT" : "USD total unavailable; check individual balances below."}</p>
+          <h2 className="flex items-center gap-2 text-lg font-semibold"><Wallet size={20} />Receiving wallet <span className="ml-auto text-xs font-normal" style={{ color: "var(--muted)" }}>Ethereum + Base</span></h2>
+          <p className="mt-5 text-4xl font-semibold" style={{ color: "var(--money-num)", fontFamily: "var(--font-grotesk)" }}>{knownValues.length ? usd(knownValues.reduce((sum, a) => sum + (a.usdValue || 0), 0)) : "—"}</p>
+          <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>{allValued ? "Total estimated value · Ethereum + Base" : "Partial estimated value · some balances or prices unavailable"}</p>
           {data.crypto.error && <p role="status" className="mt-3" style={{ color: "var(--warn-num)" }}>{data.crypto.error}</p>}
-          {data.crypto.address && <a className="mt-5 block break-all font-mono text-xs" style={{ color: "var(--link)" }} target="_blank" rel="noreferrer" href={`https://basescan.org/address/${data.crypto.address}`}>{data.crypto.address} ↗</a>}
-          <p className="mt-3 text-xs" style={{ color: "var(--muted)" }}>Main wallet only. Customer deposit addresses, other networks, and other tokens are not included.</p>
+          {data.crypto.address && <div className="mt-5"><p className="break-all font-mono text-xs">{data.crypto.address}</p><div className="flex gap-4 mt-2 text-xs" style={{ color: "var(--link)" }}><a target="_blank" rel="noreferrer" href={`https://etherscan.io/address/${data.crypto.address}`}>Ethereum ↗</a><a target="_blank" rel="noreferrer" href={`https://basescan.org/address/${data.crypto.address}`}>Base ↗</a></div></div>}
+          <p className="mt-3 text-xs" style={{ color: "var(--muted)" }}>Your sweep destination · ETH, USDC and USDT on Ethereum and Base. Other networks and tokens are not included.</p>
         </section>
       </div>
+    </>}
+    <PaymentsAwaitingSweep onSwept={refresh} />
+    <details className="rounded-2xl border p-5" style={card}><summary className="cursor-pointer font-semibold">Treasury balances & transfers</summary><div className="space-y-6 mt-5">
+      <div className="flex gap-2">
+        <button onClick={() => void refresh()} disabled={loading || busy} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm disabled:opacity-50" style={card}><RefreshCw size={16} className={loading ? "animate-spin" : ""} />Refresh</button>
+        <button onClick={() => openTransfer()} disabled={blocked} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><ArrowUpRight size={17} />Transfer on Base</button>
+      </div>
+    {error && <p role="alert" className="rounded-xl p-4" style={{ background: "var(--warn-bg)", color: "var(--warn-num)" }}>{error} {data && "Previously loaded balances below may be stale."}</p>}
+    {loading && !data && <p role="status" className="py-12 text-center" style={{ color: "var(--muted)" }}>Loading account balances…</p>}
+    {data && <>
       <section className="overflow-hidden rounded-2xl" style={card}>
         <div className="border-b p-5" style={{ borderColor: "var(--divider)" }}><h2 className="font-semibold">Crypto balances</h2><p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>USDC sweeps can use a central gas wallet. Check its status under customer deposits. The receiving wallet needs no private key on the server.</p></div>
         <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead style={{ color: "var(--muted)" }}><tr><th className="p-5">Asset</th><th className="p-5">Balance</th><th className="p-5">USD estimate</th><th className="p-5">SwissBorg transfer</th></tr></thead>
-          <tbody>{data.crypto.assets.map(a => <tr key={a.token} className="border-t" style={{ borderColor: "var(--divider)" }}><th className="p-5 font-semibold">{a.token}<span className="mt-1 block text-xs font-normal" style={{ color: "var(--muted)" }}>Base{a.token === "USDT" ? " · bridged USDT" : ""}</span></th>
+          <tbody>{data.crypto.assets.map(a => <tr key={`${a.network || "Base"}:${a.token}`} className="border-t" style={{ borderColor: "var(--divider)" }}><th className="p-5 font-semibold">{a.token}<span className="mt-1 block text-xs font-normal" style={{ color: "var(--muted)" }}>{a.network || "Base"}{a.token === "USDT" && a.network !== "Ethereum" ? " · bridged USDT" : ""}</span></th>
             <td className="p-5" title={a.amount ?? undefined}>{a.amount === null ? <span style={{ color: "var(--warn-num)" }}>{a.error}</span> : amountText(a.amount)}</td><td className="p-5">{a.usdValue === null ? "Unavailable" : usd(a.usdValue)}</td>
-            <td className="p-5">{a.token === "USDT" ? <span className="text-xs" style={{ color: "var(--muted)" }}>Convert to native USDC in your wallet first.<br />USDT on Base is not supported by this transfer flow.</span> : <button disabled={blocked || a.amount === null || Number(a.amount) <= 0} onClick={() => openTransfer(a.token as TransferToken)} className="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40" style={{ background: "var(--blue-chip-bg)", color: "var(--blue-chip-text)" }}>Move {a.token} ↗</button>}</td>
+            <td className="p-5">{a.network === "Ethereum" ? <span className="text-xs" style={{ color: "var(--muted)" }}>Manage in your wallet on Ethereum</span> : a.token === "USDT" ? <span className="text-xs" style={{ color: "var(--muted)" }}>Convert to native USDC in your wallet first.<br />USDT on Base is not supported by this transfer flow.</span> : <button disabled={blocked || a.amount === null || Number(a.amount) <= 0} onClick={() => openTransfer(a.token as TransferToken)} className="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40" style={{ background: "var(--blue-chip-bg)", color: "var(--blue-chip-text)" }}>Move {a.token} ↗</button>}</td>
           </tr>)}</tbody></table></div>
       </section>
       <p className="text-xs" style={{ color: "var(--muted)" }}>Checked {new Date(data.checkedAt).toLocaleString()}. USD estimates use Coinbase exchange rates and are not executable quotes. These balances are held funds, not profit.</p>

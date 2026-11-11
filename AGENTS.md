@@ -124,3 +124,6 @@ Treasury should primarily show funded customer payments awaiting sweep, across s
 
 ## Empty deposit wallets — Samuel, 11 November 2026
 Hide wallets whose supported balances are successfully verified as zero, including unused addresses. A failed RPC lookup is unknown, not proof an address is absent or empty; repair/retry reads and retain an explicit unavailable state until verified. Never hide funded wallets based only on lookup failure.
+
+## Treasury balance summary — Samuel, 11 November 2026
+Show Stripe funds (with available and pending distinguished) and the balance of the configured receiving wallet prominently. Include Ethereum-mainnet assets as well as Base so confirmed ETH sweeps are reflected. Label supported networks/tokens and partial reads explicitly; never show a Base-only figure as the complete receiving-wallet balance. Keep transfer controls bound to their actual network.
