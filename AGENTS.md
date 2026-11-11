@@ -109,3 +109,6 @@ CC+IC operators at Apex/Ortus receive five eligible LV accounts only at Start, p
 
 ## Ethereum customer deposit sweeps — Samuel, 11 November 2026
 Provide an explicit Ethereum-mainnet native ETH sweep from customer deposit wallets to the configured treasury, with source, destination, maximum gas and net amount preview. Require user confirmation. Preserve existing customer credit; sweeping must never credit again or reset Base tracking. Keep transaction hashes durably journalled before broadcast and block uncertain repeats. Implementation or verification does not authorize an agent to move funds.
+
+## Treasury sweep totals — Samuel, 11 November 2026
+Show the amount awaiting sweep by network and token, including a read-only total across all deposit-wallet pages. Label current-page and partial results clearly; unavailable balances are unknown, never zero. Separate gross funds from amounts passing wallet checks, and show aggregate amounts in the sweep confirmation. Calculating totals must not credit customers or move funds.
