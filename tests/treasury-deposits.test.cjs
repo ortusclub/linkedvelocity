@@ -27,6 +27,7 @@ function fixture(options = {}) {
       findUnique: async ({ where }) => { calls.push(['find', where.id]); return options.missing ? null : { id: where.id }; },
       findMany: async () => [{ id, address: treasury, user: { email: 'test@example.com' }, lastSeenBalance: '0' }],
     } } },
+    '@/lib/base-balance-provider': { getBaseBalanceProvider: async () => ({ getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n, destroy() {} }) },
     '@/lib/wallet': {
       getBaseProvider: () => ({ getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n }),
       getUsdcContract: () => ({ balanceOf: async () => 5_000_000n }),
