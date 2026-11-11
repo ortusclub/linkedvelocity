@@ -10,7 +10,7 @@ import UnlockGuide, { type ScreenId } from "./unlock-guide";
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
 interface Activity { kind: string; name: string; referrer: string | null; mine: boolean; date: string; }
 type FixIssue = "application_incomplete" | "email_added" | "email_primary" | "twofa" | "password";
-interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; callBookedAt: string | null; }
+interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawNeedsContact: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; callBookedAt: string | null; }
 interface Payout { id: string; type: string; description: string | null; amount: number; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; }
 interface Tier { base: number; verified: number; }
 interface Config { currency: string; symbol: string; offer: { setup: string; monthly: string }; referralTiers: { referral: number; phone: Tier; computer: Tier }; payoutMethods: string[]; defaultPayoutMethod: string; }
@@ -115,7 +115,7 @@ const C = {
 type Tab = "home" | "jobs" | "money" | "guide" | "you";
 
 // Filter chips on the "Your onboardings" tab, by signup kind.
-type JobFilter = "all" | "action" | "onboarded" | "blocked" | "waiting";
+type JobFilter = "all" | "action" | "onboarded" | "blocked" | "waiting" | "hidden";
 const JOB_FILTERS: { id: JobFilter; label: string; empty: string; test: (s: Signup) => boolean }[] = [
   { id: "all", label: "Everyone", empty: "here", test: () => true },
   // An onboarding only "counts" as onboarded once the setup fee is paid (and the referrer is
@@ -128,6 +128,10 @@ const JOB_FILTERS: { id: JobFilter; label: string; empty: string; test: (s: Sign
   { id: "action", label: "Needs you", empty: "needs you right now", test: (s) => s.kind === "action" || (s.kind === "waiting" && !!s.fix) },
   { id: "blocked", label: "Restricted", empty: "restricted", test: (s) => s.kind === "blocked" },
   { id: "waiting", label: "With us", empty: "waiting on us", test: (s) => s.kind === "waiting" && !s.fix },
+  // Signups the referrer has hidden (soft-hide, record kept). They drop OUT of every other
+  // chip above and live only here, so hiding truly clears them from the active list — still
+  // restorable from the slim row. The chip itself only appears when there's something hidden.
+  { id: "hidden", label: "Hidden", empty: "hidden", test: (s) => s.withdrawn },
 ];
 
 // Post-sign-in fixes the team can raise on a signup — what the referrer needs to sort out.
@@ -178,6 +182,10 @@ export default function Portal({ token }: { token: string }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [withdrawId, setWithdrawId] = useState<string | null>(null);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
+  // Owner contact captured when hiding a PAID signup (the gate). Reset each time the
+  // withdraw box opens/closes so one card's entry never leaks into another.
+  const [ocMobile, setOcMobile] = useState("");
+  const [ocEmail, setOcEmail] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
   const [faqOpen, setFaqOpen] = useState<Set<string>>(new Set());
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -245,15 +253,34 @@ export default function Portal({ token }: { token: string }) {
   };
   // Withdraw (soft-hide, record kept) or restore one of the referrer's own signups. Refetches
   // so the card re-renders with the right pill, order and buttons.
-  const withdrawApplication = async (applicationId: string, action: "withdraw" | "restore") => {
+  const withdrawApplication = async (applicationId: string, action: "withdraw" | "restore", ownerContact?: { mobile: string; email: string }) => {
     setWithdrawingId(applicationId);
     try {
-      const res = await fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, applicationId }) });
+      const res = await fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, applicationId, ...(ownerContact ? { ownerContact } : {}) }) });
       if (!res.ok) { const b = await res.json().catch(() => ({})); alert(b.error || "Could not update this signup. Please try again."); return; }
-      setWithdrawId(null);
+      setWithdrawId(null); setOcMobile(""); setOcEmail("");
       const fresh = await fetch(`/api/m/${token}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (fresh) setData(fresh);
     } finally { setWithdrawingId(null); }
+  };
+
+  // Paid-signup hide gate: collect the owner's real mobile + email before the signup can leave
+  // the list. Shown in place of the plain withdraw confirm whenever s.withdrawNeedsContact.
+  const withdrawContactBox = (s: Signup) => {
+    const ready = ocMobile.trim().length >= 6 && /^\S+@\S+\.\S+$/.test(ocEmail.trim());
+    const inputStyle = { width: "100%", boxSizing: "border-box" as const, marginTop: 8, padding: "11px 12px", borderRadius: 10, border: `1px solid ${C.inputBorder}`, background: "#fff", color: C.ink, font: `500 13px ${JAK}` };
+    return (
+      <div style={{ marginTop: 10, padding: "12px 13px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+        <div style={{ font: `700 12.5px ${JAK}`, color: C.ink }}>Remove {s.name} from your list</div>
+        <div style={{ font: `500 11.5px/1.5 ${JAK}`, color: "#64748b", marginTop: 3 }}>This one&apos;s already paid, so your credit is safe and stays yours. Give us the owner&apos;s real mobile and email — we&apos;ll contact them to recover the account, then it comes off your list.</div>
+        <input value={ocMobile} onChange={(e) => setOcMobile(e.target.value)} inputMode="tel" placeholder="Owner&apos;s mobile number" style={inputStyle} />
+        <input value={ocEmail} onChange={(e) => setOcEmail(e.target.value)} inputMode="email" autoCapitalize="none" placeholder="Owner&apos;s email" style={inputStyle} />
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={() => { setWithdrawId(null); setOcMobile(""); setOcEmail(""); }} disabled={withdrawingId === s.id} style={{ flex: 1, font: `700 12.5px ${JAK}`, color: C.ink, background: "#fff", border: `1px solid ${C.inputBorder}`, padding: 11, borderRadius: 10, cursor: "pointer" }}>Keep it</button>
+          <button onClick={() => void withdrawApplication(s.id, "withdraw", { mobile: ocMobile.trim(), email: ocEmail.trim() })} disabled={!ready || withdrawingId === s.id} style={{ flex: 1, font: `700 12.5px ${JAK}`, color: "#fff", background: ready ? "#64748b" : "#cbd5e1", border: "none", padding: 11, borderRadius: 10, cursor: ready ? "pointer" : "not-allowed" }}>{withdrawingId === s.id ? "Removing…" : "Recover & remove"}</button>
+        </div>
+      </div>
+    );
   };
   // Pull the latest LinkedIn sign-in code for one signup's onboarding session. Reuses the
   // onboarding GET, which only returns a code while forwarding is live (pre-onboarding).
@@ -602,9 +629,10 @@ export default function Portal({ token }: { token: string }) {
                 {jobQuery && <button onClick={() => setJobQuery("")} aria-label="Clear search" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", font: `600 13px ${JAK}`, color: C.muted2, background: "none", border: "none", cursor: "pointer", padding: 4, lineHeight: 1 }}>✕</button>}
               </div>
               <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16 }}>
-                {JOB_FILTERS.map((f) => {
+                {JOB_FILTERS.filter((f) => f.id !== "hidden" || signups.some((s) => s.withdrawn)).map((f) => {
                   const on = jobFilter === f.id;
-                  const n = f.id === "all" ? 0 : signups.filter(f.test).length;
+                  // Hidden items are counted only under their own chip; everywhere else they're excluded.
+                  const n = f.id === "all" ? 0 : signups.filter(f.test).filter((s) => f.id === "hidden" || !s.withdrawn).length;
                   return (
                     <button key={f.id} onClick={() => setJobFilter(f.id)} style={{ font: `700 12px ${JAK}`, padding: "9px 13px", borderRadius: 999, cursor: "pointer", whiteSpace: "nowrap", ...(on ? { background: C.dark, color: "#fff", border: "none" } : { background: "#fff", color: C.slate, border: `1px solid ${C.inputBorder}` }) }}>{f.label}{f.id === "all" ? "" : ` ${n}`}</button>
                   );
@@ -614,6 +642,7 @@ export default function Portal({ token }: { token: string }) {
               const q = jobQuery.trim().toLowerCase();
               const shown = signups
                 .filter((JOB_FILTERS.find((f) => f.id === jobFilter) || JOB_FILTERS[0]).test)
+                .filter((s) => jobFilter === "hidden" || !s.withdrawn)
                 .filter((s) => !q || (s.name || "").toLowerCase().includes(q));
               if (shown.length === 0) return q ? (
                 <div style={{ ...card, textAlign: "center", padding: "22px 18px" }}>
@@ -733,6 +762,7 @@ export default function Portal({ token }: { token: string }) {
                         <div style={{ font: `700 11.5px/1.4 ${JAK}`, color: C.greenDk, background: C.softGreen, border: `1px solid ${C.softGreenBorder}`, borderRadius: 9, padding: "9px 11px", marginTop: 8 }}>✓ You told us it&apos;s unrestricted — the team is verifying it now.</div>
                       )}
                       {withdrawId === s.id ? (
+                        s.withdrawNeedsContact ? withdrawContactBox(s) : (
                         <div style={{ marginTop: 10, background: "#f6f7f9", border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
                           <div style={{ font: `700 13px ${JAK}`, color: C.ink }}>Withdraw {sFirst}&apos;s signup?</div>
                           <div style={{ font: `500 12px/1.45 ${JAK}`, color: C.slate, marginTop: 3 }}>Only if they can&apos;t or won&apos;t clear the check. It comes off your list and won&apos;t pay out.</div>
@@ -741,8 +771,9 @@ export default function Portal({ token }: { token: string }) {
                             <button onClick={() => void withdrawApplication(s.id, "withdraw")} disabled={withdrawingId === s.id} style={{ flex: 1, minHeight: 44, borderRadius: 10, background: "#fff", border: `1px solid ${C.redBorder}`, color: C.red, font: `700 13px ${JAK}`, cursor: "pointer" }}>{withdrawingId === s.id ? "Withdrawing…" : "Withdraw"}</button>
                           </div>
                         </div>
+                        )
                       ) : (
-                        <button onClick={() => setWithdrawId(s.id)} style={{ display: "block", margin: "10px auto 0", font: `600 12.5px ${JAK}`, color: C.muted2, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>Withdraw this signup</button>
+                        <button onClick={() => { setWithdrawId(s.id); setOcMobile(""); setOcEmail(""); }} style={{ display: "block", margin: "10px auto 0", font: `600 12.5px ${JAK}`, color: C.muted2, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>Remove this signup</button>
                       )}
                     </>
                   )}
@@ -812,6 +843,7 @@ export default function Portal({ token }: { token: string }) {
                   {/* Withdraw — soft-hide for signups too far along to delete (keeps the record).
                       Restricted cards carry their own withdraw control in the payout panel. */}
                   {s.withdrawable && !s.restricted && (withdrawId === s.id ? (
+                    s.withdrawNeedsContact ? withdrawContactBox(s) : (
                     <div style={{ marginTop: 10, padding: "11px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 11 }}>
                       <div style={{ font: `700 12px ${JAK}`, color: "#475569" }}>Withdraw {s.name}&apos;s signup?</div>
                       <div style={{ font: `500 11.5px/1.45 ${JAK}`, color: "#64748b", marginTop: 2 }}>It&apos;s hidden from your active list but kept in our records. You can restore it anytime.</div>
@@ -820,8 +852,9 @@ export default function Portal({ token }: { token: string }) {
                         <button onClick={() => void withdrawApplication(s.id, "withdraw")} disabled={withdrawingId === s.id} style={{ flex: 1, font: `700 12.5px ${JAK}`, color: "#fff", background: "#64748b", border: "none", padding: 11, borderRadius: 10, cursor: "pointer" }}>{withdrawingId === s.id ? "Withdrawing…" : "Withdraw it"}</button>
                       </div>
                     </div>
+                    )
                   ) : (
-                    <button onClick={() => setWithdrawId(s.id)} style={{ display: "block", margin: "10px auto 0", font: `600 11.5px ${JAK}`, color: C.muted, background: "none", border: "none", padding: 4, cursor: "pointer", textDecoration: "underline" }}>Withdraw this signup</button>
+                    <button onClick={() => { setWithdrawId(s.id); setOcMobile(""); setOcEmail(""); }} style={{ display: "block", margin: "10px auto 0", font: `600 11.5px ${JAK}`, color: C.muted, background: "none", border: "none", padding: 4, cursor: "pointer", textDecoration: "underline" }}>Remove this signup</button>
                   ))}
                   {s.withdrawn && (
                     <button onClick={() => void withdrawApplication(s.id, "restore")} disabled={withdrawingId === s.id} style={{ display: "block", margin: "10px auto 0", font: `700 11.5px ${JAK}`, color: C.greenDk, background: "none", border: "none", padding: 4, cursor: "pointer", textDecoration: "underline" }}>{withdrawingId === s.id ? "Restoring…" : "Restore this signup"}</button>
