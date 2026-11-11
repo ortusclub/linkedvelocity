@@ -590,14 +590,21 @@ export default function RestrictionsV2Page() {
   const pick: Record<string, (r: Row) => boolean> = {
     action: needsAction, open: isOpenCase, owner: (r) => r.bucket === "owner",
     linkedin: (r) => r.bucket === "linkedin", idfail: (r) => isOpenCase(r) && hasIdFail(r),
-    done: (r) => r.bucket === "done", lost: (r) => r.bucket === "lost", all: () => true,
+    done: (r) => r.bucket === "done", lost: (r) => r.bucket === "lost",
+    // Lost splits into two genuinely different outcomes — worth separate buckets for triage.
+    perma: (r) => r.bucket === "lost" && r.lostOutcome === "perma",
+    nocontact: (r) => r.bucket === "lost" && r.lostOutcome === "nocontact",
+    all: () => true,
   };
   const ql = q.trim().toLowerCase();
   const match = (r: Row) => !ql || [r.name, r.email, r.renterName, r.poc, r.referrerName, r.reason, r.lastErr].join(" ").toLowerCase().includes(ql);
   // Filter/count by the DERIVED phase (rental/lifecycle, #659), not raw account.status — otherwise a
   // restricted-but-rented account (status "unavailable") shows a P1 badge yet lands in no chip, and the
   // P1+P2+P3 counts don't sum to All. phaseF holds the pr as a string ("1".."4").
-  const matchPhase = (r: Row) => phaseF === "all" || String(r.phase.pr) === phaseF;
+  // Phase lens = Sam's mental model: Rented (P1) and Onboarded (P2) are what matter; everything
+  // not yet onboarded (Under construction P3 + Other P4) collapses into one "Pre-onboarded" bucket
+  // he cares much less about. phaseF: "all" | "1" | "2" | "pre".
+  const matchPhase = (r: Row) => phaseF === "all" || (phaseF === "pre" ? r.phase.pr >= 3 : String(r.phase.pr) === phaseF);
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
   const matchRef = (r: Row) => refF === "all" || (refF === "none" ? !r.referrerName : r.referrerName === refF);
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
@@ -628,15 +635,23 @@ export default function RestrictionsV2Page() {
       : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
 
   const openCases = all.filter(isOpenCase);
-  const avgD = openCases.length ? (openCases.reduce((n, r) => n + r.restrictedMs, 0) / openCases.length / 86400e3).toFixed(1) : "0";
+  // Open cases split by the phase that matters for triage — rented and onboarded losses are the
+  // costly ones; pre-onboarded (still being built) matters much less. Surfaced on the Open tile.
+  const openRented = openCases.filter((r) => r.phase.pr === 1).length;
+  const openOnb = openCases.filter((r) => r.phase.pr === 2).length;
+  const openPre = openCases.filter((r) => r.phase.pr >= 3).length;
+  const lostRows = all.filter((r) => r.bucket === "lost");
   const tiles: Array<[string, string, number, string, string]> = [
     ["action", "Needs action", all.filter(needsAction).length, "New replies + today's to-dos", "#dc2626"],
-    ["open", "Open cases", openCases.length, `Avg restricted ${avgD}d`, "#0b1220"],
+    ["open", "Open cases", openCases.length, `${openRented} rented · ${openOnb} onboarded · ${openPre} pre`, "#0b1220"],
     ["owner", "Awaiting owner", all.filter((r) => r.bucket === "owner").length, "Email / QR sent", "#3b82f6"],
     ["linkedin", "Awaiting LinkedIn", all.filter((r) => r.bucket === "linkedin").length, "Appeal under review", "#8b5cf6"],
     ["idfail", "ID verify failed", openCases.filter(hasIdFail).length, "Open cases", "#f59e0b"],
     ["done", "Recovered", all.filter((r) => r.bucket === "done").length, "Last 30 days", "#16a34a"],
-    ["lost", "Lost", all.filter((r) => r.bucket === "lost").length, "Perma-restricted / no contact", "#7f1d1d"],
+    // Lost split in two — a perma-restricted account (LinkedIn said no) and one we simply can't
+    // reach (owner gone silent) are different problems with different follow-ups.
+    ["perma", "Perm restricted", lostRows.filter((r) => r.lostOutcome === "perma").length, "LinkedIn denied — given up", "#7f1d1d"],
+    ["nocontact", "Can't contact", lostRows.filter((r) => r.lostOutcome === "nocontact").length, "Owner unreachable", "#c2410c"],
   ];
   const segs: Array<[string, string]> = [["action", "Needs action"], ["open", "All open"], ["done", "Recovered"], ["lost", "Lost"], ["all", "Everything"]];
 
@@ -644,9 +659,8 @@ export default function RestrictionsV2Page() {
   const inFilter = all.filter(pick[filter] || pick.all);
   const phaseOpts: Array<{ key: string; label: string; pr: string; n: number }> = [
     { key: "all", label: "All", pr: "" }, { key: "1", label: "Rented", pr: "P1" },
-    { key: "2", label: "Onboarded", pr: "P2" }, { key: "3", label: "Under construction", pr: "P3" },
-    { key: "4", label: "Other", pr: "P4" },
-  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || String(r.phase.pr) === o.key).length }));
+    { key: "2", label: "Onboarded", pr: "P2" }, { key: "pre", label: "Pre-onboarded", pr: "P3·4" },
+  ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "pre" ? r.phase.pr >= 3 : String(r.phase.pr) === o.key)).length }));
   const pocNames = [...new Set(all.map((r) => r.poc).filter(Boolean))].sort();
   const pocChips: Array<{ key: string; label: string; n: number }> = [
     { key: "all", label: "Everyone" }, ...pocNames.map((p) => ({ key: p, label: p })), { key: "none", label: "Unassigned" },
