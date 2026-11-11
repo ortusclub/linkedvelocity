@@ -20,6 +20,6 @@ export async function executePayments(plans: PaymentPlan[], send: (plan: Payment
     if (plan.eth && Date.now() > plan.eth.review.expiresAt) throw new Error("Fee review expired. Remaining payments were not submitted; review again.");
     const result = await send(plan);
     progress(plan.payment.key, result.hashes, result.uncertain);
-    if (result.uncertain) throw new Error("Stopped: a transfer needs confirmation. Check its transaction before retrying. Remaining payments were not submitted.");
+    if (result.uncertain) throw new Error(result.hashes.length ? "Transfer submitted; waiting for blockchain confirmation. We will check automatically. Do not resend. Remaining payments were not submitted." : "Stopped: the transfer outcome is unknown. Check wallet activity before retrying. Remaining payments were not submitted.");
   }
 }

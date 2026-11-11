@@ -64,6 +64,7 @@ function fixture(options = {}) {
     formatUsdc: value => ethers.formatUnits(value, 6),
   };
   return { calls, provider, ...load('src/lib/deposit-detector.ts', {
+    '@/lib/base-balance-provider': {getBaseBalanceProvider:async()=>({getTransactionReceipt:async()=>options.recoveryReceipt ?? null,destroy(){}})},
     '@/lib/usdc-gas-sponsor': {
       sponsorshipEnabled: () => !!options.sponsored,
       prepareSponsoredUsdcSweep: async input => {
@@ -120,7 +121,9 @@ test('unfunded source is skipped without accessing a treasury signer', async () 
 
 test('failed receipt does not record a successful sweep or reset tracker', async () => {
   const f = fixture({ USDC: 2_000_000n, status: 0 });
-  assert.deepEqual(await f.sweepDeposits(), []);
+  const results = await f.sweepDeposits();
+  assert.equal(results[0].txHash, 'hash-USDC');
+  assert.equal(results[0].status, 'pending');
   assert.equal(f.calls.ledger.length + f.calls.resets.length, 0);
 });
 
@@ -246,3 +249,6 @@ test('timed-out relay remains pending and never resets customer credit tracking'
 });
 
 test('manual provider is used for the journalled sponsored transfer and is not retried after broadcast failure',async()=>{const f=fixture({USDC:110_000_000n,lastSeen:'110',sponsored:true,broadcastError:true});await f.sweepDeposits('deposit',undefined,async()=>{},{allowSponsored:true,provider:f.provider});assert.deepEqual(f.calls.events,['connect','prepare','journal','broadcast']);assert.equal(f.calls.sends.length,1);assert.equal(f.calls.resets.length,0);});
+
+test('accepted broadcast with lost response recovers receipt without resending',async()=>{const f=fixture({USDC:110_000_000n,lastSeen:'110',sponsored:true,broadcastError:true,recoveryReceipt:{status:1}});const failures=[];const results=await f.sweepDeposits('deposit',t=>failures.push(t),async()=>{},{allowSponsored:true});assert.equal(f.calls.sends.length,1);assert.equal(results[0].txHash,'relay-hash');assert.equal(results[0].status,undefined);assert.deepEqual(failures,[]);assert.equal(f.calls.resets.length,1);});
+test('unconfirmed broadcast returns its durable hash for polling without resending',async()=>{const f=fixture({USDC:110_000_000n,lastSeen:'110',sponsored:true,broadcastError:true});const results=await f.sweepDeposits('deposit',undefined,async()=>{},{allowSponsored:true});assert.equal(results[0].txHash,'relay-hash');assert.equal(results[0].status,'pending');assert.equal(f.calls.sends.length,1);assert.equal(f.calls.resets.length,0);});

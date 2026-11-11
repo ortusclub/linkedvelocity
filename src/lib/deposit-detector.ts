@@ -1,3 +1,4 @@
+import { getBaseBalanceProvider } from "@/lib/base-balance-provider";
 import { prisma } from "@/lib/prisma";
 import { ethers } from "ethers";
 import { getBaseProvider, getUsdcContract, getUsdtContract, getChildWallet, getTreasuryAddress, formatUsdc, parseUsdc } from "@/lib/wallet";
@@ -105,6 +106,13 @@ export async function detectDeposits(assertActive: () => Promise<void> = async (
   return results;
 }
 
+async function finishSweep(journalId: string, depositId: string, token: string, amount: string) {
+  await prisma.$transaction(async tx => {
+    await tx.transaction.update({ where: { id: journalId }, data: { description: `Swept ${amount} ${token} to treasury` } });
+    if (token === "USDC") await tx.depositAddress.update({ where: { id: depositId }, data: { lastSeenBalance: 0 } });
+  });
+}
+
 export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}, options: { allowSponsored?: boolean; provider?: ethers.JsonRpcProvider } = {}) {
   const provider = options.provider || getBaseProvider();
   const blocked = await reconcilePendingSweeps(assertActive, provider);
@@ -118,7 +126,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
     { symbol: "USDC", contract: getUsdcContract, resetsLastSeen: true },
     { symbol: "USDT", contract: getUsdtContract, resetsLastSeen: false },
   ] as const;
-  const results: { address: string; amount: string; txHash: string; token: string }[] = [];
+  const results: { address: string; amount: string; txHash: string; token: string; status?: "pending" }[] = [];
 
   if ((await provider.getNetwork()).chainId !== BigInt(8453)) {
     throw new Error("Deposit sweeps require Base mainnet");
@@ -128,6 +136,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
     await assertActive();
     if (blocked.has(deposit.id)) { onFailure?.("pending transaction"); continue; }
     for (const token of tokens) {
+      let attempt: { hash: string; journalId: string; amount: string } | undefined;
       try {
         if (Date.now() - started > 120_000) return results;
         const balance: bigint = await token.contract(provider).balanceOf(deposit.address);
@@ -162,6 +171,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
               userId: deposit.userId, type: "sweep", amount: formatUsdc(balance), txHash: prepared.hash,
               description: `${pendingPrefix}USDC:${deposit.id}:relayed`,
             } });
+            attempt = { hash: prepared.hash, journalId: journal.id, amount: formatUsdc(balance) };
             relayUncertain = true;
             await assertActive();
             tx = await provider.broadcastTransaction(prepared.rawTransaction);
@@ -176,25 +186,12 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
               description: `${pendingPrefix}${token.symbol}:${deposit.id}`,
             } });
           }
+          attempt = { hash: tx.hash, journalId: journal.id, amount: formatUsdc(balance) };
           const receipt = await tx.wait(1, 45_000);
           if (!receipt || receipt.status !== 1) throw new Error("Token sweep failed");
 
-          await prisma.$transaction(async (tx) => {
-            await tx.transaction.update({
-              where: { id: journal.id },
-              data: {
-                description: `Swept ${formatUsdc(balance)} ${token.symbol} to treasury`,
-              },
-            });
-
-            // This tracker belongs exclusively to the USDC deposit detector.
-            if (token.resetsLastSeen) {
-              await tx.depositAddress.update({
-                where: { id: deposit.id },
-                data: { lastSeenBalance: 0 },
-              });
-            }
-          });
+          await assertActive();
+          await finishSweep(journal.id, deposit.id, token.symbol, formatUsdc(balance));
           if (sponsored) relayUncertain = false;
 
           results.push({
@@ -205,6 +202,24 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
           });
         }
       } catch (error) {
+        if (attempt) {
+          // A broadcast/wait error is not a failed transfer. Check its exact
+          // pre-journalled hash using a read-only connection; never resend.
+          let reader: ethers.JsonRpcProvider | undefined;
+          let confirmed = false;
+          try {
+            reader = await getBaseBalanceProvider();
+            const receipt = await reader.getTransactionReceipt(attempt.hash);
+            confirmed = receipt?.status === 1;
+            if (confirmed) {
+              await assertActive();
+              await finishSweep(attempt.journalId, deposit.id, token.symbol, attempt.amount);
+            }
+          } catch { /* Retain the durable journal if confirmation or bookkeeping is delayed. */ }
+          finally { reader?.destroy(); }
+          results.push({ address: deposit.address, amount: attempt.amount, txHash: attempt.hash, token: token.symbol, ...(confirmed ? {} : { status: "pending" as const }) });
+          if (confirmed) { relayUncertain = false; continue; }
+        }
         onFailure?.(token.symbol);
         // RPC error objects can contain signed authorizations or raw transactions.
         console.error(`Error sweeping ${token.symbol} at ${deposit.address}`, error instanceof Error && "code" in error ? "RPC operation failed; check the pending journal" : "Sweep checks or confirmation failed");
