@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { withDepositJob, DepositJobBusy } from "@/lib/deposit-job";
+import { withEthereumDepositJob, DepositJobBusy } from "@/lib/deposit-job";
 import { ethereumProvider, withEthereumRead, previewEthereumSweep, executeEthereumSweep, SweepError } from "@/lib/ethereum-sweep";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   }
   const provider = ethereumProvider();
   try {
-    return reply(await withDepositJob(assertActive => executeEthereumSweep(provider, input.review, input.signature, assertActive)));
+    return reply(await withEthereumDepositJob(assertActive => executeEthereumSweep(provider, input.review, input.signature, assertActive)));
   } catch (e) { return reply({ error: e instanceof SweepError || e instanceof DepositJobBusy ? e.message : "Ethereum sweep could not complete. Refresh and check transaction history before retrying." }, 409); }
   finally { provider.destroy(); }
 }
