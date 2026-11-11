@@ -1,4 +1,5 @@
 export type DepositRow = {
+  name?: string; receivedAt?: string | null;
   id: string; address: string; customer: string; eth: string | null;
   usdc: string | null; usdt: string | null; awaitingCredit: boolean; error: string | null;
 };

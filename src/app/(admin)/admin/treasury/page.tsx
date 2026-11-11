@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers, type Eip1193Provider } from "ethers";
 import { ArrowUpRight, Building2, CheckCircle2, ExternalLink, RefreshCw, Wallet } from "lucide-react";
-import EthereumDeposits from "@/components/admin/EthereumDeposits";
-import TreasuryDeposits from "@/components/admin/TreasuryDeposits";
+import PaymentsAwaitingSweep from "@/components/admin/PaymentsAwaitingSweep";
 import { type TreasurySnapshot, type TransferToken } from "@/lib/treasury";
 import { prepareTreasuryTransfer, requestTreasuryTransfer, transferError, type TransferReview } from "@/lib/treasury-transfer";
 
@@ -117,13 +116,14 @@ export default function TreasuryPage() {
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><p className="mb-2 text-xs font-semibold uppercase tracking-[.2em]" style={{ color: "var(--muted)" }}>Money management</p>
         <h1 className="text-3xl font-bold" style={{ fontFamily: "var(--font-grotesk)" }}>Treasury</h1>
-        <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Stripe funds and the main crypto wallet, in one place.</p></div>
+        <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Customer payments ready to move to your treasury.</p></div>
+    </header>
+    <PaymentsAwaitingSweep onSwept={refresh} />
+    <details className="rounded-2xl border p-5" style={card}><summary className="cursor-pointer font-semibold">Treasury balances & transfers</summary><div className="space-y-6 mt-5">
       <div className="flex gap-2">
         <button onClick={() => void refresh()} disabled={loading || busy} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm disabled:opacity-50" style={card}><RefreshCw size={16} className={loading ? "animate-spin" : ""} />Refresh</button>
         <button onClick={() => openTransfer()} disabled={blocked} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><ArrowUpRight size={17} />Move crypto to SwissBorg</button>
       </div>
-    </header>
-    <EthereumDeposits />
     {error && <p role="alert" className="rounded-xl p-4" style={{ background: "var(--warn-bg)", color: "var(--warn-num)" }}>{error} {data && "Previously loaded balances below may be stale."}</p>}
     {loading && !data && <p role="status" className="py-12 text-center" style={{ color: "var(--muted)" }}>Loading account balances…</p>}
     {data && <>
@@ -158,7 +158,7 @@ export default function TreasuryPage() {
       </section>
       <p className="text-xs" style={{ color: "var(--muted)" }}>Checked {new Date(data.checkedAt).toLocaleString()}. USD estimates use Coinbase exchange rates and are not executable quotes. These balances are held funds, not profit.</p>
     </>}
-    <TreasuryDeposits onSwept={refresh} />
+    </div></details>
     {pending && <section role="status" className="rounded-2xl p-5" style={card}>
       <h2 className="flex items-center gap-2 font-semibold">{receiptState === "confirmed" && <CheckCircle2 size={18} style={{ color: "var(--green)" }} />}{receiptState === "confirmed" ? "Transfer confirmed on Base" : receiptState === "failed" ? "Transfer reverted" : "Transfer submitted · awaiting confirmation"}</h2>
       <p className="mt-2 text-sm">{pending.amount} {pending.token} → <span className="break-all font-mono text-xs">{pending.destination}</span></p>

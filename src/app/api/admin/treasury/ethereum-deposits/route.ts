@@ -11,13 +11,19 @@ async function authorize() { try { await requireAdmin(); return null; } catch { 
 export async function GET(req: NextRequest) {
   const denied = await authorize(); if (denied) return denied;
   const search = (req.nextUrl.searchParams.get("search") || "").trim().slice(0, 150);
+  const page = Number(req.nextUrl.searchParams.get("page") || 0);
+  if (!Number.isSafeInteger(page) || page < 0 || page > 10000) return reply({ error: "Invalid page" }, 400);
   try {
-    const rows = await prisma.depositAddress.findMany({ where: search ? { user: { OR: [{ email: { contains: search, mode: "insensitive" } }, { fullName: { contains: search, mode: "insensitive" } }] } } : {}, orderBy: { createdAt: "desc" }, take: 20, select: { id: true, address: true, user: { select: { email: true, fullName: true } } } });
+    const fetched = await prisma.depositAddress.findMany({ where: search ? { user: { OR: [{ email: { contains: search, mode: "insensitive" } }, { fullName: { contains: search, mode: "insensitive" } }] } } : {}, orderBy: { id: "asc" }, skip: page * 20, take: 21, select: { id: true, address: true, user: { select: { email: true, fullName: true } } } });
+    const rows = fetched.slice(0, 20);
+    const payments = await prisma.transaction.findMany({ where: { type: "deposit", user: { email: { in: rows.map(r => r.user.email) } }, description: { contains: "Ethereum", mode: "insensitive" } }, orderBy: { createdAt: "desc" }, select: { user: { select: { email: true } }, createdAt: true } });
     const journals = await prisma.transaction.findMany({ where: { type: "sweep", description: { startsWith: "Ethereum ETH sweep" }, userId: { in: (await prisma.depositAddress.findMany({ where: { id: { in: rows.map(r => r.id) } }, select: { userId: true } })).map(r => r.userId) } }, orderBy: { createdAt: "desc" }, take: 20, select: { txHash: true, description: true } });
     const balances = new Map<string, string>();
+    let minimumFee: bigint | null = null;
     if (rows.length) {
       try {
         const values = await withEthereumRead(async provider => {
+          try { const fees = await provider.getFeeData(); minimumFee = fees.maxFeePerGas ? fees.maxFeePerGas * BigInt(21000) : null; } catch { minimumFee = null; }
           const result: [string, string][] = [];
           // Bound simultaneous RPC reads; public nodes may reject large batches.
           for (let i = 0; i < rows.length; i += 4) {
@@ -28,7 +34,7 @@ export async function GET(req: NextRequest) {
         for (const [id, balance] of values) balances.set(id, balance);
       } catch { /* Keep unavailable balances unknown, never zero. */ }
     }
-    return reply({ rows: rows.map(row => ({ ...row, eth: balances.get(row.id) ?? null })), journals });
+    return reply({ rows: rows.map(row => ({ ...row, eth: balances.get(row.id) ?? null, belowFee: minimumFee !== null && balances.has(row.id) && ethers.parseEther(balances.get(row.id)!) <= minimumFee, receivedAt: payments.find(p => p.user.email === row.user.email)?.createdAt ?? null })), journals, page, hasMore: fetched.length > 20 });
   } catch { return reply({ error: "Could not load Ethereum deposit wallets." }, 503); }
 }
 export async function POST(req: NextRequest) {
