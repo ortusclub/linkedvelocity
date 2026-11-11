@@ -14,6 +14,7 @@ type Fact = { l: string; v: string };
 type Review = { id: string; kind: string; label: string; email: string; name: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: Fact[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
 type MatRow = { id: string; email: string; name: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
 type Data = { updatedAt: string; kpis: { eligible: number; maturing: number; maturingPct: number; needsReview: number; restricted: number }; buckets: Bucket[]; review: Review[]; rows: MatRow[] };
+type Health = { checkedAt: string; summary: { sending: number; starting: number; attention: number; queued: number; accounts: number }; attention: { email: string; reason: string }[]; starting: { email: string; reason: string }[] };
 
 const FLAG_OPTS: { kind: string; label: string; dot: string }[] = [
   { kind: "logged_out", label: "Logged out", dot: "#f59e0b" },
@@ -50,6 +51,10 @@ export default function MaturingTrackerPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [draftKind, setDraftKind] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // "is it actually sending?" health check (on demand — reads real send logs from the engine)
+  const [health, setHealth] = useState<Health | null>(null);
+  const [hBusy, setHBusy] = useState(false);
+  const [hErr, setHErr] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -71,6 +76,16 @@ export default function MaturingTrackerPage() {
       await load();
     } catch (e) { setBusy((s) => ({ ...s, [id]: `failed: ${(e as Error).message}` })); }
   }, [load]);
+
+  const checkHealth = useCallback(async () => {
+    setHBusy(true); setHErr("");
+    try {
+      const r = await fetch("/api/admin/maturing-tracker/health", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Check failed");
+      setHealth(j);
+    } catch (e) { setHErr((e as Error).message); } finally { setHBusy(false); }
+  }, []);
 
   const recheck = (id: string) => post("/api/admin/maturing-tracker/recheck", { accountId: id }, id, "queued ✓");
   const restrict = (id: string) => post("/api/admin/maturing-tracker/flag", { accountId: id, action: "restrict" }, id, "restricted ✓");
@@ -140,6 +155,66 @@ export default function MaturingTrackerPage() {
                 <span style={{ font: `700 32px ${G}`, color: "#b91c1c" }}>{data.kpis.restricted}</span>
                 <span style={{ font: `600 12.5px ${F}`, color: "#2563eb" }}>Recovery queue →</span>
               </Link>
+            </div>
+
+            {/* Is it actually sending? — plain green/amber/red health check for anyone, no numbers to read */}
+            <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ font: `700 16px ${G}`, color: C.ink }}>Is maturing actually sending?</div>
+                  <div style={{ font: `500 12.5px ${F}`, color: C.mut, marginTop: 2 }}>The counts above only show which accounts are <i>meant</i> to mature. This checks the engine for accounts that are <b>actually sending connection requests</b> right now.</div>
+                </div>
+                <button onClick={() => void checkHealth()} disabled={hBusy} style={{ border: "none", background: C.ink, color: "#fff", borderRadius: 10, padding: "10px 16px", font: `700 13px ${F}`, cursor: hBusy ? "default" : "pointer", opacity: hBusy ? 0.6 : 1 }}>{hBusy ? "Checking… (takes ~20s)" : health ? "Check again" : "Check now"}</button>
+              </div>
+
+              {hErr && <div style={{ font: `600 13px ${F}`, color: "#b91c1c" }}>{hErr}</div>}
+
+              {health && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
+                    {[
+                      { n: health.summary.sending, lbl: "Sending normally", sub: "working", bg: "#e7f7ee", fg: "#0f7a3d", dot: "🟢" },
+                      { n: health.summary.starting, lbl: "Just started", sub: "give it a day", bg: "#fffbeb", fg: "#92400e", dot: "🟡" },
+                      { n: health.summary.attention, lbl: "Not sending", sub: "needs attention", bg: "#fef2f2", fg: "#b91c1c", dot: "🔴" },
+                      { n: health.summary.queued, lbl: "Queued", sub: "waiting their turn", bg: "#eef0f4", fg: "#334155", dot: "⚪" },
+                    ].map((s) => (
+                      <div key={s.lbl} style={{ background: s.bg, borderRadius: 12, padding: "12px 14px" }}>
+                        <div style={{ font: `700 26px ${G}`, color: s.fg }}>{s.dot} {s.n}</div>
+                        <div style={{ font: `700 13px ${F}`, color: s.fg }}>{s.lbl}</div>
+                        <div style={{ font: `500 11.5px ${F}`, color: s.fg, opacity: 0.8 }}>{s.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ font: `600 13px ${F}`, color: health.summary.attention ? "#b91c1c" : "#0f7a3d" }}>
+                    {health.summary.attention === 0
+                      ? "✓ Everything that should be sending is sending. Nothing to do."
+                      : `${health.summary.attention} account${health.summary.attention === 1 ? "" : "s"} ${health.summary.attention === 1 ? "is" : "are"} not sending and need a look (listed below). If this stays high, tell Sam.`}
+                  </div>
+
+                  {!!health.attention.length && (
+                    <div style={{ border: `1px solid #f5c2c2`, borderRadius: 10, overflow: "hidden" }}>
+                      {health.attention.map((a, i) => (
+                        <div key={a.email} style={{ display: "flex", gap: 10, padding: "9px 12px", background: i % 2 ? "#fff" : "#fff8f8", alignItems: "baseline" }}>
+                          <span style={{ font: `700 12.5px ${F}`, color: C.ink, minWidth: 220 }}>🔴 {a.email}</span>
+                          <span style={{ font: `500 12.5px ${F}`, color: "#9a3412" }}>{a.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!!health.starting.length && (
+                    <details style={{ font: `500 12.5px ${F}`, color: C.mut }}>
+                      <summary style={{ cursor: "pointer", font: `700 12.5px ${F}`, color: "#92400e" }}>{health.starting.length} just started (normal — no action)</summary>
+                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                        {health.starting.map((a) => <span key={a.email}>🟡 {a.email} — {a.reason}</span>)}
+                      </div>
+                    </details>
+                  )}
+
+                  <div style={{ font: `500 11px ${F}`, color: C.faint }}>Checked {new Date(health.checkedAt).toLocaleTimeString()} · reads the real send log (sent / errors) from the engine, not just the status label.</div>
+                </>
+              )}
             </div>
 
             {/* Match by inventory bucket */}
