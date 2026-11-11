@@ -6,7 +6,7 @@ import { boardState, accountState, nextAction, finishedMetrics, boardItem } from
 import { newMaturePlan } from '@/lib/maturing/shared/mature-profile-plan.mjs';
 import './maturing.css';
 import PlanEditor from './plan-editor';
-type Account={category?:string;id:string;gologinProfileId:string;name:string;loginEmail:string;linkedinUrl:string;connections:number;rented:boolean;restricted:boolean;unavailable?:boolean};
+type Account={category?:string;id:string;gologinProfileId:string;name:string;loginEmail:string;linkedinUrl:string;connections:number;rented:boolean;restricted:boolean;unavailable?:boolean;inventoryStatus?:string};
 type Stage={id:string;name:string;fromDay:number;toDay:number;warmDaily:number;coldDaily:number;likesDaily:number};
 type Plan={version:number;warmEnabled:boolean;coldEnabled:boolean;warmUntilExhausted:boolean;stages:Stage[];warmRamp?:unknown;connectionStages?:unknown;[key:string]:unknown};
 type Campaign={id:string;name:string;status:string;profileIds:string[];createdAt:string;kind:string;live:boolean;counts?:Record<string,number>;plan?:Plan;schedule?:{amounts:number[];startDate:string};logs?:{line?:string;t?:number}[];resumeAt?:string;monitorError?:string;acceptPending?:number};
@@ -18,27 +18,36 @@ export default function MaturingPage(){
  const [accounts,setAccounts]=useState<Account[]>([]),[campaigns,setCampaigns]=useState<Campaign[]>([]),[details,setDetails]=useState<Record<string,Campaign>>({});
  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[query,setQuery]=useState(''),[updated,setUpdated]=useState('');
  const [selected,setSelected]=useState<Account|null>(null),[selectedId,setSelectedId]=useState(''),[editor,setEditor]=useState(false),[busy,setBusy]=useState('');
- const [adding,setAdding]=useState(false),[accountQuery,setAccountQuery]=useState(''),[notice,setNotice]=useState(''),[engineDown,setEngineDown]=useState('');
+ const [adding,setAdding]=useState(false),[accountQuery,setAccountQuery]=useState(''),[notice,setNotice]=useState(''),[engineDown,setEngineDown]=useState(''),[sync,setSync]=useState<Record<string,{inv:number;mat:number}>|null>(null);
  const [plan,setPlan]=useState<Plan>(newMaturePlan() as Plan),[initialPlan,setInitialPlan]=useState<Plan>(newMaturePlan() as Plan),[timezone,setTimezone]=useState('Europe/Rome');
  const [results,setResults]=useState<Result[]>([]),[resultTotal,setResultTotal]=useState(0),[offset,setOffset]=useState(0),[resultQuery,setResultQuery]=useState(''),[status,setStatus]=useState(''),[resultLoading,setResultLoading]=useState(false),[resultError,setResultError]=useState('');
  const detailLoadedAt=useRef<Record<string,number>>({});
  const listBusy=useRef(false),generation=useRef(0),launchId=useRef('');
  const refresh=useCallback(async()=>{if(listBusy.current)return;listBusy.current=true;setRefreshing(true);try{const d=await api();const all:Account[]=[...d.accounts];for(const c of d.campaigns){if(!all.some(a=>c.profileIds.includes(a.gologinProfileId)||(a.loginEmail||'').toLowerCase()===c.name.replace(/ · Cold$/,'').toLowerCase()))all.push({id:'history:'+c.profileIds[0],gologinProfileId:c.profileIds[0],name:c.name.replace(/ · Cold$/,''),loginEmail:c.name.replace(/ · Cold$/,''),linkedinUrl:'',connections:0,rented:false,restricted:false});}setAccounts(all);setCampaigns(d.campaigns);setUpdated(d.updatedAt);setError('');setEngineDown(d.engineError||'');}catch(e){setError((e as Error).message);}finally{setLoading(false);setRefreshing(false);listBusy.current=false;}},[]);
  useEffect(()=>{void refresh();const timer=setInterval(()=>{if(!document.hidden)void refresh();},30000);return()=>clearInterval(timer);},[refresh]);
+ // Cross-check the live bucket totals against the Maturing tracker, which reads the DB directly and
+ // groups by the same Inventory classifier + pipeline Level-4 rule as /admin/inventory-v2 and
+ // /admin/pipeline. When they agree we show a "✓ In sync" badge; when they drift it surfaces the gap.
+ useEffect(()=>{let cancelled=false;fetch('/api/admin/maturing-tracker',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{if(!cancelled&&Array.isArray(d?.buckets))setSync(Object.fromEntries((d.buckets as {key:string;inv:number;mat:number}[]).map(b=>[b.key,{inv:b.inv,mat:b.mat}])));}).catch(()=>{/* badge simply hides if the tracker is unreachable */});return()=>{cancelled=true;};},[updated]);
  const latestPlanAt=(a:Account)=>Date.parse(campaigns.find(c=>c.profileIds.includes(a.gologinProfileId))?.createdAt||'')||0;
  // A profile sits in a live maturing bucket (Pipeline / Construction / Available) only if it can
  // actually mature: not restricted, rented, in maintenance or in the campaign/outreach pool. This
  // mirrors the Inventory classifier (canonicalStatus) and the pipeline Level-4 view, so these counts
  // match those pages instead of counting every profile that merely has a leftover engine campaign.
- // Anything that can't mature (restricted, rented, retired, ended) falls to Other / History.
+ // Anything that can't mature (restricted, rented, retired, ended, in maintenance, outreach-reserved
+ // or an unlisted 'unavailable' account) falls to Other / History, so the live-bucket totals equal the
+ // maturing-eligible set the tracker/inventory show. (Unavailable accounts stay startable in the
+ // picker — see canCreate — they're just not part of the headline count.)
  const LIVE_BUCKETS=['pipeline','construction','available'];
- const bucketOf=(a:Account)=>(!a.restricted&&!a.rented&&!a.unavailable&&LIVE_BUCKETS.includes(a.category||'')?(a.category as string):'other');
+ const bucketOf=(a:Account)=>(!a.restricted&&!a.rented&&!a.unavailable&&a.inventoryStatus!=='unavailable'&&LIVE_BUCKETS.includes(a.category||'')?(a.category as string):'other');
  const hasCampaign=(a:Account)=>campaigns.some(c=>c.profileIds.includes(a.gologinProfileId));
  const isMaturingNow=(a:Account)=>state(a).label==='Active';
  // Show every account in a live bucket (even with no campaign yet — it's queued for auto-start), plus
  // any account that has a campaign to show its history under Other.
  const visibleAccounts=accounts.filter(a=>bucketOf(a)!=='other'||hasCampaign(a)).filter(a=>`${a.name} ${a.loginEmail}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>latestPlanAt(b)-latestPlanAt(a));
  const pageAccounts=visibleAccounts.filter(a=>bucketOf(a)===category);
+ const liveTotals=Object.fromEntries(LIVE_BUCKETS.map(k=>[k,visibleAccounts.filter(a=>bucketOf(a)===k).length])) as Record<string,number>;
+ const inSync=!!sync&&LIVE_BUCKETS.every(k=>!!sync[k]&&liveTotals[k]===sync[k].inv);
  const seen=new Set<string>();const ids=campaigns.filter(c=>pageAccounts.some(a=>c.profileIds.includes(a.gologinProfileId))).filter(c=>{const key=c.name.replace(/ · Cold$/,'')+':'+c.kind;if(seen.has(key))return false;seen.add(key);return true;}).map(c=>c.id).concat(selectedId?[selectedId]:[]).filter((id,i,all)=>all.indexOf(id)===i).join(',');
  useEffect(()=>{let cancelled=false;const queue=ids.split(',').filter(Boolean).sort((a,b)=>(detailLoadedAt.current[a]||0)-(detailLoadedAt.current[b]||0));async function worker(){while(queue.length&&!cancelled){const id=queue.shift()!;try{const d=await api('/'+id);if(!cancelled){detailLoadedAt.current[id]=Date.now();setDetails(old=>({...old,[id]:d}));}}catch{/* The row remains visible and can be retried by opening it. */}}}void Promise.all(Array.from({length:4},worker));return()=>{cancelled=true;};},[ids,updated]);
  useEffect(()=>{if(!selectedId)return;let cancelled=false;const request=++generation.current;setResultLoading(true);setResultError('');setResults([]);const p=new URLSearchParams({offset:String(offset),q:resultQuery,status});const timer=setTimeout(()=>{api(`/${selectedId}/results?${p}`).then(d=>{if(!cancelled&&request===generation.current){setResults(d.rows);setResultTotal(d.total);}}).catch(e=>{if(!cancelled)setResultError(e.message);}).finally(()=>{if(!cancelled)setResultLoading(false);});},250);return()=>{cancelled=true;clearTimeout(timer);};},[selectedId,offset,resultQuery,status,updated]);
@@ -83,6 +92,7 @@ export default function MaturingPage(){
  {engineDown&&<div role="status" className="maturing-notice" style={{background:'#fff7ed',borderColor:'#fed7aa',color:'#9a3412'}}>⚠ The maturing cloud engine is temporarily unavailable, so live campaign status can’t be loaded right now. Your accounts and data are fine — this is the engine, not the site. Starting or changing campaigns is paused until it’s back. <button onClick={()=>void refresh()}>Retry</button></div>}
  <div className="maturing-toolbar"><input aria-label="Search accounts" placeholder="Filter accounts…" value={query} onChange={e=>{setQuery(e.target.value);}}/><span className="maturing-totals">{campaigns.filter(c=>c.live).length} live campaigns · {campaigns.filter(c=>['queued','pending'].includes(c.status)).length} queued · {campaigns.filter(c=>['scheduled','waiting_daily_reset'].includes(c.status)).length} scheduled / resting <small>Live campaigns are separate from queued work · maximum 6 browsers</small></span></div>
  <nav className="maturing-category-nav" aria-label="Maturing programmes">{groups.map(key=>{const count=visibleAccounts.filter(a=>bucketOf(a)===key).length;return <button key={key} className={key==='other'?'maturing-category-history':''} aria-pressed={category===key} onClick={()=>{setCategory(key);setSelected(null);setSelectedId('');setAdding(false);}}><strong>{key==='pipeline'?'Maturing':key==='other'?'Other / History':PROGRAMS[key as keyof typeof PROGRAMS].label}</strong><span>{loading?'…':count} accounts</span></button>;})}</nav>
+ {sync&&<div role="status" className="maturing-sync" title="Live bucket totals here are checked against the Maturing tracker, which reads the database directly and groups accounts with the same Inventory classifier and pipeline Level-4 rule used on /admin/inventory-v2 and /admin/pipeline. Restricted, rented, outreach-reserved and unavailable accounts are excluded on both sides — they can't mature." style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',margin:'0 0 10px',padding:'7px 12px',borderRadius:8,fontSize:13,fontWeight:600,background:inSync?'#ecfdf5':'#fff7ed',border:`1px solid ${inSync?'#a7f3d0':'#fed7aa'}`,color:inSync?'#065f46':'#9a3412'}}>{inSync?'✓ In sync with Inventory & Pipeline':'⚠ Some buckets differ from Inventory / Pipeline'}<small style={{fontWeight:500,color:inSync?'#047857':'#b45309'}}>{LIVE_BUCKETS.map(k=>`${k==='pipeline'?'Pipeline':PROGRAMS[k as keyof typeof PROGRAMS].label} ${liveTotals[k]}${sync[k]&&liveTotals[k]!==sync[k].inv?` ≠ ${sync[k].inv}`:''}`).join(' · ')}</small></div>}
  {notice&&<p role="status" className="maturing-notice">{notice}</p>}
  {adding&&<section className="maturing-picker" aria-label="Add account to mature"><header><div><p className="maturing-eyebrow">NEW MATURING CAMPAIGN · STEP 1 OF 2</p><h2>Choose an account</h2><p>Select an available account, then set its warming strategy, connection pools and daily schedule.</p></div><button onClick={()=>setAdding(false)}>Cancel</button></header>
  <input aria-label="Find account to mature" placeholder="Search all available accounts by name or email…" value={accountQuery} onChange={e=>setAccountQuery(e.target.value)}/>

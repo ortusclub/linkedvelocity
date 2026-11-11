@@ -88,6 +88,7 @@ export async function GET() {
       const rented = a.rentals.length > 0 || a.status === "rented";
       if (a.restrictedAt || a.permanentlyRestricted) { restrictedCount++; continue; }
       if (["unavailable", "retired", "maintenance"].includes(a.status)) continue;
+      if (a.inventoryPool === "campaign") continue; // outreach-reserved: auto-start skips it and reconcile stops its campaigns, so it never matures
       const eligible = pipeline || group === "Construction" || group === "Available";
       if (!eligible || rented) continue;
 
