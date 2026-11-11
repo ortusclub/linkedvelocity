@@ -30,8 +30,9 @@ export async function GET(req: NextRequest) {
   try {
     const deposits = await prisma.depositAddress.findMany({
       orderBy: { id: "asc" }, skip: page * 20, take: 21,
-      include: { user: { select: { email: true } } },
+      include: { user: { select: { email: true, fullName: true } } },
     });
+    const payments = await prisma.transaction.findMany({ where: { type: "deposit", userId: { in: deposits.map(d => d.userId) }, description: { startsWith: "USDC deposit detected at" } }, orderBy: { createdAt: "desc" }, select: { userId: true, createdAt: true } });
     provider = await getBaseBalanceProvider();
     const reader = provider;
     if ((await provider.getNetwork()).chainId !== BigInt(8453)) throw new Error("Wrong network");
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     // Bound RPC concurrency and paginate rather than scanning every customer per refresh.
     for (let offset = 0; offset < visible.length; offset += 4) {
       rows.push(...await Promise.all(visible.slice(offset, offset + 4).map(async deposit => {
-        const row: DepositRow = { id: deposit.id, address: deposit.address, customer: deposit.user.email,
+        const row: DepositRow = { id: deposit.id, address: deposit.address, customer: deposit.user.email, name: deposit.user.fullName, receivedAt: payments.find(p => p.userId === deposit.userId)?.createdAt.toISOString() ?? null,
           eth: null, usdc: null, usdt: null, awaitingCredit: false, error: null };
         try {
           const [eth, dc, dt]: bigint[] = await Promise.all([reader.getBalance(deposit.address), usdc.balanceOf(deposit.address), usdt.balanceOf(deposit.address)]);

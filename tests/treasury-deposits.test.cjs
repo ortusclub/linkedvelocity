@@ -23,7 +23,7 @@ function fixture(options = {}) {
     ethers: { ethers },
     '@/lib/usdc-gas-sponsor': { gasSponsorStatus: async () => ({ enabled: true, address: treasury, eth: '0', error: 'Fund central wallet' }) },
     '@/lib/auth': { requireAdmin: async () => { if (options.auth) throw new Error(options.auth); } },
-    '@/lib/prisma': { prisma: { depositAddress: {
+    '@/lib/prisma': { prisma: { transaction: {findMany:async()=>[]}, depositAddress: {
       findUnique: async ({ where }) => { calls.push(['find', where.id]); return options.missing ? null : { id: where.id }; },
       findMany: async () => [{ id, address: treasury, user: { email: 'test@example.com' }, lastSeenBalance: '0' }],
     } } },

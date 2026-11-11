@@ -118,3 +118,6 @@ Put Ethereum customer payments directly below the Treasury heading, before Base 
 
 ## Ethereum review feedback — Samuel, 11 November 2026
 Show payment review/loading/errors in a visible dialog at click time, not below a long wallet list. Read-only previews must not compete with background deposit jobs for an execution lock; pending-transaction checks remain mandatory. Keep the actual sweep locked and explicitly user-confirmed.
+
+## Simple payments queue — Samuel, 11 November 2026
+Treasury should primarily show funded customer payments awaiting sweep, across supported networks, with customer, evidenced receipt/recorded date, amount, individual Sweep and reviewed Sweep all. Hide verified-empty wallets; keep failed reads explicit and small balances below fees separate. Refresh for new payments and remove swept balances only after fresh evidence. Put gas/wallet/treasury details behind expandable sections. Retain confirmation, network checks and duplicate protection; UI work does not authorize an agent to move funds.
