@@ -150,23 +150,26 @@ export async function GET(_req: NextRequest) {
       const ownedMs = Math.max(DAY, now - new Date(a.createdAt).getTime());
       const rentedMs = rentedMsByAccount.get(a.id) ?? 0;
       const earnedTotal = Math.max(0, Math.round(((cryptoByAccount.get(a.id) ?? 0) + (txnByAccount.get(a.id) ?? 0)) * 100) / 100);
-      // "Ready to promote" — a construction account that has earned its way to Available:
-      // ≥1 month old, ≥100 connections, NO restriction in the last 14 days (durable — survived
-      // the recent risky window), setup fee paid, and every rental-ready AUTO check passing (not
-      // restricted, 2FA not pending, proxy assigned, no leftover GoLogin share).
-      // NOTE: we deliberately do NOT gate on maturing-run duration (maturing_started_at). That
-      // clock RESETS on every re-enrolment, so it undercounts how long an account has really been
-      // maturing and starved this list to zero right after a cohort restart (Sam, 2026-11-10).
-      // "No restriction in 14d" + ≥1mo age is the durability signal instead.
+      // "Ready to promote" — a construction account that has earned its way to Available by
+      // actually SURVIVING maturing: currently maturing AND maturing for ≥2 weeks with no
+      // restriction in that run, PLUS ≥1 month old, ≥100 connections, setup fee paid, and every
+      // rental-ready AUTO check passing (not restricted, 2FA not pending, proxy assigned, no
+      // leftover GoLogin share). The 2-week-maturing gate is the point: an old, well-connected
+      // account that only just started maturing hasn't proven anything yet (Sam, 2026-11-11 —
+      // accounts built before the Nov-4 engine restart were showing "ready" with 0–7 maturing
+      // days). maturing_started_at is the CURRENT continuous run; if it reset, maturing was
+      // interrupted and the 2 weeks should restart, which is what we want.
       // The manual housekeeping ticks are NOT required here — they matter for accounts coming off a
       // renter, not ones we built; listing still runs the full gated flip.
+      const matStart = a.maturingStartedAt ? new Date(a.maturingStartedAt).getTime() : 0;
       const restrLog = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string; event?: string }[]) : [];
-      const restrictedRecently = restrLog.some((e) => e?.event === "restricted" && now - Date.parse(e.at || "") < 14 * DAY);
+      const restrictedDuringMaturing = matStart > 0 && restrLog.some((e) => e?.event === "restricted" && Date.parse(e.at || "") >= matStart);
       const readyToPromote =
         ["under_construction", "construction_immature"].includes(a.status) &&
         now - new Date(a.createdAt).getTime() >= 30 * DAY &&
+        matStart > 0 && now - matStart >= 14 * DAY &&
         (a.connectionCount ?? 0) >= 100 &&
-        !restrictedRecently &&
+        !restrictedDuringMaturing &&
         rentalReadyAuto({ ...a, gologinShared: gologinSharedSet.has(a.id) }).length === 0 &&
         (app ? !!app.paidAt : true);
       return {
