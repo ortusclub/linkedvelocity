@@ -10,7 +10,10 @@ let _provider: ethers.JsonRpcProvider | null = null;
 
 export function getBaseProvider(): ethers.JsonRpcProvider {
   if (!_provider) {
-    _provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
+    const request = new ethers.FetchRequest(process.env.BASE_RPC_URL || "https://mainnet.base.org");
+    request.timeout = 5_000;
+    request.setThrottleParams({ maxAttempts: 1 });
+    _provider = new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1 });
   }
   return _provider;
 }

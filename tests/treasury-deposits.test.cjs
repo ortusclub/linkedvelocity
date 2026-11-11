@@ -28,6 +28,7 @@ function fixture(options = {}) {
       findUnique: async ({ where }) => { calls.push(['find', where.id]); return options.missing ? null : { id: where.id }; },
       findMany: async () => [{ id, address: treasury, user: { email: 'test@example.com' }, lastSeenBalance: '0' }],
     } } },
+    '@/lib/base-sweep-provider': { getBaseSweepProvider: async () => { if(options.sweepRpcError) throw Error('unavailable'); return { destroy() {} }; } },
     '@/lib/base-balance-provider': { markBaseBalanceProviderFailed:()=>{}, getBaseBalanceProvider: async () => ({ round: ++providerCount, getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n, destroy() {} }) },
     '@/lib/wallet': {
       getBaseProvider: () => ({ getNetwork: async () => ({ chainId: 8453n }), getBalance: async () => 0n }),
@@ -101,3 +102,5 @@ test('shared database lock rejects concurrent jobs and checks lock before signin
 });
 
 test('failed token reads recover on a replacement provider without any sweep',async()=>{const f=fixture({recover:true});const r=await f.GET(request());assert.equal(r.status,200);assert.equal(r.body.rows[0].usdc,'5.0');assert.equal(r.body.rows[0].usdt,'1.0');assert.equal(r.body.rows[0].error,null);assert.equal(r.body.rows[0].awaitingCredit,true);assert.deepEqual(f.calls,[])});
+
+test('unavailable sweep transport never takes execution path', async()=> { const f=fixture({sweepRpcError:true}); const r=await f.POST(request()); assert.equal(r.status,503); assert.match(r.body.error,/No transfer was submitted/); assert.deepEqual(f.calls,[]); });

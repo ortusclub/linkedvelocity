@@ -6,16 +6,16 @@ import { sponsorshipEnabled, prepareSponsoredUsdcSweep } from "@/lib/usdc-gas-sp
 
 // Persist broadcast hashes so a timeout can be reconciled before any later credit/sweep.
 const pendingPrefix = "Pending treasury sweep:";
-async function reconcilePendingSweeps(assertActive: () => Promise<void>): Promise<Set<string>> {
+async function reconcilePendingSweeps(assertActive: () => Promise<void>, provider = getBaseProvider()): Promise<Set<string>> {
   const pending = await prisma.transaction.findMany({ where: { type: "sweep", description: { startsWith: pendingPrefix } } });
-  if (pending.length && (await getBaseProvider().getNetwork()).chainId !== BigInt(8453)) throw new Error("Deposit sweeps require Base mainnet");
+  if (pending.length && (await provider.getNetwork()).chainId !== BigInt(8453)) throw new Error("Deposit sweeps require Base mainnet");
   const blocked = new Set<string>();
   for (const entry of pending) {
     const [token, depositId] = (entry.description || "").slice(pendingPrefix.length).split(":");
     if (!depositId) continue;
     try {
       if (!entry.txHash) { blocked.add(depositId); continue; }
-      const receipt = await getBaseProvider().getTransactionReceipt(entry.txHash);
+      const receipt = await provider.getTransactionReceipt(entry.txHash);
       if (!receipt) { blocked.add(depositId); continue; }
       await assertActive();
       await prisma.$transaction(async tx => {
@@ -38,6 +38,7 @@ export async function detectDeposits(assertActive: () => Promise<void> = async (
   const results: { userId: string; amount: string; address: string }[] = [];
 
   for (const deposit of deposits) {
+    await assertActive();
     if (blocked.has(deposit.id)) continue;
     try {
       const onChainBalance: bigint = await usdc.balanceOf(deposit.address);
@@ -104,12 +105,12 @@ export async function detectDeposits(assertActive: () => Promise<void> = async (
   return results;
 }
 
-export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}, options: { allowSponsored?: boolean } = {}) {
-  const blocked = await reconcilePendingSweeps(assertActive);
+export async function sweepDeposits(depositId?: string, onFailure?: (token: string) => void, assertActive: () => Promise<void> = async () => {}, options: { allowSponsored?: boolean; provider?: ethers.JsonRpcProvider } = {}) {
+  const provider = options.provider || getBaseProvider();
+  const blocked = await reconcilePendingSweeps(assertActive, provider);
   // An uncertain broadcast must be reconciled before reusing the central signer.
   let relayUncertain = blocked.size > 0;
   const deposits = await prisma.depositAddress.findMany({ where: depositId ? { id: depositId } : undefined });
-  const provider = getBaseProvider();
   const treasury = getTreasuryAddress();
   if (!process.env.TREASURY_WALLET_ADDRESS || !ethers.isAddress(treasury) || treasury === ethers.ZeroAddress) throw new Error("Configure the treasury destination before sweeping");
   const started = Date.now();
@@ -124,6 +125,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
   }
 
   for (const deposit of deposits) {
+    await assertActive();
     if (blocked.has(deposit.id)) { onFailure?.("pending transaction"); continue; }
     for (const token of tokens) {
       try {
@@ -141,7 +143,7 @@ export async function sweepDeposits(depositId?: string, onFailure?: (token: stri
           }
           const [latestNonce, pendingNonce] = await Promise.all([provider.getTransactionCount(deposit.address, "latest"), provider.getTransactionCount(deposit.address, "pending")]);
           if (latestNonce !== pendingNonce) throw new Error("Deposit wallet has a pending transaction");
-          const childWallet = getChildWallet(deposit.derivationIndex);
+          const childWallet = options.provider ? getChildWallet(deposit.derivationIndex).connect(provider) : getChildWallet(deposit.derivationIndex);
           if (childWallet.address.toLowerCase() !== deposit.address.toLowerCase()) {
             throw new Error("Derived wallet does not match deposit address");
           }
