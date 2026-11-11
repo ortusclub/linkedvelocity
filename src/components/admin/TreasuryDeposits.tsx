@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { depositTotals, loadDepositTotals, type DepositTotals } from "@/lib/deposit-totals";
 import type { DepositRow, DepositSnapshot } from "@/lib/deposit-snapshot";
 
 import { reviewAllDeposits, executeSweepPlan, type SweepPlan, type SweepResult } from "@/lib/sweep-all";
@@ -10,6 +11,9 @@ const muted = { color: "var(--muted)" };
 
 
 export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<void> }) {
+  const [total, setTotal] = useState<DepositTotals | null>(null);
+  const [totalState, setTotalState] = useState<"page" | "checking" | "complete" | "partial">("page");
+  const [totalTime, setTotalTime] = useState("");
   const [data, setData] = useState<DepositSnapshot | null>(null);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -22,7 +26,7 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
   const lock = useRef(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const refresh = useCallback(async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setTotal(null); setTotalState("page");
     try {
       const r = await fetch(`/api/admin/treasury/deposits?page=${page}`, { cache: "no-store" });
       const body = await r.json();
@@ -36,6 +40,20 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
     if ((selected || plan) && !dialog.current?.open) dialog.current?.showModal();
     if (!selected && !plan) dialog.current?.close();
   }, [selected, plan]);
+
+  async function calculateTotal() {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setError(""); setTotal(null); setTotalState("checking");
+    try {
+      const result = await loadDepositTotals(async page => {
+        const r = await fetch(`/api/admin/treasury/deposits?page=${page}`, { cache: "no-store" });
+        const body = await r.json(); if (!r.ok) throw new Error(body.error || "Could not check every wallet.");
+        return body;
+      }, setTotal);
+      setTotal(result); setTotalState("complete"); setTotalTime(new Date().toLocaleTimeString());
+    } catch (e) { setTotalState("partial"); setError(e instanceof Error ? e.message : "Total incomplete. Retry to check every wallet."); }
+    finally { lock.current = false; setBusy(false); }
+  }
 
   async function reviewAll() {
     if (lock.current) return;
@@ -85,6 +103,8 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
     finally { lock.current = false; setBusy(false); }
   }
 
+  const totals = total || (totalState === "page" && data ? depositTotals([data]) : null);
+  const planTotals = plan && data ? depositTotals([{ ...data, rows: plan.rows }]) : null;
   return <section className="rounded-2xl p-5" style={card}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-lg font-semibold">Customer deposits · awaiting sweep</h2>
@@ -93,6 +113,15 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
       <button disabled={loading || busy} onClick={() => void refresh()} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-40">{loading ? "Checking deposits…" : "Refresh deposits"}</button>
     </div>
     <p className="mt-3 text-xs" style={muted}>USDC must be credited first. With central gas enabled, you submit USDC sweeps here and one gas wallet pays the fee. No ETH top-ups are sent to customer wallets. USDT still needs ETH in its deposit wallet and does not add customer credit.</p>
+    <div className="mt-4 rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--divider)" }}>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Funds awaiting sweep · Base</h3>
+        <button disabled={loading || busy} onClick={() => void calculateTotal()} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-40">{totalState === "checking" ? "Calculating total…" : "Calculate total across all wallets"}</button></div>
+      <p className="text-xs" role="status" style={muted}>{totalState === "complete" ? `All wallets checked · ${totalTime}` : totalState === "checking" ? `Checking all wallets · ${total?.wallets || 0} checked so far · partial total` : totalState === "partial" ? "Incomplete check · partial total only" : `Current page only · page ${page + 1}`}</p>
+      {totals && <><p className="text-2xl font-semibold">{totals.usdc} USDC <span style={muted}>+</span> {totals.usdt} USDT</p>
+        <p className="text-sm">{totals.fundedWallets} funded wallets · {totals.wallets} wallets checked{totals.unknownWallets > 0 && ` · ${totals.unknownWallets} unavailable (excluded from total)`}</p>
+        <p className="text-sm">Passes wallet checks for review: {totals.reviewUsdc} USDC + {totals.reviewUsdt} USDT</p></>}
+      <p className="text-xs" style={muted}>Gross token amounts, before network fees. Funds blocked by gas or customer-credit checks remain in the total. Unknown balances are excluded, not counted as zero. Ethereum ETH is shown separately in its sweep preview. Calculating totals does not move funds.</p>
+    </div>
     {data?.gasSponsor?.enabled && <div className="mt-4 rounded-xl border p-4" style={{ borderColor: "var(--divider)" }}>
       <p className="font-semibold">Central gas wallet · Base</p>
       {data.gasSponsor.address && <a href={`https://basescan.org/address/${data.gasSponsor.address}`} target="_blank" rel="noreferrer" className="break-all font-mono text-xs" style={{ color: "var(--link)" }}>{data.gasSponsor.address} ↗</a>}
@@ -129,6 +158,7 @@ export default function TreasuryDeposits({ onSwept }: { onSwept: () => Promise<v
     <dialog ref={dialog} aria-labelledby="sweep-title" onCancel={e => { if (busy) e.preventDefault(); else { setSelected(null); setPlan(null); } }} className="m-auto w-[min(94vw,560px)] rounded-2xl p-6 backdrop:bg-black/60" style={{ ...card, color: "var(--text)" }}>
       <h2 id="sweep-title" className="text-xl font-semibold">{plan ? "Review all funded wallets" : "Sweep to main wallet"}</h2>
       {plan ? <>
+        {planTotals && <p className="mt-3 text-xl font-semibold">{planTotals.usdc} USDC + {planTotals.usdt} USDT · before fees</p>}
         <p className="mt-3">{plan.rows.length} eligible wallets across all pages. Each wallet is swept separately, with a separate transaction fee.</p>
         <p className="mt-3 break-all font-mono text-xs">To: {plan.treasury}</p>
         <div className="mt-3 max-h-64 overflow-y-auto">{plan.rows.map(row => <p key={row.id} className="mb-3 break-all text-xs">{row.address}<br />{row.usdc} USDC + {row.usdt} USDT</p>)}
