@@ -8,8 +8,13 @@ class BalanceProvider extends ethers.JsonRpcProvider {
   }
 }
 const failedUntil = new Map<string, number>();
+const providerUrls = new WeakMap<ethers.JsonRpcProvider, string>();
+export function markBaseBalanceProviderFailed(provider: ethers.JsonRpcProvider) {
+  const url = providerUrls.get(provider);
+  if (url) failedUntil.set(url, Date.now() + 60_000);
+}
 export async function getBaseBalanceProvider(): Promise<ethers.JsonRpcProvider> {
-  const urls = [...new Set([process.env.BASE_RPC_URL, "https://mainnet.base.org", "https://base.drpc.org"].filter((url): url is string => !!url))];
+  const urls = [...new Set([process.env.BASE_RPC_URL, "https://base-rpc.publicnode.com", "https://mainnet.base.org", "https://base.drpc.org"].filter((url): url is string => !!url))];
   for (const url of urls) {
     if ((failedUntil.get(url) || 0) > Date.now()) continue;
     try {
@@ -21,9 +26,10 @@ export async function getBaseBalanceProvider(): Promise<ethers.JsonRpcProvider> 
       const request = new ethers.FetchRequest(url);
       request.timeout = 5_000;
       request.setThrottleParams({ maxAttempts: 1 });
-      const provider = new BalanceProvider(request, 8453, { staticNetwork: true });
+      const provider = new BalanceProvider(request, 8453, { staticNetwork: true, batchMaxCount: 1 });
       // Network-ID alone can work on a provider that rejects data requests.
       try { await provider.getBlockNumber(); } catch { provider.destroy(); throw new Error("Base reads unavailable"); }
+      providerUrls.set(provider, url);
       failedUntil.delete(url);
       return provider;
     } catch {
