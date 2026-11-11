@@ -14,6 +14,8 @@ export default function EthereumDeposits() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ hash: string; status: string } | null>(null);
   const lock = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   async function load(query: string) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError("");
@@ -34,7 +36,8 @@ export default function EthereumDeposits() {
   }
   async function preview(depositId: string) {
     if (lock.current) return;
-    lock.current = true; setBusy(true); setError(""); setReview(null); setConfirmed(false);
+    lock.current = true; setBusy(true); setError(""); setReview(null); setConfirmed(false); setResult(null);
+    setSelectedId(depositId); dialog.current?.showModal();
     try { setReview(await action({ action: "preview", depositId })); }
     catch (e) { setError(e instanceof Error ? e.message : "Preview unavailable."); }
     finally { lock.current = false; setBusy(false); }
@@ -60,6 +63,10 @@ export default function EthereumDeposits() {
       <div className="flex flex-wrap items-center gap-4"><p className="text-lg font-semibold">{row.eth === null ? "ETH balance unavailable" : `${row.eth} ETH`}</p><button disabled={busy} onClick={() => void preview(row.id)} className="rounded-lg bg-blue-600 text-white px-4 py-3 text-sm font-semibold disabled:opacity-50">Review ETH payment →</button></div>
     </div>)}
     {!busy && !rows.length && <p>No matching customer deposit wallets.</p>}
+    <dialog ref={dialog} aria-labelledby="eth-review-title" onCancel={e => { if (busy) e.preventDefault(); }} className="m-auto w-[min(95vw,640px)] max-h-[90vh] overflow-y-auto rounded-2xl p-6 backdrop:bg-black/50" style={{ background: "var(--card)", color: "var(--text)" }}>
+    <div className="flex justify-between gap-4 mb-4"><h3 id="eth-review-title" className="text-xl font-semibold">Review ETH payment</h3><button disabled={busy} onClick={() => dialog.current?.close()} className="rounded-lg border px-3 py-1 disabled:opacity-50">Close</button></div>
+    {busy && <p role="status" className="py-4">{review ? "Submitting sweep…" : "Checking payment, destination and current network fee…"}</p>}
+    {error && <div role="alert" className="space-y-3 py-4"><p style={{ color: "var(--warn-num)" }}>{error}</p>{!busy && selectedId && <button onClick={() => void preview(selectedId)} className="rounded-lg border px-4 py-2">Review again</button>}</div>}
     {review && <div className="rounded-xl border p-4 space-y-3" role="region" aria-label="Review Ethereum sweep">
       <h3 className="font-semibold">Review sweep · Ethereum mainnet</h3>
       <p className="text-sm">{review.review.customer}</p>
@@ -67,10 +74,11 @@ export default function EthereumDeposits() {
       <dl className="text-sm space-y-2"><div>Wallet balance: {review.review.balance} ETH</div><div>Maximum gas fee: {review.review.maxFee} ETH</div><div className="font-semibold">Treasury receives: {review.review.amount} ETH</div></dl>
       <p className="text-xs">The fee is paid from this deposit. Any unused fee allowance stays in the deposit wallet. Review expires after two minutes.</p>
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />I verified this treasury address accepts ETH on Ethereum mainnet and authorize this transfer.</label>
-      <div className="flex gap-3"><button disabled={busy} onClick={() => setReview(null)} className="rounded-lg border px-4 py-2">Cancel</button><button disabled={busy || !confirmed} onClick={() => void send()} className="rounded-lg bg-blue-600 text-white px-4 py-2 disabled:opacity-50">{busy ? "Submitting…" : "Confirm Ethereum sweep"}</button></div>
+      <div className="flex gap-3"><button disabled={busy} onClick={() => { setReview(null); dialog.current?.close(); }} className="rounded-lg border px-4 py-2">Cancel</button><button disabled={busy || !confirmed} onClick={() => void send()} className="rounded-lg bg-blue-600 text-white px-4 py-2 disabled:opacity-50">{busy ? "Submitting…" : "Confirm Ethereum sweep"}</button></div>
     </div>}
     {result && <p role="status">{result.status === "submitted" ? "Sweep submitted. Awaiting Ethereum confirmation." : "Submission could not be confirmed. Do not resend; check the transaction first."} <a href={`https://etherscan.io/tx/${result.hash}`} target="_blank" rel="noreferrer" style={{ color: "var(--link)" }}>View transaction ↗</a></p>}
+    </dialog>
     {journals.map(entry => <p key={entry.txHash} className="text-xs">{entry.description?.startsWith("Ethereum ETH sweep confirmed:") ? "Confirmed Ethereum sweep" : entry.description?.startsWith("Ethereum ETH sweep reverted:") ? "Reverted Ethereum sweep" : "Ethereum sweep recorded · verify confirmation"} · <a href={`https://etherscan.io/tx/${entry.txHash}`} target="_blank" rel="noreferrer" style={{ color: "var(--link)" }}>{entry.txHash} ↗</a></p>)}
-    {error && <p role="alert" style={{ color: "var(--warn-num)" }}>{error}</p>}
+    {error && !selectedId && <p role="alert" style={{ color: "var(--warn-num)" }}>{error}</p>}
   </section>;
 }

@@ -115,3 +115,6 @@ Show the amount awaiting sweep by network and token, including a read-only total
 
 ## Ethereum payment visibility — Samuel, 11 November 2026
 Put Ethereum customer payments directly below the Treasury heading, before Base balances and the long Base-wallet list. Show the live ETH amount beside each customer and a prominent review button; do not require opening a sweep preview just to see the funds. Support customer-filtered direct links. Keep unknown balances explicit and final transfer confirmation separate.
+
+## Ethereum review feedback — Samuel, 11 November 2026
+Show payment review/loading/errors in a visible dialog at click time, not below a long wallet list. Read-only previews must not compete with background deposit jobs for an execution lock; pending-transaction checks remain mandatory. Keep the actual sweep locked and explicitly user-confirmed.
