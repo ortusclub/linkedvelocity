@@ -106,3 +106,6 @@ below a long expanded list. Other/history remains a secondary view.
 
 ## LV reserves eligibility — Samuel, 9 November 2026
 CC+IC operators at Apex/Ortus receive five eligible LV accounts only at Start, preferring available and falling back to accounts in use by campaigns. Do not reserve before Start. Preserve customer rentals, restrictions, holds and session locks. Feed only the eligibility boolean, never credentials or rental details. Each person has one shared 500-connection weekly allowance across all reserves and campaigns. Changing the five requires Stop then Start.
+
+## Ethereum customer deposit sweeps — Samuel, 11 November 2026
+Provide an explicit Ethereum-mainnet native ETH sweep from customer deposit wallets to the configured treasury, with source, destination, maximum gas and net amount preview. Require user confirmation. Preserve existing customer credit; sweeping must never credit again or reset Base tracking. Keep transaction hashes durably journalled before broadcast and block uncertain repeats. Implementation or verification does not authorize an agent to move funds.
