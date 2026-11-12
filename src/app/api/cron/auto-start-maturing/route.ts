@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
 import { list, start, engine } from "@/lib/maturing/service.mjs";
-import { categoryResolver, programStages } from "@/lib/maturing/programs.mjs";
+import { categoryResolver, programStages, programLabel } from "@/lib/maturing/programs.mjs";
 import { newMaturePlan } from "@/lib/maturing/shared/mature-profile-plan.mjs";
 
 export const dynamic = "force-dynamic";
@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
         { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, recovered, category(a), a.connectionCount ?? null), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started"} — ${category(a)} programme${recovered ? " · gentle re-warm (recovered)" : ""}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started"} — ${programLabel(category(a), recovered, a.connectionCount ?? null)}`, "system").catch(() => {});
       // Clear any prior start-failure mark now that it launched.
       if (a.maturingStartFailedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: null, maturingStartFailedReason: null } }).catch(() => {});
       if (recovered) gentleStarted++;
@@ -340,7 +340,7 @@ export async function POST(req: NextRequest) {
           { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(gid, a.linkedinName, a.linkedinUrl, isFragile(a), category(a), a.connectionCount ?? null), timezone: "Asia/Manila" },
           "system",
         );
-        await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔁 Maturing re-planned (auto) — moved onto the current ${category(a)} programme`, "system").catch(() => {});
+        await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔁 Maturing re-planned (auto) — now on: ${programLabel(category(a), isFragile(a), a.connectionCount ?? null)}`, "system").catch(() => {});
         replanned++;
       } catch (e) {
         replanErrors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
