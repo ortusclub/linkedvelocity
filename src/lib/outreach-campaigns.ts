@@ -15,10 +15,20 @@
 
 // A campaign in one of these statuses is finished — its accounts are not sending.
 const TERMINAL = new Set(["done", "cancelled", "error"]);
-// `lv_`-prefixed campaigns are our own maturing/warm-up runs, not client outreach.
-// We skip them so the flag means "doing real outreach" (and highlights the
-// rented/restricted double-booking risk), not "currently warming up".
+// `lv_`-prefixed campaigns are our own maturing/warm-up runs, not outreach. We
+// skip them so the flag means "doing real outreach", not "currently warming up".
 const MATURING_PREFIX = /^lv_/;
+// Only OUR OWN outreach campaigns count as LinkedArmy. On the shared engine each
+// campaign carries an `owner` email; ours are @linkedvelocity.com / @linkedarmy.com,
+// while client campaigns (Primo stays ours, but APHI/OUTB/GGLx… ) are owned by
+// @ortusclub.com / @apexstrategy.io etc. We match by owner domain so a client's
+// rented account never gets a ⚑ LinkedArmy flag. Override with OUTREACH_OWNER_DOMAINS.
+const OWNER_DOMAINS = (process.env.OUTREACH_OWNER_DOMAINS || "linkedvelocity.com,linkedarmy.com")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+function ownedByUs(owner: string | undefined): boolean {
+  const at = (owner || "").toLowerCase().lastIndexOf("@");
+  return at >= 0 && OWNER_DOMAINS.includes(owner!.toLowerCase().slice(at + 1));
+}
 const TTL_MS = 60_000;
 
 let cache: { at: number; ids: Set<string> } | null = null;
@@ -41,11 +51,12 @@ async function fetchLiveProfileIds(): Promise<Set<string>> {
       signal: AbortSignal.timeout(25_000),
     });
     if (!r.ok) return new Set();
-    const data = (await r.json().catch(() => null)) as { campaigns?: Array<{ id?: string; status?: string; profile_ids?: string[] }> } | null;
+    const data = (await r.json().catch(() => null)) as { campaigns?: Array<{ id?: string; status?: string; owner?: string; profile_ids?: string[] }> } | null;
     const ids = new Set<string>();
     for (const c of data?.campaigns || []) {
       if (c.status && TERMINAL.has(c.status)) continue;
       if (c.id && MATURING_PREFIX.test(c.id)) continue;
+      if (!ownedByUs(c.owner)) continue;
       for (const pid of c.profile_ids || []) if (pid) ids.add(pid);
     }
     return ids;
@@ -55,9 +66,9 @@ async function fetchLiveProfileIds(): Promise<Set<string>> {
 }
 
 /**
- * Set of GoLogin profile ids that appear in at least one non-terminal client
- * campaign. Cached for 60s and de-duped across concurrent callers so a burst of
- * inventory loads makes at most one engine call.
+ * Set of GoLogin profile ids staffed in at least one of OUR OWN live outreach
+ * campaigns (non-terminal, non-`lv_`, owned by us). Cached for 60s and de-duped
+ * across concurrent callers so a burst of inventory loads makes one engine call.
  */
 export async function liveCampaignProfileIds(): Promise<Set<string>> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.ids;
