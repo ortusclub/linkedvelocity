@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
-import { list, start } from "@/lib/maturing/service.mjs";
+import { list, start, engine } from "@/lib/maturing/service.mjs";
 import { categoryResolver, programStages } from "@/lib/maturing/programs.mjs";
 import { newMaturePlan } from "@/lib/maturing/shared/mature-profile-plan.mjs";
 
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   // Need the engine to know what campaigns each profile already has. If it's down,
   // do nothing (never start blind).
   let data: {
-    campaigns: { profileIds: string[]; status?: string; createdAt?: string; updatedAt?: string }[];
+    campaigns: { id: string; profileIds: string[]; status?: string; createdAt?: string; updatedAt?: string }[];
     engineError?: string;
   };
   try {
@@ -282,7 +282,73 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, eligible: ordered.length, construction: ordered.filter(inConstruction).length, started, restarted, gentleStarted, startFailed, queueFull, capped: Math.max(0, ordered.length - started - errors.length), errors });
+  // ── Re-plan stale campaigns ──────────────────────────────────────────────────
+  // A campaign's ramp is baked in when it is created, so a still-running campaign can be
+  // stuck on an outdated plan: the account moved to a new stage (e.g. construction →
+  // available, which should drop to light upkeep), its recovered window elapsed, or the
+  // stage's ramp itself was changed. We rebuild such a campaign onto the account's CURRENT
+  // program. Self-idempotent — we compare the campaign's stored day/warm/cold stages to
+  // what programStages would build now; once rebuilt they are equal and it is never touched
+  // again. Capped so the fleet rolls over gradually; disable with MATURING_REPLAN=off.
+  let replanned = 0;
+  const replanErrors: { account: string; error: string }[] = [];
+  if ((process.env.MATURING_REPLAN || "on").toLowerCase() !== "off") {
+    const REPLAN_CAP = Math.max(0, Number(process.env.MATURING_REPLAN_MAX ?? 3));
+    // Live (non-terminal) campaigns per profile, and profiles parked on a login review.
+    const liveByProfile = new Map<string, { id: string; status: string }[]>();
+    const parked = new Set<string>();
+    for (const c of data.campaigns) {
+      if (TERMINAL.has(c.status || "")) continue;
+      for (const pid of c.profileIds || []) {
+        if (!pid) continue;
+        let arr = liveByProfile.get(pid);
+        if (!arr) { arr = []; liveByProfile.set(pid, arr); }
+        arr.push({ id: c.id, status: c.status || "" });
+        if (c.status === "needs_review") parked.add(pid);
+      }
+    }
+    const sig = (stages?: { fromDay: number; toDay: number; warmDaily: number; coldDaily: number }[]) =>
+      JSON.stringify((stages || []).map((s) => [Number(s.fromDay), Number(s.toDay), Number(s.warmDaily), Number(s.coldDaily)]));
+    // Maturing-eligible accounts with a live campaign, not parked on a login review
+    // (re-planning wouldn't fix the login and would lose the ⚠️ signal). Pipeline first.
+    const replanPool = accounts
+      .filter((a) => !!a.gologinProfileId && a.rentals.length === 0 && liveByProfile.has(a.gologinProfileId!) &&
+        !parked.has(a.gologinProfileId!) && startFailOk(a) &&
+        (atLevel4(a) || ["construction", "available", "pipeline"].includes(category(a))) &&
+        !(a.notes || "").includes("[SHOWCASE]"))
+      .sort((a, b) => {
+        const ra = isPipeline(a) ? 0 : 1, rb = isPipeline(b) ? 0 : 1;
+        if (ra !== rb) return ra - rb;
+        return (a.connectionCount ?? 1e9) - (b.connectionCount ?? 1e9);
+      });
+    for (const a of replanPool) {
+      if (replanned >= REPLAN_CAP) break;
+      const gid = a.gologinProfileId!;
+      const live = liveByProfile.get(gid)!;
+      const warm = live.find((c) => /_warm$/.test(c.id)) || live[0];
+      const fresh = sig(programStages(category(a), isFragile(a), a.connectionCount ?? null));
+      let stored: string;
+      try {
+        const det = (await engine(`/api/campaign/${warm.id}`)) as { campaign?: { config?: { maturePlan?: { stages?: { fromDay: number; toDay: number; warmDaily: number; coldDaily: number }[] } } } };
+        stored = sig(det.campaign?.config?.maturePlan?.stages);
+      } catch { continue; } // couldn't read the plan — leave it, retry next run
+      if (stored === fresh) continue; // already on the current plan
+      try {
+        // Stop every live campaign on the profile, then rebuild on the current program.
+        for (const c of live) { try { await engine(`/api/campaign/${c.id}/stop?immediate=1`, {}); } catch { /* best effort; retried next run */ } }
+        await start(
+          { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(gid, a.linkedinName, a.linkedinUrl, isFragile(a), category(a), a.connectionCount ?? null), timezone: "Asia/Manila" },
+          "system",
+        );
+        await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔁 Maturing re-planned (auto) — moved onto the current ${category(a)} programme`, "system").catch(() => {});
+        replanned++;
+      } catch (e) {
+        replanErrors.push({ account: a.loginEmail || a.id, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+
+  return NextResponse.json({ ok: true, eligible: ordered.length, construction: ordered.filter(inConstruction).length, started, restarted, gentleStarted, replanned, startFailed, queueFull, capped: Math.max(0, ordered.length - started - errors.length), errors, replanErrors });
 }
 
 // Vercel Cron triggers with GET — alias to POST so the job runs.
