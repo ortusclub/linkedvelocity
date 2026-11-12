@@ -6,7 +6,10 @@ import { getProxies } from "@/lib/proxies";
 // flags the account for a purchase.
 //
 // Capacity per IP: four accounts, any provider/type; prefer matching country.
-// accountCount from getProxies already counts every non-removed account on the host:port.
+// The cap counts activeAccountCount (non-restricted accounts) from getProxies: a restricted
+// account stays attached to its proxy for same-IP recovery but no longer occupies a slot.
+// Subnet-spread and tiebreak still use the true total (accountCount) so genuinely emptier
+// IPs/subnets are preferred first.
 
 const CAP: Record<string, number> = { residential: 4, datacenter: 4 };
 
@@ -92,7 +95,9 @@ export async function pickAvailableProxy(opts: {
     if (exclude.has(key)) return false;
     // Enforce geo-match when we have stock for the account's country.
     if (stockForCountry && canonCountry(r.country) !== wantCountry) return false;
-    const used = r.accountCount + (claimed.has(key) ? 1 : 0);
+    // Cap counts only ACTIVE (non-restricted) accounts: a restricted account keeps its
+    // proxy for same-IP recovery but frees its slot so new accounts can use the IP.
+    const used = r.activeAccountCount + (claimed.has(key) ? 1 : 0);
     return used < cap;
   });
 

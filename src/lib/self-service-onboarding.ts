@@ -47,7 +47,7 @@ export async function resolveSelfSession(token: string): Promise<{ sessionId: st
 export async function availableProxies(db: Prisma.TransactionClient = prisma) {
   const [proxies, accounts, reservations] = await Promise.all([
     db.proxy.findMany({ orderBy: { createdAt: "asc" } }),
-    db.linkedInAccount.findMany({ where: { proxyHost: { not: null }, status: { not: "removed" } }, select: { id: true, proxyHost: true, proxyPort: true, proxyUsername: true, proxyPassword: true, proxyLocation: true } }),
+    db.linkedInAccount.findMany({ where: { proxyHost: { not: null }, status: { not: "removed" } }, select: { id: true, proxyHost: true, proxyPort: true, proxyUsername: true, proxyPassword: true, proxyLocation: true, restrictedAt: true } }),
     db.selfServiceOnboarding.findMany({ where: { proxyId: { not: null } }, select: { accountId: true, proxyId: true, proxySlot: true } }),
   ]);
   // Include usable proxies that exist only on account rows, as in the Proxies page.
