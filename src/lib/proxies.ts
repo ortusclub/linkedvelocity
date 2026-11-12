@@ -32,6 +32,10 @@ export interface ProxyRow {
   // Derived from live accounts.
   accounts: string[]; // login/personal emails (or name) of linked accounts
   accountCount: number;
+  // Non-restricted accounts only. accountCount is the true display count; this is what
+  // the assignment cap uses, so a restricted account stays attached to its proxy (same IP
+  // for recovery) but no longer blocks a slot on that IP.
+  activeAccountCount: number;
 }
 
 // Country of a proxy's egress. proxyLocation may be "Germany" or richer like
@@ -79,6 +83,7 @@ export async function getProxies(): Promise<ProxyRow[]> {
       personalEmail: true,
       linkedinName: true,
       notes: true,
+      restrictedAt: true,
     },
   });
 
@@ -93,6 +98,7 @@ export async function getProxies(): Promise<ProxyRow[]> {
     password: string | null;
     countries: Map<string, number>; // derived-country tally, for a best guess
     accounts: string[];
+    activeCount: number; // non-restricted accounts (what the assignment cap counts)
   };
   const buckets = new Map<string, Bucket>();
 
@@ -103,7 +109,7 @@ export async function getProxies(): Promise<ProxyRow[]> {
     const key = `${host}:${port}`;
     let b = buckets.get(key);
     if (!b) {
-      b = { host, port, username: a.proxyUsername, password: a.proxyPassword, countries: new Map(), accounts: [] };
+      b = { host, port, username: a.proxyUsername, password: a.proxyPassword, countries: new Map(), accounts: [], activeCount: 0 };
       buckets.set(key, b);
     }
     // Keep the first non-empty credentials we see for the proxy string.
@@ -112,13 +118,14 @@ export async function getProxies(): Promise<ProxyRow[]> {
     const c = headSegment(a.proxyLocation) || headSegment(a.location);
     if (c) b.countries.set(c, (b.countries.get(c) || 0) + 1);
     b.accounts.push(accountLabel(a));
+    if (!a.restrictedAt) b.activeCount += 1;
   }
 
   // Ensure every standalone Proxy row appears even with no linked accounts.
   for (const m of metaRows) {
     const key = `${m.host}:${m.port}`;
     if (!buckets.has(key)) {
-      buckets.set(key, { host: m.host, port: m.port, username: m.username, password: m.password, countries: new Map(), accounts: [] });
+      buckets.set(key, { host: m.host, port: m.port, username: m.username, password: m.password, countries: new Map(), accounts: [], activeCount: 0 });
     }
   }
 
@@ -144,6 +151,7 @@ export async function getProxies(): Promise<ProxyRow[]> {
       hasRow: !!meta,
       accounts: b.accounts,
       accountCount: b.accounts.length,
+      activeAccountCount: b.activeCount,
     });
   }
 

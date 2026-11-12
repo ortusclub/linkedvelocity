@@ -2,7 +2,7 @@ import { countryCode } from "@/lib/countries";
 
 export const ACCOUNTS_PER_PROXY = 4;
 type PoolProxy = { id: string; host: string; port: number; username: string | null; password: string | null; country: string | null; type: string | null; status: string | null };
-type PoolAccount = { id: string; proxyHost: string | null; proxyPort: number | null; proxyUsername: string | null; proxyPassword: string | null; proxyLocation: string | null };
+type PoolAccount = { id: string; proxyHost: string | null; proxyPort: number | null; proxyUsername: string | null; proxyPassword: string | null; proxyLocation: string | null; restrictedAt?: Date | null };
 type Reservation = { accountId: string; proxyId: string | null; proxySlot: number | null };
 
 // Count each account once, whether it is already in inventory, reserved, or both.
@@ -15,7 +15,10 @@ export function availableProxySlots(proxies: PoolProxy[], accounts: PoolAccount[
     if (["retired", "error", "inactive", "expired"].includes(status || "") || (p.type || "").toLowerCase() === "datacenter" || p.port < 1 || p.port > 65535) return [];
     const linked = accounts.filter((a) => a.proxyHost === p.host && a.proxyPort === p.port);
     const reserved = reservations.filter((r) => r.proxyId === p.id);
-    const used = new Set([...linked.map((a) => a.id), ...reserved.map((r) => r.accountId)]).size;
+    // Restricted accounts keep their proxy (for same-IP recovery) but don't occupy a slot,
+    // so only active (non-restricted) linked accounts count toward the per-proxy cap.
+    const activeLinked = linked.filter((a) => !a.restrictedAt);
+    const used = new Set([...activeLinked.map((a) => a.id), ...reserved.map((r) => r.accountId)]).size;
     if (used >= ACCOUNTS_PER_PROXY) return [];
     const country = countryCode(p.country) || countryCode(linked.find((a) => countryCode(a.proxyLocation))?.proxyLocation);
 
