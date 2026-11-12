@@ -4,9 +4,9 @@
 // Level-4 application (Sam, 2026-11-08 — "if they are in construction they go in
 // the Construction section").
 export const PROGRAMS = {
- pipeline: {label:'Pipeline Maturing', description:'Gentle warm ramp, followed by cold connections.'},
- construction: {label:'Construction', description:'Build connections with a stronger warm ramp, then introduce cold connections.'},
- available: {label:'Available', description:'Maintain activity with warm and cold connections while available.'},
+ pipeline: {label:'Pipeline Maturing', description:'Pre-payout weed-out — 10/day from day 1 (50:50), the stress test before we pay.'},
+ construction: {label:'Construction', description:'Paid, building to rentable — gentler warm-lean ramp (60:40, 6–8/day).'},
+ available: {label:'Available', description:'Rentable upkeep — low-volume ~5/day to keep it active.'},
  other: {label:'Other / Previous programmes', description:'Existing campaigns outside the three current inventory categories.'},
 };
 const norm = v => String(v || '').split('?')[0].replace(/\/+$/, '').trim().toLowerCase();
@@ -78,8 +78,32 @@ export function categoriesResolver(apps, sessions) {
  };
 }
 const stage=(id,fromDay,toDay,warmDaily,coldDaily)=>({id,name:id,fromDay,toDay,warmDaily,coldDaily,likesDaily:0});
-export function programStages(category, recentlyRestricted=false) {
- if(recentlyRestricted||category==='pipeline')return [stage('Warm',1,4,2,0),stage('Warm ramp',5,9,5,0),stage('Warm build',10,14,8,0),stage('Introduce cold',15,21,5,4),stage('Cold ramp',22,35,3,8)];
- if(category==='construction')return [stage('Warm',1,3,5,0),stage('Warm ramp',4,7,8,0),stage('Warm build',8,10,12,0),stage('Introduce cold',11,17,8,4),stage('Cold ramp',18,35,5,8)];
- return [stage('Warm',1,2,10,0),stage('Warm ramp',3,5,18,0),stage('Warm build',6,7,25,0),stage('Introduce cold',8,14,10,8),stage('Cold ramp',15,28,5,15)];
+// Per-stage maturing ramps (Ardi/Sam design, 2026-11-12). The guiding rule is the
+// OPPOSITE of babying everything: push HARD before we pay (the weed-out — a weak
+// account should restrict HERE, before we invest), then go GENTLE once paid (a
+// restriction on a paid account is our loss). `recovered` (a restriction in the last
+// 30 days) overrides the stage with a fragile re-warm. Daily = warm + cold; "warm" =
+// our own LV network (high accept), "cold" = external leads.
+/**
+ * @param {string} category
+ * @param {boolean} [recovered]
+ * @param {number|null} [connections]
+ */
+export function programStages(category, recovered=false, connections=null) {
+ // Recovered: fragile. Re-warm gently and warm-heavy (~80:20) to rebuild trust
+ // signals before any real cold, ramping back toward a normal mix over ~2 weeks.
+ // A re-restriction here is the expensive loss.
+ if(recovered)return [stage('Re-warm',1,7,2,0),stage('Re-warm ramp',8,21,3,1)];
+ // Pre-payout (Level 4, pre-onboarding): go hard from day 1 — 10/day flat, 50:50 —
+ // the weed-out, ~1-2 weeks until the setup fee is paid. A 0-connection account has
+ // no real network to warm into yet, so it starts cold-only.
+ if(category==='pipeline')return connections===0
+  ? [stage('Weed-out · cold-only',1,14,0,10)]
+  : [stage('Weed-out',1,14,5,5)];
+ // Construction (paid, building to rentable): warm-lean 60:40, 6→8/day. Gentler — a
+ // restriction here is our loss. Runs to the rentable bar, then upkeep.
+ if(category==='construction')return [stage('Build',1,7,4,2),stage('Build ramp',8,45,5,3)];
+ // Rentable (ready inventory): low-volume ~5/day upkeep, roughly 50:50 — already
+ // passed, cold keeps it looking active.
+ return [stage('Upkeep',1,60,3,2)];
 }

@@ -21,14 +21,18 @@ export const maxDuration = 180;
 const DISQUALIFYING_APP_STATUS = new Set(["rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
 
-function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, gentle: boolean, category: string) {
+function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, recovered: boolean, category: string, connections: number | null) {
   const p = newMaturePlan() as Record<string, unknown>;
-  p.warmEnabled = true;
-  p.coldEnabled = true; // warm first, then cold — keep maturing past onboarding
+  const stages = programStages(category, recovered, connections) as { warmDaily: number; coldDaily: number }[];
+  // Enable each channel only if the chosen ramp actually uses it — a 0-connection
+  // pre-payout account runs cold-only, so warm must be off (the plan rejects a warm
+  // campaign with nothing scheduled on day one).
+  p.warmEnabled = stages.some((s) => s.warmDaily > 0);
+  p.coldEnabled = stages.some((s) => s.coldDaily > 0);
   p.warmPool = "linkedvelocity_owned";
   p.coldPoolSource = "default"; // the shared default cold sheet (DEFAULT_MATURE_COLD_SHEET_URL)
   p.warmUntilExhausted = false; // warm runs its fixed stages, then cold carries on
-  p.stages = programStages(category, gentle);
+  p.stages = stages;
   p.targetProfileIds = [gid];
   p.accounts = { [gid]: { name, linkedinUrl } };
   return p;
@@ -242,17 +246,20 @@ export async function POST(req: NextRequest) {
   let queueFull = false;
   const errors: { account: string; error: string }[] = [];
   for (const a of ordered.slice(0, cap)) {
-    const gentle = isFragile(a) || isPipeline(a);
+    // "recovered" = restricted in the last 30 days → the fragile re-warm ramp, in any
+    // category. Pipeline accounts are NO LONGER forced gentle — pre-payout is the
+    // weed-out (go hard before we pay); programStages drives that off the category.
+    const recovered = isFragile(a);
     const isRestart = lastEndedAt.has(a.gologinProfileId!);
     try {
       await start(
-        { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, gentle, category(a)), timezone: "Asia/Manila" },
+        { accountId: a.id, launchId: randomUUID(), plan: autoMaturePlan(a.gologinProfileId!, a.linkedinName, a.linkedinUrl, recovered, category(a), a.connectionCount ?? null), timezone: "Asia/Manila" },
         "system",
       );
-      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started"} — ${category(a)} programme${gentle ? " · gentle ramp" : ""}`, "system").catch(() => {});
+      await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `🔥 Maturing auto-${isRestart ? "restarted (continuing — prior campaign ended)" : "started"} — ${category(a)} programme${recovered ? " · gentle re-warm (recovered)" : ""}`, "system").catch(() => {});
       // Clear any prior start-failure mark now that it launched.
       if (a.maturingStartFailedAt) await prisma.linkedInAccount.update({ where: { id: a.id }, data: { maturingStartFailedAt: null, maturingStartFailedReason: null } }).catch(() => {});
-      if (gentle) gentleStarted++;
+      if (recovered) gentleStarted++;
       if (isRestart) restarted++;
       started++;
     } catch (e) {
