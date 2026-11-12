@@ -190,7 +190,7 @@ export default function MaturingTrackerPage() {
                   <div style={{ font: `600 13px ${F}`, color: health.summary.attention ? "#b91c1c" : "#0f7a3d" }}>
                     {health.summary.attention === 0
                       ? "✓ Everything that should be sending is sending. Nothing to do."
-                      : `${health.summary.attention} account${health.summary.attention === 1 ? "" : "s"} ${health.summary.attention === 1 ? "is" : "are"} not sending and need a look (red, at the top). If this stays high, tell Sam.`}
+                      : `${health.summary.attention} account${health.summary.attention === 1 ? "" : "s"} ${health.summary.attention === 1 ? "is" : "are"} not sending and need a look (red, at the top). If this stays high, tell Ardi.`}
                   </div>
 
                   {/* Every account with its plain status, red first. Dot colour = the four groups above. */}
