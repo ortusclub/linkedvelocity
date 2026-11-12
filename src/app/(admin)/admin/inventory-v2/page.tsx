@@ -98,6 +98,7 @@ interface Account {
   connectionHistory: ConnPoint[] | null;
   restrictionLog: RestrictEvent[] | null;
   // derived by /api/admin/inventory-v2
+  inCampaign?: boolean;   // currently staffed in a live client outreach campaign (engine)
   earnedTotal: number;
   mailNeedsReview: number;
   mailIncidentOpen: number;
@@ -133,6 +134,10 @@ const BLUE = "#2563eb", GREEN = "#12a150", GREEND = "#0f7a3d", RED = "#dc2626", 
 const F = "'Plus Jakarta Sans',system-ui,sans-serif", G = "'Space Grotesk',system-ui,sans-serif";
 
 const isDummy = (a: Account) => (a.notes || "").includes("[SHOWCASE]");
+// ⚑ LinkedArmy: either hand-tagged into the "campaign" pool, or actually staffed
+// in a live client outreach campaign right now (engine). The latter also surfaces
+// rented/restricted accounts that have leaked into a campaign they shouldn't be in.
+const isLinkedArmy = (a: Account) => a.inventoryPool === "campaign" || a.inCampaign === true;
 // Daily-check eligibility: every account we still operate — all live, incl. restricted (you check
 // whether they recovered). Only retired accounts and showcase/dummy rows are out of scope.
 const checkable = (a: Account) => a.status !== "retired" && !isDummy(a);
@@ -567,7 +572,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       if (matOnly && !a.maturingStartedAt) return false;
       if (stalledOnly && !a.maturingStalledAt && !a.maturingStartFailedAt) return false;
       if (readyOnly && !a.readyToPromote) return false;
-      if (armyOnly && a.inventoryPool !== "campaign") return false;
+      if (armyOnly && !isLinkedArmy(a)) return false;
       if (ql) { const hay = [a.linkedinName, a.loginEmail, a.ownerName, a.rentals[0]?.user?.fullName, a.location, a.industry].join(" ").toLowerCase(); if (!hay.includes(ql)) return false; }
       return true;
     };
@@ -791,7 +796,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
             {(() => { const n = accounts.filter((a) => a.maturingStartedAt).length; return <button onClick={() => setMatOnly((v) => !v)} title="Show only accounts currently maturing" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(matOnly ? { borderColor: "#f59e0b", background: "#fff7ed", color: "#c2410c", fontWeight: 700 } : {}) }}>🔥 Maturing{n ? ` (${n})` : ""}</button>; })()}
             {(() => { const n = accounts.filter((a) => a.maturingStalledAt || a.maturingStartFailedAt).length; return n ? <button onClick={() => setStalledOnly((v) => !v)} title="Show only accounts whose maturing needs attention — a campaign that isn't sending (login/identity review) or that couldn't start at all (e.g. can't log in)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(stalledOnly ? { borderColor: "#ca8a04", background: "#fef9c3", color: "#854d0e", fontWeight: 700 } : {}) }}>⚠ Stalled ({n})</button> : null; })()}
             {(() => { const n = accounts.filter((a) => a.readyToPromote).length; return n ? <button onClick={() => setReadyOnly((v) => !v)} title="Construction accounts that have earned Available: ≥1 month old, matured ≥2 weeks with no restriction, ≥100 connections, setup paid, and all safety checks passing. Open each to list it." style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(readyOnly ? { borderColor: "#15803d", background: "#dcfce7", color: "#166534", fontWeight: 700 } : {}) }}>✅ Ready to promote ({n})</button> : null; })()}
-            {(() => { const n = accounts.filter((a) => a.inventoryPool === "campaign").length; return n ? <button onClick={() => setArmyOnly((v) => !v)} title="Show only the LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(armyOnly ? { borderColor: "#0e7490", background: "#ecfeff", color: "#0e7490", fontWeight: 700 } : {}) }}>⚑ LinkedArmy ({n})</button> : null; })()}
+            {(() => { const n = accounts.filter(isLinkedArmy).length; return n ? <button onClick={() => setArmyOnly((v) => !v)} title="Show only LinkedArmy: accounts in the campaign pool, plus any account currently staffed in a live client outreach campaign (incl. rented/restricted ones that have leaked in)" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap", ...(armyOnly ? { borderColor: "#0e7490", background: "#ecfeff", color: "#0e7490", fontWeight: 700 } : {}) }}>⚑ LinkedArmy ({n})</button> : null; })()}
             {hasFilters && <button onClick={clearAll} style={{ border: "none", background: "none", color: BLUE, font: `700 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filters</button>}
           </div>
         </div>
@@ -875,7 +880,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     const needs2fa = !r.twoFactor && (r.status === "rented" || r.status === "available" || r.status === "trial");
                     const proxyDown = false;      // no stored proxy/GoLogin-check-failed flag yet (Phase 2)
                     const proxyExpiring = false;  // no stored proxy-expiry field on the account yet (Phase 2)
-                    const linkedArmy = r.inventoryPool === "campaign";   // campaign pool = our idle/fresh accounts earmarked to run LinkedArmy outreach
+                    const linkedArmy = isLinkedArmy(r);   // campaign pool OR currently staffed in a live client campaign
                     const retired = canonicalStatus(r) === "Permanently restricted/Inaccessible";
                     const warmDays = r.warmupStartedAt ? Math.max(0, Math.floor((nowMs - new Date(r.warmupStartedAt).getTime()) / 86400000)) : null;
                     // Auto maturing flag (reconcile-maturing cron): a live LinkedVelocity warm/cold campaign is running.
@@ -920,7 +925,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (missingCat.length) flags.push({ l: `Incomplete: ${missingCat.join(", ")}`, bg: "#fffbeb", fg: "#92400e", tip: `Missing for catalogue: ${missingCat.join(", ")}` });
                     if (proxyDown) flags.push({ l: "Proxy down", ...RP, tip: "GoLogin proxy check failed" });
                     if (proxyExpiring) flags.push({ l: "Proxy expiring", bg: "#fffbeb", fg: "#92400e", tip: "Proxy plan expires within 7 days" });
-                    if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: "Running LinkedArmy campaigns" });
+                    if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: r.inCampaign ? "Currently staffed in a live outreach campaign — a rented/restricted account here is double-booked" : "LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" });
                     if (r.readyToPromote) flags.push({ l: "✅ Ready to promote", bg: "#dcfce7", fg: "#166534", tip: "Earned Available: ≥1 month old, matured ≥2 weeks with no restriction, ≥100 connections, setup paid, safety checks pass. Open the account and list it." });
                     if (matDays != null) flags.push({ l: `🔥 ${matDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
                     else if (stalledDays != null) flags.push({ l: `⚠ stalled ${stalledDays}d`, bg: "#fef9c3", fg: "#854d0e", tip: `Maturing needs attention — ${stalledWhy}. It isn't actually maturing (stuck, or the campaign couldn't start); fix it (e.g. the login), not a healthy fire.` });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { rentalReadyStatus, rentalReadyAuto, type ChecklistState } from "@/lib/rental-ready";
+import { liveCampaignProfileIds } from "@/lib/outreach-campaigns";
 
 // Inventory v2 read endpoint. Returns the SAME per-account shape as
 // /api/admin/accounts (so the v2 page has every field the live inventory has),
@@ -144,6 +145,10 @@ export async function GET(_req: NextRequest) {
       : [];
     const gologinSharedSet = new Set(shareRows.filter((r) => Array.isArray(r.gologinShareIds) && (r.gologinShareIds as unknown[]).length > 0).map((r) => r.linkedinAccountId));
 
+    // GoLogin profiles currently staffed in a live client outreach campaign
+    // (best-effort; empty set if the engine is unreachable, so the page still loads).
+    const inCampaignIds = await liveCampaignProfileIds();
+
     const out = accounts.map((a) => {
       const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/)?.[1]?.replace(/\.$/, "") || "";
       const app = (a.linkedinUrl ? appByUrl.get(normUrl(a.linkedinUrl)) : undefined) || (ownerEmail ? appMap.get(ownerEmail.toLowerCase()) : undefined);
@@ -215,6 +220,7 @@ export async function GET(_req: NextRequest) {
         // so a live account doesn't get stuck showing as "Construction" in inventory.
         ownerOnboarded: app?.status === "onboarded" || !!app?.onboardedAt,
         shadowRenter: shadowByAccount.get(a.id) || null,
+        inCampaign: !!a.gologinProfileId && inCampaignIds.has(a.gologinProfileId),
       };
     });
 
