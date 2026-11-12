@@ -46,12 +46,15 @@ type Probe = {
   key: string; email: string; status: string; created: number;
   sentToday: number; sentTotal: number; accepted: number; errors: number; pending: number;
   resumeReason: string; resumeAt: string | null;
+  // Latest future account cooldown on this campaign (the engine benches an account until Monday
+  // after repeated unconfirmed sends: a suspected weekly invite limit). null = not benched.
+  pausedUntil: string | null;
 };
 
 async function probe(c: Camp): Promise<Probe> {
   const email = String(c.name || "").replace(/\s*·\s*cold$/i, "").trim().toLowerCase();
   const key = (c.profileIds && c.profileIds[0]) || email || c.id;
-  const base: Probe = { key, email, status: c.status, created: Date.parse(c.createdAt || "") || Date.now(), sentToday: 0, sentTotal: 0, accepted: 0, errors: 0, pending: 0, resumeReason: "", resumeAt: null };
+  const base: Probe = { key, email, status: c.status, created: Date.parse(c.createdAt || "") || Date.now(), sentToday: 0, sentTotal: 0, accepted: 0, errors: 0, pending: 0, resumeReason: "", resumeAt: null, pausedUntil: null };
 
   const [wbR, detR] = await Promise.allSettled([
     engine(`/api/maturing/workbook/${c.id}?offset=0`),
@@ -74,6 +77,11 @@ async function probe(c: Camp): Promise<Probe> {
     const cc = det.campaign || {};
     if (typeof cc.status === "string") base.status = cc.status;
     base.resumeReason = typeof cc.resumeTaskReason === "string" ? cc.resumeTaskReason : "";
+    const blocks = Array.isArray(cc.matureAccountBlocks) ? (cc.matureAccountBlocks as { reason?: string; until?: string }[]) : [];
+    for (const b of blocks) {
+      const until = typeof b?.until === "string" ? Date.parse(b.until) : NaN;
+      if (b?.reason === "cooldown" && until > Date.now() && (!base.pausedUntil || until > Date.parse(base.pausedUntil))) base.pausedUntil = b.until as string;
+    }
     base.resumeAt = (typeof cc.resumeTaskDueAt === "string" ? cc.resumeTaskDueAt : null) || det.campaignStatus?.next?.resumeAt || null;
     // If the workbook read failed, fall back to the detail's own counts so a transient error
     // can't make a healthy, sending account look like "no leads loaded".
@@ -98,7 +106,7 @@ async function pool<T, R>(items: T[], size: number, fn: (t: T) => Promise<R>): P
 type Acct = {
   email: string; statuses: Set<string>; created: number;
   sentToday: number; sentTotal: number; accepted: number; errors: number; pending: number;
-  resumeReason: string; resumeAt: string | null;
+  resumeReason: string; resumeAt: string | null; pausedUntil: string | null;
 };
 
 export async function POST() {
@@ -120,12 +128,13 @@ export async function POST() {
     const byAcct = new Map<string, Acct>();
     for (const p of probes) {
       let a = byAcct.get(p.key);
-      if (!a) { a = { email: p.email, statuses: new Set(), created: p.created, sentToday: 0, sentTotal: 0, accepted: 0, errors: 0, pending: 0, resumeReason: "", resumeAt: null }; byAcct.set(p.key, a); }
+      if (!a) { a = { email: p.email, statuses: new Set(), created: p.created, sentToday: 0, sentTotal: 0, accepted: 0, errors: 0, pending: 0, resumeReason: "", resumeAt: null, pausedUntil: null }; byAcct.set(p.key, a); }
       a.statuses.add(p.status);
       a.created = Math.min(a.created, p.created);
       a.sentToday += p.sentToday; a.sentTotal += p.sentTotal; a.accepted += p.accepted; a.errors += p.errors; a.pending += p.pending;
       if (!a.email && p.email) a.email = p.email;
       if (p.resumeReason === "weekly" || (!a.resumeReason && p.resumeReason)) a.resumeReason = p.resumeReason;
+      if (p.pausedUntil && (!a.pausedUntil || Date.parse(p.pausedUntil) > Date.parse(a.pausedUntil))) a.pausedUntil = p.pausedUntil;
       if (p.resumeAt && (!a.resumeAt || Date.parse(p.resumeAt) < Date.parse(a.resumeAt))) a.resumeAt = p.resumeAt;
     }
 
@@ -167,6 +176,12 @@ export async function POST() {
       } else if (a.pending === 0) {
         state = "attention";
         line = "No leads loaded, so it can never send — needs a human to set it up";
+      } else if (a.pausedUntil) {
+        // Benched by the engine: LinkedIn didn't confirm its invites (Send clicked, never went
+        // Pending), so it is paused until the weekly reset. Name that plainly instead of calling
+        // it an engine error, so the operator checks for a restriction and otherwise leaves it.
+        state = "attention";
+        line = `Suspected weekly limit — LinkedIn didn't accept its invites. Paused until ${fmtWhen(a.pausedUntil, true)}, then restarts itself. Check it in GoLogin for a restriction; if it looks fine, leave it`;
       } else if (a.errors > 0) {
         state = "attention";
         line = "The engine keeps hitting errors on every send (nothing is going out)";
