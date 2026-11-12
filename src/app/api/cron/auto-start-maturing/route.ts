@@ -109,10 +109,11 @@ export async function POST(req: NextRequest) {
   const accounts = await prisma.linkedInAccount.findMany({
     where: {
       gologinProfileId: { not: null },
-      // 'unavailable' = returned to owner or our access was cut. Those are NOT ours to
+      // Recorded owner exits remain excluded. An unavailable listing without an
+      // exit reason can continue maturing. Those returned to owners are NOT ours to
       // mature anymore, even though the inventory grouping would read an un-onboarded one
       // as Construction — exclude them here so a returned account isn't (re-)enrolled.
-      status: { notIn: ["removed", "rented", "retired", "maintenance", "unavailable"] },
+      status: { notIn: ["removed", "rented", "retired", "maintenance"] },
       // Campaign pool = our own LinkedArmy outreach personas, run by hand. Never auto-start
       // a warm-up/maturing campaign on them (it would fight the real outreach we run).
       inventoryPool: { not: "campaign" },
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
       // starting them would just fight it). No readiness gate otherwise: if a verified
       // account can't actually run (challenge, stale login, etc.) let it fail on its own.
       restrictedAt: null,
+      exitReason: null,
       permanentlyRestricted: false,
     },
     select: {
