@@ -67,13 +67,13 @@ export default function MaturingTrackerPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const post = useCallback(async (path: string, body: object, id: string, label: string) => {
+  const post = useCallback(async (path: string, body: object, id: string, label: string | ((j: Record<string, unknown>) => string)) => {
     setBusy((s) => ({ ...s, [id]: "…" }));
     try {
       const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "failed");
-      setBusy((s) => ({ ...s, [id]: label }));
+      setBusy((s) => ({ ...s, [id]: typeof label === "function" ? label(j) : label }));
       await load();
     } catch (e) { setBusy((s) => ({ ...s, [id]: `failed: ${(e as Error).message}` })); }
   }, [load]);
@@ -88,7 +88,14 @@ export default function MaturingTrackerPage() {
     } catch (e) { setHErr((e as Error).message); } finally { setHBusy(false); }
   }, []);
 
-  const recheck = (id: string) => post("/api/admin/maturing-tracker/recheck", { accountId: id }, id, "queued ✓");
+  // Report what the engine actually did, not a blanket "queued". When no live campaign
+  // could be resumed (campaign cancelled/ended, or none exists yet because of a missing
+  // URL) the endpoint returns rechecked:0 — say so instead of a misleading ✓.
+  const recheck = (id: string) => post("/api/admin/maturing-tracker/recheck", { accountId: id }, id, (j) => {
+    const n = Number(j.rechecked) || 0;
+    if (n > 0) return `resumed ${n} ✓`;
+    return `nothing to resume${typeof j.note === "string" && j.note ? ` — ${String(j.note).replace(/\.$/, "")}` : " — see detail"}`;
+  });
   const restrict = (id: string) => post("/api/admin/maturing-tracker/flag", { accountId: id, action: "restrict" }, id, "restricted ✓");
   const clearFlag = (id: string) => post("/api/admin/maturing-tracker/flag", { accountId: id, action: "clear" }, id, "cleared ✓");
   const saveFlag = (id: string) => {
@@ -271,7 +278,7 @@ export default function MaturingTrackerPage() {
                         {r.canRecheck && <button onClick={() => void recheck(r.id)} disabled={busy[r.id] === "…"} style={btn()}>⚡ Re-check / resume</button>}
                         {r.canRestrict && <button onClick={() => void restrict(r.id)} disabled={busy[r.id] === "…"} style={btn({ border: "1px solid #f5c2c2", background: "#fef2f2", color: "#b91c1c" })}>Mark restricted</button>}
                         {r.isFlag && <button onClick={() => void clearFlag(r.id)} disabled={busy[r.id] === "…"} style={btn({ border: "1px solid #bfe6cd", background: "#e7f7ee", color: "#0f7a3d" })}>Clear flag</button>}
-                        {busy[r.id] && busy[r.id] !== "…" && <span style={{ font: `600 11px ${F}`, color: C.faint }}>{busy[r.id]}</span>}
+                        {busy[r.id] && busy[r.id] !== "…" && <span style={{ font: `600 11px ${F}`, color: busy[r.id].startsWith("failed") ? "#b91c1c" : busy[r.id].includes("✓") ? "#0f7a3d" : "#92400e", textAlign: "right" }}>{busy[r.id]}</span>}
                       </div>
                     </div>
                   );
