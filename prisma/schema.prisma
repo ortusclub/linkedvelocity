@@ -928,6 +928,7 @@ model Proxy {
   health           String?                               // "healthy" | "failing" (computed from the LinkedIn probe)
   lastCheckedAt    DateTime? @map("last_checked_at")
   consecutiveFails Int       @default(0) @map("consecutive_fails")
+  maxAccounts      Int?      @map("max_accounts")          // per-IP account cap override; null = default (4). Used for the accounts-per-IP A/B/C test.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
