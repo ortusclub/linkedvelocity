@@ -127,3 +127,6 @@ Hide wallets whose supported balances are successfully verified as zero, includi
 
 ## Treasury balance summary — Samuel, 11 November 2026
 Show Stripe funds (with available and pending distinguished) and the balance of the configured receiving wallet prominently. Include Ethereum-mainnet assets as well as Base so confirmed ETH sweeps are reflected. Label supported networks/tokens and partial reads explicitly; never show a Base-only figure as the complete receiving-wallet balance. Keep transfer controls bound to their actual network.
+
+## Continuous maturing — Samuel, 12 November 2026
+Non-rented current maturing profiles should remain enrolled and continue automatically. Do not stop live programmes merely to change their ramp/category; apply a replacement programme after the existing cycle ends. The `unavailable` inventory listing state alone must not stop maturing. Represent login, access, capacity and daily/weekly holds explicitly with their actual retry schedule; preserve restrictions, actual rentals (including active shadow rentals), session locks, confirmed/ambiguous actions and six-browser pacing. Retry current stopped plans without reviving superseded plans. Samuel's renewed instruction authorizes restoring profiles that earlier automated stop requests cancelled; prevent the offending automatic stop path before retrying.

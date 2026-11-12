@@ -126,9 +126,7 @@ export async function POST(req: NextRequest) {
       a.status === "rented" || a.rentals.length > 0 ||
       !!a.restrictedAt || a.permanentlyRestricted ||
       a.status === "retired" || a.status === "maintenance" ||
-      // 'unavailable' = returned to owner / access cut — stop any campaign still running on it
-      // (a maturing run started while it was in construction keeps firing otherwise).
-      a.status === "unavailable" ||
+      // Unavailable is a rental-listing state, not a maturing stop.
       // Campaign pool = our own LinkedArmy outreach personas, run by hand. If the engine
       // ever has a live warm-up/maturing campaign on one, stop it — we don't auto-warm these.
       a.inventoryPool === "campaign";
