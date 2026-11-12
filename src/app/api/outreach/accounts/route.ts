@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       maturingStartFailedReason: true,
       accountPassword: true, // only reduced to hasPassword below; never sent
       rentals: {
-        where: { status: { in: ["active", "pending_access", "payment_failed"] }, isShadow: false },
+        where: { status: { in: ["active", "pending_access", "payment_failed"] } },
         select: { id: true },
         take: 1,
       },
