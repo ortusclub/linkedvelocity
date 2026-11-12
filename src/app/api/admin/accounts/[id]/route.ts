@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import { replanAccountIfStale } from "@/lib/maturing/replan";
 import { z } from "zod";
 import { persistImageUrl } from "@/lib/persist-image";
 import { markOwnerOnboardedIfReady } from "@/lib/onboarding";
@@ -310,6 +311,14 @@ export async function PATCH(
       where: { id },
       data,
     });
+
+    // Stage change → re-plan maturing immediately onto the new stage's programme (e.g.
+    // construction → available drops to light upkeep), instead of waiting for the 15-min
+    // sweep. Runs after the response (no latency), is a no-op if the plan already matches,
+    // and must never affect this edit — so it's fired via after() and swallows its errors.
+    if (["available", "under_construction", "construction_immature", "trial"].includes(account.status)) {
+      after(() => replanAccountIfStale(id).catch(() => {}));
+    }
 
     // Log a warm-up start/stop/re-warm to the owner's Activity feed (best-effort).
     if (warmupChange) {
