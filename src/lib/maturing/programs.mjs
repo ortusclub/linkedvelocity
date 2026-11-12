@@ -107,3 +107,19 @@ export function programStages(category, recovered=false, connections=null) {
  // passed, cold keeps it looking active.
  return [stage('Upkeep',1,60,3,2)];
 }
+
+// Plain-words name for the ramp an account is on, for the Activity timeline — so a human
+// reading the log can see WHICH maturing programme it is, not just the bucket name.
+/**
+ * @param {string} category
+ * @param {boolean} [recovered]
+ * @param {number|null} [connections]
+ */
+export function programLabel(category, recovered=false, connections=null) {
+ if(recovered) return 'gentle re-warm — recovering account, rebuilding trust slowly (2→3/day, warm-heavy)';
+ if(category==='pipeline') return connections===0
+  ? 'pre-payout weed-out — cold-only start (0-connection account, ~10/day)'
+  : 'pre-payout weed-out — the pre-pay stress test (10/day, 50:50 warm+cold)';
+ if(category==='construction') return 'construction — building the network to rentable (6→8/day, warm-lean 60:40)';
+ return 'rentable upkeep — light activity to stay warm while available (~5/day, 50:50)';
+}
