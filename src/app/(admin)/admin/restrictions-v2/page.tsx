@@ -27,8 +27,45 @@ type Row = {
   lastTouchAt: number | null; lastTouchLabel: string;
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
-  wf: WfCard[]; wfNext: string; wfLevel: string; emails: MailEvt[];
+  wf: WfCard[]; wfNext: string; wfLevel: string; wfCurrent: number | null; emails: MailEvt[];
 };
+
+// v4 recovery matrix — place each OPEN case in one stage column, grouped into bands, so the whole
+// funnel (who's at email/QR vs ID vs appeal vs waiting on LinkedIn vs wrapping up) is visible at a
+// glance and a cell is clickable to work exactly that group. Stage is derived from the 5-step
+// workflow: step 1 (owner) splits into "email owner" vs "QR relayed · waiting to scan"; step 3
+// splits into "appeal" (still to submit) vs "LinkedIn decision" (submitted, awaiting answer =
+// bucket "linkedin"). Closed/lost cases are not on the board.
+type StageDef = { key: string; band: string; label: string; lvl: string };
+const STAGES: StageDef[] = [
+  { key: "email", band: "Quick wins", label: "Email owner", lvl: "L1" },
+  { key: "qr", band: "Quick wins", label: "Send QR", lvl: "L2" },
+  { key: "id", band: "Hard cases", label: "ID / contact form", lvl: "L3" },
+  { key: "appeal", band: "Hard cases", label: "Appeal", lvl: "L4" },
+  { key: "li", band: "Waiting", label: "LinkedIn decision", lvl: "L5" },
+  { key: "login", band: "Wrap up", label: "Log in + reset", lvl: "L6" },
+  { key: "handback", band: "Wrap up", label: "Hand back / relist", lvl: "L7" },
+];
+const BAND_FG: Record<string, string> = { "Quick wins": "#0f7a3d", "Hard cases": "#b45309", "Waiting": "#6d28d9", "Wrap up": "#475569" };
+const isOpenRow = (r: Row) => r.bucket !== "done" && r.bucket !== "lost";
+const stageOf = (r: Row): string | null => {
+  if (!isOpenRow(r)) return null;
+  if (r.bucket === "linkedin") return "li";
+  const c = r.wfCurrent;
+  if (c === 2) return "id";
+  if (c === 3) return "appeal";
+  if (c === 4) return "login";
+  if (c === 5) return "handback";
+  const s1 = r.wf.find((w) => w.n === 1);
+  return s1 && s1.state === "wait" ? "qr" : "email";
+};
+// Matrix phase bucket: P1 Rented, P2 Onboarded, P3 everything pre-onboarded (pr 3 or 4).
+const phaseBucket = (r: Row) => (r.phase.pr === 1 ? 1 : r.phase.pr === 2 ? 2 : 3);
+const PHASE_ROWS: Array<{ pb: number; label: string; pr: string; fg: string }> = [
+  { pb: 1, label: "Rented", pr: "P1", fg: "#b91c1c" },
+  { pb: 2, label: "Onboarded", pr: "P2", fg: "#b45309" },
+  { pb: 3, label: "Pre-onboarded", pr: "P3", fg: "#8a93a3" },
+];
 
 // PoC avatar colour from the name (same scheme as inventory v2), so a PoC looks identical here.
 const AV = ["#2563eb", "#7c3aed", "#0891b2", "#db2777", "#ea580c", "#059669", "#4f46e5"];
@@ -554,6 +591,11 @@ export default function RestrictionsV2Page() {
   const [refF, setRefF] = useState("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  // Recovery matrix selection: a phase bucket (1/2/3), a stage key, or both (a cell). Clicking the
+  // same target again clears it. Selecting anything switches the list to "All open" so the worklist
+  // shows the cases behind the cell.
+  const [mxPhase, setMxPhase] = useState<number | null>(null);
+  const [mxStage, setMxStage] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     fetch("/api/admin/restrictions-v2").then((r) => r.json()).then((d) => { if (d.error) setError(d.error); else { setRows(d.rows); setNow(d.now); } }).catch((e) => setError(String(e)));
@@ -607,6 +649,16 @@ export default function RestrictionsV2Page() {
   const matchPhase = (r: Row) => phaseF === "all" || (phaseF === "pre" ? r.phase.pr >= 3 : String(r.phase.pr) === phaseF);
   const matchPoc = (r: Row) => pocF === "all" || (pocF === "none" ? !r.poc : r.poc === pocF);
   const matchRef = (r: Row) => refF === "all" || (refF === "none" ? !r.referrerName : r.referrerName === refF);
+  // Recovery-matrix cell/row/column filter (applied on top of everything else).
+  const matchMatrix = (r: Row) => (mxPhase == null || phaseBucket(r) === mxPhase) && (mxStage == null || stageOf(r) === mxStage);
+  const selectCell = (pb: number | null, st: string | null) => {
+    const same = mxPhase === pb && mxStage === st;
+    setMxPhase(same ? null : pb); setMxStage(same ? null : st);
+    if (!same) setFilter("open");
+  };
+  // Picking a tile or segment clears the matrix selection, so a hidden phase×stage filter never
+  // survives a view change and leaves the list mysteriously empty.
+  const pickFilter = (k: string) => { setFilter(k); setMxPhase(null); setMxStage(null); };
   const sinceMs = (r: Row) => (r.restrictedAt ? Date.parse(r.restrictedAt) : r.resolvedAt || 0);
   const closed = (r: Row) => (r.resolvedAt || r.lostOutcome ? 1 : 0);
   // Open tabs default to stalest-first by last touch (oldest / never-touched at top) so neglected
@@ -629,7 +681,7 @@ export default function RestrictionsV2Page() {
   // Referrer-reported open cases float above everything else that's open (but below closed, which
   // stays at the bottom) so a "verify this" never gets buried.
   const reportPr = (r: Row) => (reported(r) ? 0 : 1);
-  const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef)
+  const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef).filter(matchMatrix)
     .sort((a, b) => restDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byRest(a, b))
       : touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b))
       : (closed(a) - closed(b) || reportPr(a) - reportPr(b) || a.phase.pr - b.phase.pr || Number(b.urgent) - Number(a.urgent) || sinceMs(a) - sinceMs(b)));
@@ -671,6 +723,12 @@ export default function RestrictionsV2Page() {
   ].map((o) => ({ ...o, n: inFilter.filter((r) => o.key === "all" || (o.key === "none" ? !r.referrerName : r.referrerName === o.key)).length }));
 
   const colTpl = "minmax(200px,1.6fr) 120px 110px 70px minmax(150px,1.1fr) 220px minmax(180px,1.3fr) 22px";
+  // Recovery-board grid: a phase-label column + one column per stage. Band header cells span their
+  // stages (Quick wins 2, Hard cases 2, Waiting 1, Wrap up 2).
+  const mxGrid = `148px repeat(${STAGES.length}, minmax(62px, 1fr))`;
+  const mxBands: Array<[string, number]> = [];
+  for (const s of STAGES) { const l = mxBands[mxBands.length - 1]; if (l && l[0] === s.band) l[1]++; else mxBands.push([s.band, 1]); }
+  const mxCount = (pb: number, st: string) => openCases.filter((r) => phaseBucket(r) === pb && stageOf(r) === st).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -683,7 +741,7 @@ export default function RestrictionsV2Page() {
         {tiles.map(([key, label, n, sub, dot]) => {
           const on = filter === key;
           return (
-            <button key={key} onClick={() => setFilter(key)} style={{ textAlign: "left", cursor: "pointer", background: on ? "#fff" : "#f8f9fb", border: `1.5px solid ${on ? "#0b1220" : "#e3e6ec"}`, borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 }}>
+            <button key={key} onClick={() => pickFilter(key)} style={{ textAlign: "left", cursor: "pointer", background: on ? "#fff" : "#f8f9fb", border: `1.5px solid ${on ? "#0b1220" : "#e3e6ec"}`, borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 }}>
               <span style={{ display: "flex", alignItems: "center", gap: 7, font: `700 11px ${F_SANS}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#5b6779", whiteSpace: "nowrap" }}><span style={{ flex: "none", width: 8, height: 8, borderRadius: "50%", background: dot }} />{label}</span>
               <span style={{ font: `700 26px ${F_GRO}`, color: "#0b1220" }}>{n}</span>
               <span style={{ font: `600 12px ${F_SANS}`, color: "#5b6779", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>
@@ -694,7 +752,7 @@ export default function RestrictionsV2Page() {
 
       <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, padding: "12px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", background: "#eef0f4", borderRadius: 10, padding: 3, gap: 2, flexWrap: "wrap" }}>
-          {segs.map(([k, l]) => { const on = filter === k; return <button key={k} onClick={() => setFilter(k)} style={{ border: "none", background: on ? "#fff" : "transparent", color: on ? "#0b1220" : "#5b6779", boxShadow: on ? "0 1px 2px rgba(11,18,32,.12)" : "none", borderRadius: 8, padding: "6px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>; })}
+          {segs.map(([k, l]) => { const on = filter === k; return <button key={k} onClick={() => pickFilter(k)} style={{ border: "none", background: on ? "#fff" : "transparent", color: on ? "#0b1220" : "#5b6779", boxShadow: on ? "0 1px 2px rgba(11,18,32,.12)" : "none", borderRadius: 8, padding: "6px 12px", font: `700 12.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>; })}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Phase</span>
@@ -720,6 +778,51 @@ export default function RestrictionsV2Page() {
         </div>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, login email, renter, PoC, referrer or error…" style={{ flex: 1, minWidth: 240, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "9px 12px", font: `500 13.5px ${F_SANS}`, color: "#0b1220", outline: "none" }} />
       </div>
+
+      {rows && openCases.length > 0 && (
+        <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, overflowX: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ font: `700 14px ${F_GRO}`, color: "#0b1220" }}>Recovery board</span>
+            <span style={{ font: `500 12px ${F_SANS}`, color: "#8a93a3" }}>{openCases.length} open · by phase × stage. Click a cell, row or column to work that group.</span>
+            <span style={{ flex: 1 }} />
+            {(mxPhase != null || mxStage != null) && <button onClick={() => { setMxPhase(null); setMxStage(null); }} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#5b6779", borderRadius: 8, padding: "4px 10px", font: `700 11.5px ${F_SANS}`, cursor: "pointer" }}>Clear filter ✕</button>}
+          </div>
+          <div style={{ minWidth: 760, display: "flex", flexDirection: "column", gap: 5 }}>
+            <div style={{ display: "grid", gridTemplateColumns: mxGrid, gap: 5 }}>
+              <span />
+              {mxBands.map(([band, span]) => (
+                <span key={band} style={{ gridColumn: `span ${span}`, font: `700 9.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: BAND_FG[band] || "#8a93a3", paddingBottom: 2 }}>{band}</span>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: mxGrid, gap: 5 }}>
+              <span />
+              {STAGES.map((s) => { const on = mxStage === s.key && mxPhase == null; return (
+                <button key={s.key} onClick={() => selectCell(null, s.key)} title={`Everyone at ${s.label}`} style={{ textAlign: "left", cursor: "pointer", border: `1px solid ${on ? "#2563eb" : "transparent"}`, background: on ? "#eef4ff" : "transparent", borderRadius: 7, padding: "3px 5px", display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ font: `700 9px ${MONO}`, color: "#9aa3b2" }}>{s.lvl}</span>
+                  <span style={{ font: `700 10.5px ${F_SANS}`, color: "#334155", lineHeight: 1.15 }}>{s.label}</span>
+                </button>
+              ); })}
+            </div>
+            {PHASE_ROWS.map((pr) => { const rowOn = mxPhase === pr.pb && mxStage == null; return (
+              <div key={pr.pb} style={{ display: "grid", gridTemplateColumns: mxGrid, gap: 5, alignItems: "stretch" }}>
+                <button onClick={() => selectCell(pr.pb, null)} title={`All ${pr.label} cases`} style={{ textAlign: "left", cursor: "pointer", border: `1px solid ${rowOn ? "#2563eb" : "#eef0f4"}`, background: rowOn ? "#eef4ff" : "#fafbfc", borderRadius: 9, padding: "7px 9px", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ font: `700 10px ${MONO}`, color: pr.fg }}>{pr.pr}</span>
+                  <span style={{ font: `700 12px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap" }}>{pr.label}</span>
+                </button>
+                {STAGES.map((s) => {
+                  const n = mxCount(pr.pb, s.key);
+                  const sel = (mxPhase != null || mxStage != null) && (mxPhase == null || mxPhase === pr.pb) && (mxStage == null || mxStage === s.key);
+                  return (
+                    <button key={s.key} onClick={() => selectCell(pr.pb, s.key)} disabled={n === 0} title={`${pr.label} · ${s.label}: ${n}`} style={{ cursor: n ? "pointer" : "default", border: `1.5px solid ${sel ? "#2563eb" : n ? "#e3e6ec" : "#f1f3f6"}`, background: sel ? "#eef4ff" : n ? "#fff" : "#fafbfc", borderRadius: 9, padding: "8px 4px", display: "grid", placeItems: "center", minHeight: 38 }}>
+                      <span style={{ font: `700 16px ${F_GRO}`, color: n ? (sel ? "#1d4ed8" : "#0b1220") : "#cfd5df" }}>{n || "·"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ); })}
+          </div>
+        </div>
+      )}
 
       {error && <div style={{ font: `500 13px ${F_SANS}`, color: "#b91c1c" }}>{error}</div>}
       {!rows && !error && <div style={{ font: `500 13px ${F_SANS}`, color: "#8a93a3" }}>Loading…</div>}

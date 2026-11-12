@@ -248,7 +248,7 @@ export async function GET(req: Request) {
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags, chain: d.chain,
         newReply, clearedToday,
-        wf: wf.cards, wfNext: wf.next, wfLevel: wf.level,
+        wf: wf.cards, wfNext: wf.next, wfLevel: wf.level, wfCurrent: wf.current,
         emails: (mailByAccount.get(a.id) || []).map((m) => ({ id: m.id, status: m.status, type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
         renterName: renterByAccount.get(a.id) || null,
         // The referrer's self-report from the portal ("it's unrestricted" / "QR check done").
