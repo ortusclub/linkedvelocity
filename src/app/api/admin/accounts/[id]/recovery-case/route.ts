@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto-creds";
 import { restrictionUpdate, type RestrictionEvent } from "@/lib/restriction";
+import { cappedDowntimeMs } from "@/lib/downtime-credit";
 import { parseStoredCase, LOST_LABEL, matchApp, type Step, type StoredCase } from "@/lib/recovery-case";
 import { onboardingMailRequest } from "@/services/onboarding-mail";
 
@@ -81,14 +82,17 @@ async function closeFinal(id: string, stored: StoredCase, relist: boolean) {
     if (downtimeMs > 0) {
       const active = await prisma.rental.findFirst({
         where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] } },
-        select: { id: true, currentPeriodEnd: true },
+        select: { id: true, currentPeriodEnd: true, startDate: true },
       });
       if (active?.currentPeriodEnd) {
-        const creditedDays = Math.round(downtimeMs / 86400000);
+        // Cap at (30d − days active this cycle) so a long restriction can't extend the renewal
+        // date indefinitely (see cappedDowntimeMs; mirrors the recover + replace flows).
+        const creditMs = cappedDowntimeMs(new Date(startMs), active.startDate);
+        const creditedDays = Math.round(creditMs / 86400000);
         if (creditedDays > 0) {
           await prisma.rental.update({
             where: { id: active.id },
-            data: { currentPeriodEnd: new Date(new Date(active.currentPeriodEnd).getTime() + downtimeMs), downtimeCreditDays: { increment: creditedDays } },
+            data: { currentPeriodEnd: new Date(new Date(active.currentPeriodEnd).getTime() + creditMs), downtimeCreditDays: { increment: creditedDays } },
           });
           if (lastRec) lastRec.creditedDays = creditedDays;
         }
