@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       linkedinName: true,
       linkedinUrl: true,
       status: true,
+      exitReason: true,
       restrictedAt: true,
       notes: true,
       twoFactorResetNeeded: true,
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
   const accounts = rows
     // Showcase/demo accounts are catalogue props, not real LinkedIn profiles.
     .filter((a) => !(a.notes || "").includes("[SHOWCASE]"))
+    .filter((a) => !(a.status === "unavailable" && a.exitReason))
     .filter((a) => a.gologinProfileId || a.loginEmail)
     .map((raw) => ({ ...raw, hasPassword: !!raw.accountPassword, accountPassword: undefined }))
     .map((a) => ({

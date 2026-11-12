@@ -1,7 +1,7 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const ts=require('typescript');
 function load(file,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,allowJs:true}}).outputText;new Function('require','exports',js)(n=>{if(!(n in deps))throw Error('Unexpected '+n);return deps[n];},exports);return exports;}
 for(const [label,fields,expected] of [
- ['unavailable listing',{status:'unavailable'},0],['construction',{status:'under_construction'},0],
+ ['unavailable listing',{status:'unavailable'},0],['construction',{status:'under_construction'},0],['returned to owner',{status:'unavailable',exitReason:'returned'},1],['access removed',{status:'unavailable',exitReason:'access_lost'},1],
  ['rented',{status:'rented'},1],['active shadow rental',{rentals:[{id:'shadow'}]},1],
  ['restricted',{restrictedAt:new Date()},1],
 ])test(`${label}: reconciliation ${expected?'stops':'preserves'} the live maturing plan`,async()=>{
