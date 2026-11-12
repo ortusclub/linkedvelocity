@@ -19,6 +19,7 @@ import { AutoRecharge } from "./auto-recharge";
 import { canShowRentalShareLink, isRentalBeingPrepared } from "@/lib/rental-dashboard-access";
 import { startDashboardTour } from "@/lib/dashboard-tour";
 import { canReplaceNow, replacementUnlockAt, REPLACEMENT_HOLD_MS } from "@/lib/replacement";
+import { cappedDowntimeMs } from "@/lib/downtime-credit";
 import {
   FIELD_LABEL, FIELD_MAX, MONTHS, experienceRange, isChangeValid, firstPlannedFrom, CHANGE_SPACING_DAYS,
   type ProfileChangeFieldKey, type ExperiencePayload,
@@ -1242,7 +1243,7 @@ function DashboardContent() {
   // Downtime credit accrued so far across restricted accounts (added to the rental on recovery).
   // Uses the same per-account expression as the row-level "X days credited" (max(1, ceil)) so the
   // banner total always equals the sum of the per-account figures shown below.
-  const downtimeCreditDays = currentRentals.reduce((t, r) => (r.linkedinAccount.restrictedAt ? t + Math.max(1, Math.ceil((nowTick - new Date(r.linkedinAccount.restrictedAt).getTime()) / 864e5)) : t), 0);
+  const downtimeCreditDays = currentRentals.reduce((t, r) => (r.linkedinAccount.restrictedAt ? t + Math.max(1, Math.ceil(cappedDowntimeMs(r.linkedinAccount.restrictedAt, r.currentPeriodEnd ?? null) / 864e5)) : t), 0);
   // Banked/applied downtime credit: days already pushed onto renewal dates (any cause — a
   // restriction recovery, a swap, or our own proxy/infra outage). Persisted per rental, so this
   // is the settled figure, distinct from the live "accruing" estimate above.
@@ -1829,7 +1830,7 @@ function DashboardContent() {
                 const eligible = R && (perm || canReplaceNow(acct.restrictedAt!));
                 const isWaiting = R && (rental.waitingForRecovery === true || waitingIds.has(rental.id));
                 const remH = R ? Math.max(0, Math.ceil((replacementUnlockAt(acct.restrictedAt!) - nowTick) / 3600000)) : 0;
-                const creditDays = R ? Math.max(1, Math.ceil((nowTick - new Date(acct.restrictedAt!).getTime()) / 3600000 / 24)) : 0;
+                const creditDays = R ? Math.max(1, Math.ceil(cappedDowntimeMs(acct.restrictedAt!, rental.currentPeriodEnd ?? null) / 864e5)) : 0;
                 const progress = R ? Math.min(100, Math.max(0, (nowTick - new Date(acct.restrictedAt!).getTime()) / REPLACEMENT_HOLD_MS * 100)) : 0;
                 // Recently recovered (active, not restricted/prepping): show the green "recovered" treatment.
                 // Only treat as "recovered" when days were actually credited — a sub-day

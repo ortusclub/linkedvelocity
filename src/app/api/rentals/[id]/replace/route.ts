@@ -6,7 +6,7 @@ import { requireAuth } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { monthlyRentalPrice } from "@/lib/account-pricing";
 import { canReplaceNow } from "@/lib/replacement";
-import { cappedDowntimeMs } from "@/lib/restriction";
+import { cappedDowntimeMs } from "@/lib/downtime-credit";
 import { grantRentalAccess, revokeRentalAccess } from "@/lib/rental-access";
 import { PUBLIC_AVAILABLE_WHERE } from "@/lib/public-inventory";
 
