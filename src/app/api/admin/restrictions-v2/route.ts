@@ -230,9 +230,12 @@ export async function GET(req: Request) {
       // onboarded) it stays "Onboarded" even while its status reads under_construction — a restricted
       // or post-recovery account gets dropped back into construction/warm-up, but it's past onboarding,
       // so the lifecycle chip should say so, not "Under construction" (which implies a build that never
-      // went live). Only an account with NO onboarded signal is Under construction.
-      const phase = retiredOrLost ? d.phase
-        : renterByAccount.has(a.id) ? PHASE.rented
+      // went live). This holds even once the account is lost/retired: a perma-restricted account that
+      // had paid its setup fee is an ONBOARDED (inventory) loss, not a pre-onboarded one — so an
+      // onboarded, paid account must never read "Under construction" just because its case closed lost.
+      // The only thing lost/retired suppresses is the live Rented chip, so a dead account with a
+      // lingering active rental doesn't read as Rented.
+      const phase = (renterByAccount.has(a.id) && !retiredOrLost) ? PHASE.rented
         : wasOnboarded ? PHASE.available
         : a.status === "unavailable" ? PHASE.under_construction
         : d.phase;
