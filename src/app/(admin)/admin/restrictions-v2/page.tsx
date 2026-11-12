@@ -50,12 +50,15 @@ const BAND_FG: Record<string, string> = { "Quick wins": "#0f7a3d", "Hard cases":
 const isOpenRow = (r: Row) => r.bucket !== "done" && r.bucket !== "lost";
 const stageOf = (r: Row): string | null => {
   if (!isOpenRow(r)) return null;
-  if (r.bucket === "linkedin") return "li";
+  // Key off the workflow STEP, not the triage bucket. An earlier step can carry the "linkedin"
+  // bucket too (e.g. an ID submitted at step 2 reads "Awaiting LinkedIn"), so checking the bucket
+  // first wrongly dumped ID cases into "LinkedIn decision". "LinkedIn decision" is only the appeal
+  // (step 3) once it's actually submitted and awaiting an answer.
   const c = r.wfCurrent;
   if (c === 2) return "id";
-  if (c === 3) return "appeal";
   if (c === 4) return "login";
   if (c === 5) return "handback";
+  if (c === 3) return r.bucket === "linkedin" ? "li" : "appeal";
   const s1 = r.wf.find((w) => w.n === 1);
   return s1 && s1.state === "wait" ? "qr" : "email";
 };
@@ -596,6 +599,7 @@ export default function RestrictionsV2Page() {
   // shows the cases behind the cell.
   const [mxPhase, setMxPhase] = useState<number | null>(null);
   const [mxStage, setMxStage] = useState<string | null>(null);
+  const [groupBy, setGroupBy] = useState<"none" | "band" | "stage" | "phase" | "poc" | "ref">("none");
 
   const reload = useCallback(() => {
     fetch("/api/admin/restrictions-v2").then((r) => r.json()).then((d) => { if (d.error) setError(d.error); else { setRows(d.rows); setNow(d.now); } }).catch((e) => setError(String(e)));
@@ -729,6 +733,25 @@ export default function RestrictionsV2Page() {
   const mxBands: Array<[string, number]> = [];
   for (const s of STAGES) { const l = mxBands[mxBands.length - 1]; if (l && l[0] === s.band) l[1]++; else mxBands.push([s.band, 1]); }
   const mxCount = (pb: number, st: string) => openCases.filter((r) => phaseBucket(r) === pb && stageOf(r) === st).length;
+  // Slice-2 worklist grouping: section the filtered list by band / stage / phase / PoC / referrer.
+  const BAND_ORDER = ["Quick wins", "Hard cases", "Waiting", "Wrap up", "Closed"];
+  const BAND_HINT: Record<string, string> = { "Quick wins": "email + QR · minutes each", "Hard cases": "ID / appeal", "Waiting": "LinkedIn is deciding", "Wrap up": "secure, then relist" };
+  const bandOf = (r: Row) => { const s = stageOf(r); return s ? (STAGES.find((x) => x.key === s)?.band ?? "Closed") : "Closed"; };
+  const stageLabelOf = (r: Row) => { const s = stageOf(r); if (!s) return "Closed"; const d = STAGES.find((x) => x.key === s)!; return `${d.lvl} · ${d.label}`; };
+  const STAGE_ORDER = [...STAGES.map((s) => `${s.lvl} · ${s.label}`), "Closed"];
+  const phaseLabelOf = (r: Row) => { const d = PHASE_ROWS.find((p) => p.pb === phaseBucket(r))!; return `${d.pr} · ${d.label}`; };
+  const groupKeyOf = (r: Row) => groupBy === "band" ? bandOf(r) : groupBy === "stage" ? stageLabelOf(r) : groupBy === "phase" ? phaseLabelOf(r) : groupBy === "poc" ? (r.poc || "No PoC") : (r.referrerName || "No referrer");
+  const groupOrder = (a: string, b: string) => {
+    if (groupBy === "band") return BAND_ORDER.indexOf(a) - BAND_ORDER.indexOf(b);
+    if (groupBy === "stage") return STAGE_ORDER.indexOf(a) - STAGE_ORDER.indexOf(b);
+    if (groupBy === "phase") return a.localeCompare(b);
+    const na = /^No /.test(a), nb = /^No /.test(b); if (na !== nb) return na ? 1 : -1; return a.localeCompare(b);
+  };
+  const grouped: Array<[string, Row[]]> | null = groupBy === "none" ? null : (() => {
+    const m = new Map<string, Row[]>();
+    for (const r of list) { const k = groupKeyOf(r); const arr = m.get(k); if (arr) arr.push(r); else m.set(k, [r]); }
+    return [...m.entries()].sort((x, y) => groupOrder(x[0], y[0]));
+  })();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -830,14 +853,31 @@ export default function RestrictionsV2Page() {
       {rows && (
         <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 14, overflowX: "auto" }}>
           <div style={{ minWidth: 1210 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderBottom: "1px solid #eef0f4", flexWrap: "wrap" }}>
+              <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Group by</span>
+              {([["none", "None"], ["band", "Band"], ["stage", "Stage"], ["phase", "Phase"], ["poc", "PoC"], ["ref", "Referrer"]] as const).map(([k, l]) => { const on = groupBy === k; return (
+                <button key={k} onClick={() => setGroupBy(k)} style={{ border: `1.5px solid ${on ? "#0b1220" : "#e3e6ec"}`, background: on ? "#0b1220" : "#fff", color: on ? "#fff" : "#334155", borderRadius: 999, padding: "4px 11px", font: `700 11.5px ${F_SANS}`, cursor: "pointer" }}>{l}</button>
+              ); })}
+              <span style={{ flex: 1 }} />
+              <span style={{ font: `600 11.5px ${F_SANS}`, color: "#8a93a3" }}>{list.length} shown</span>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: colTpl, gap: 14, padding: "11px 18px", borderBottom: "1px solid #eef0f4", font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>
               <span>Account</span>
               <span onClick={() => { setRestSort(restSort === "desc" ? "asc" : "desc"); setTouchSort(null); }} title="How long it's been restricted. Click to flip; longest-restricted first." style={{ cursor: "pointer", color: restSort ? "#334155" : "#8a93a3", userSelect: "none" }}>Restricted for {restSort === "asc" ? "▲" : restSort === "desc" ? "▼" : "⇅"}</span>
               <span onClick={() => { setTouchSort(touchDir === "asc" ? "desc" : "asc"); setRestSort(null); }} title="Most recent activity by the team. Click to flip; open tabs show stalest first." style={{ cursor: "pointer", color: touchSort || openTab ? "#334155" : "#8a93a3", userSelect: "none" }}>Last touch {touchDir === "asc" ? "▲" : touchDir === "desc" ? "▼" : "⇅"}</span>
-              <span>Times</span><span>Reason</span><span>Email · ID · Form · LinkedIn</span><span>Next step</span><span></span>
+              <span>Times</span><span>Reason</span><span>LinkedIn reply</span><span>Next step</span><span></span>
             </div>
             {!list.length && <div style={{ padding: "28px 18px", font: `500 13.5px ${F_SANS}`, color: "#8a93a3" }}>Nothing here.</div>}
-            {list.map((r) => {
+            {(grouped ?? [["", list] as [string, Row[]]]).map(([gLabel, gRows]) => (
+              <div key={gLabel || "_flat"}>
+                {gLabel && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 18px", background: "#f8f9fb", borderBottom: "1px solid #eef0f4" }}>
+                    <span style={{ font: `800 12.5px ${F_SANS}`, color: "#0b1220" }}>{gLabel}</span>
+                    <span style={{ font: `700 11.5px ${F_GRO}`, color: "#5b6779" }}>{gRows.length}</span>
+                    {groupBy === "band" && BAND_HINT[gLabel] && <span style={{ font: `500 11.5px ${F_SANS}`, color: "#8a93a3" }}>· {BAND_HINT[gLabel]}</span>}
+                  </div>
+                )}
+                {gRows.map((r) => {
               const isOpen = !!open[r.id];
               // Badge shows the DERIVED phase (label + pr), consistent with the phase chips, so a
               // restricted rented account reads "P1 · Rented" not "P1 · unavailable". Color keys off pr.
@@ -889,13 +929,20 @@ export default function RestrictionsV2Page() {
                       <span style={{ font: `600 13px ${F_SANS}`, color: "#0b1220" }}>{r.reason}</span>
                       <span style={{ font: `500 11px ${MONO}`, color: r.lastErr ? "#b91c1c" : "#b4bccb", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.lastErr || "—"}</span>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 4 }}>
-                      {r.chain.map((c, i) => (
-                        <div key={i} title={c.tip} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                          <div style={{ height: 5, borderRadius: 999, background: OC[c.outcome][0] }} />
-                          <span style={{ font: `700 10.5px ${F_SANS}`, color: OC[c.outcome][2], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
-                        </div>
-                      ))}
+                    <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                      {(() => {
+                        const m = r.emails[r.emails.length - 1];
+                        if (!m) return <span style={{ font: `500 12px ${F_SANS}`, color: "#b4bccb" }}>—</span>;
+                        const sev = MAIL_SEV[m.severity] || MAIL_SEV.review;
+                        return (<>
+                          <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                            {r.newReply && <span title="New LinkedIn reply to handle" style={{ font: `700 9px ${F_SANS}`, padding: "1px 6px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8" }}>NEW</span>}
+                            <span style={{ font: `700 9.5px ${F_SANS}`, padding: "1px 7px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
+                          </span>
+                          <span style={{ font: `600 12px ${F_SANS}`, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
+                          <span style={{ font: `500 10.5px ${F_SANS}`, color: "#8a93a3" }}>{rel(m.at, now)}</span>
+                        </>);
+                      })()}
                     </div>
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                       <span style={{ font: `700 12.5px ${F_SANS}`, color: r.lostOutcome ? LOST[r.lostOutcome][2] : r.urgent ? "#b91c1c" : r.resolvedAt ? "#0f7a3d" : "#334155" }}>{r.next}</span>
@@ -909,6 +956,8 @@ export default function RestrictionsV2Page() {
                 </div>
               );
             })}
+              </div>
+            ))}
           </div>
         </div>
       )}
