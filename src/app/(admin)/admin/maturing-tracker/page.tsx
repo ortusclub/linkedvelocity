@@ -11,8 +11,8 @@ const G = grotesk.style.fontFamily;
 
 type Bucket = { key: string; name: string; inv: number; mat: number; relogin: number; fail: number; ne: number };
 type Fact = { l: string; v: string };
-type Review = { id: string; kind: string; label: string; email: string; name: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: Fact[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
-type MatRow = { id: string; email: string; name: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
+type Review = { id: string; kind: string; label: string; email: string; name: string; url: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: Fact[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
+type MatRow = { id: string; email: string; name: string; url: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
 type Data = { updatedAt: string; kpis: { eligible: number; maturing: number; maturingPct: number; needsReview: number; restricted: number }; buckets: Bucket[]; review: Review[]; rows: MatRow[] };
 type HealthRow = { email: string; state: "sending" | "starting" | "attention"; line: string };
 type Health = { checkedAt: string; summary: { sending: number; starting: number; attention: number; queued: number; accounts: number }; rows: HealthRow[] };
@@ -118,6 +118,8 @@ export default function MaturingTrackerPage() {
   }, [data]);
 
   const btn = (extra: React.CSSProperties = {}): React.CSSProperties => ({ border: `1px solid ${C.border}`, background: "#fff", color: C.ink, borderRadius: 8, padding: "6px 10px", font: `700 12px ${F}`, cursor: "pointer", whiteSpace: "nowrap", ...extra });
+  // Click-through to the LinkedIn profile (new tab) so you can eyeball whether it's restricted.
+  const liBadge: React.CSSProperties = { flex: "none", font: `700 10.5px ${F}`, color: "#0a66c2", textDecoration: "none", background: "#eaf1ff", border: "1px solid #cfe0f5", borderRadius: 6, padding: "1px 7px", whiteSpace: "nowrap" };
 
   return (
     <main className={jakarta.className} style={{ minHeight: "100vh", background: C.bg, padding: "28px 20px 80px" }}>
@@ -264,7 +266,7 @@ export default function MaturingTrackerPage() {
                       <span><span style={{ font: `700 11.5px ${F}`, padding: "3px 10px", borderRadius: 999, background: rc.bg, color: rc.fg, whiteSpace: "nowrap" }}>{r.label}</span></span>
                       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                         <Link href={`/admin/accounts/${r.id}`} style={{ font: `700 13.5px ${F}`, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email || r.name}</Link>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><span style={{ font: `500 12px ${F}`, color: C.mut }}>{r.name}</span><span style={{ font: `700 10.5px ${F}`, color: "#334155", background: C.bg, borderRadius: 6, padding: "1px 7px" }}>{r.bucket}</span></div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><span style={{ font: `500 12px ${F}`, color: C.mut }}>{r.name}</span><span style={{ font: `700 10.5px ${F}`, color: "#334155", background: C.bg, borderRadius: 6, padding: "1px 7px" }}>{r.bucket}</span>{r.url && <a href={r.url} target="_blank" rel="noopener noreferrer" title="Open the LinkedIn profile in a new tab to check if it's restricted" style={liBadge}>↗ LinkedIn</a>}</div>
                       </div>
                       <span><span style={{ font: `600 11.5px ${F}`, padding: "3px 9px", borderRadius: 999, background: "#f1f5f9", color: "#334155", whiteSpace: "nowrap" }}>{r.status}</span></span>
                       <span style={{ font: `600 14px ${G}`, color: C.ink }}>{r.conns ?? "—"}</span>
@@ -309,6 +311,7 @@ export default function MaturingTrackerPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                             <Link href={`/admin/accounts/${a.id}`} style={{ font: `600 13.5px ${F}`, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.email || a.name}</Link>
                             {a.re && <span style={{ flex: "none", font: `700 10.5px ${F}`, color: "#0f7a3d", background: "#e7f7ee", borderRadius: 999, padding: "1px 8px" }}>Re-maturing</span>}
+                            {a.url && <a href={a.url} target="_blank" rel="noopener noreferrer" title="Open the LinkedIn profile in a new tab to check if it's restricted" style={liBadge}>↗ LinkedIn</a>}
                           </div>
                           <span style={{ font: `500 12px ${F}`, color: C.faint }}>{a.name}</span>
                         </div>

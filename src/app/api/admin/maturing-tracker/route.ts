@@ -66,8 +66,8 @@ export async function GET() {
       pipeline: { key: "pipeline", name: BUCKET_NAME.pipeline, inv: 0, mat: 0, relogin: 0, fail: 0, ne: 0 },
     };
 
-    type Review = { id: string; kind: string; label: string; email: string; name: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: { l: string; v: string }[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
-    type MatRow = { id: string; email: string; name: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
+    type Review = { id: string; kind: string; label: string; email: string; name: string; url: string; bucket: string; status: string; conns: number | null; detail: string; sub: string; facts: { l: string; v: string }[]; since: string; sinceDays: number; canRecheck: boolean; canRestrict: boolean; isFlag: boolean };
+    type MatRow = { id: string; email: string; name: string; url: string; bucket: string; status: string; conns: number | null; day: number; started: string; re: boolean; flagKind: string | null; flagLabel: string | null };
     const review: Review[] = [];
     const rows: MatRow[] = [];
     const notEnrolled: { a: (typeof accountsRaw)[number]; bucketKey: string; pipeline: boolean; app: { verifiedAt?: Date | null } | null }[] = [];
@@ -97,7 +97,7 @@ export async function GET() {
       b.inv++;
       const bucketName = BUCKET_NAME[bucketKey];
       const re = lastEvent(a.restrictionLog) === "recovered";
-      const base = { id: a.id, email: a.loginEmail || "", name: a.linkedinName || "", bucket: bucketName, status: a.status, conns: a.connectionCount };
+      const base = { id: a.id, email: a.loginEmail || "", name: a.linkedinName || "", url: validUrl(a.linkedinUrl) ? a.linkedinUrl! : "", bucket: bucketName, status: a.status, conns: a.connectionCount };
       const flag = (a.maturingFlag as Flag) || null;
       const flagKind = flag?.kind && FLAG_LABEL[flag.kind] ? flag.kind : null;
 
@@ -135,7 +135,7 @@ export async function GET() {
       const detail = !validUrl(a.linkedinUrl)
         ? "No valid LinkedIn URL on the account — add it in Inventory so maturing can start."
         : "Queued for auto-start. The system switches on a few accounts at a time, so this is just waiting its turn — nothing is wrong with it.";
-      review.push({ id: a.id, kind: "not-enrolled", label: "Not enrolled", email: a.loginEmail || "", name: a.linkedinName || "", bucket: BUCKET_NAME[e.bucketKey], status: a.status, conns: a.connectionCount, detail, sub: "", facts, since: "", sinceDays: 0, canRecheck: false, canRestrict: false, isFlag: false });
+      review.push({ id: a.id, kind: "not-enrolled", label: "Not enrolled", email: a.loginEmail || "", name: a.linkedinName || "", url: validUrl(a.linkedinUrl) ? a.linkedinUrl! : "", bucket: BUCKET_NAME[e.bucketKey], status: a.status, conns: a.connectionCount, detail, sub: "", facts, since: "", sinceDays: 0, canRecheck: false, canRestrict: false, isFlag: false });
     });
 
     const reviewOrder = (k: string) => (k.startsWith("flag:") ? 0 : k === "relogin" ? 1 : k === "start-failed" ? 2 : 3);
