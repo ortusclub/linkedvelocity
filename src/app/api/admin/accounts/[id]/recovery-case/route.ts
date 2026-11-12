@@ -82,12 +82,12 @@ async function closeFinal(id: string, stored: StoredCase, relist: boolean) {
     if (downtimeMs > 0) {
       const active = await prisma.rental.findFirst({
         where: { linkedinAccountId: id, status: { in: ["active", "pending_access"] } },
-        select: { id: true, currentPeriodEnd: true },
+        select: { id: true, currentPeriodEnd: true, startDate: true },
       });
       if (active?.currentPeriodEnd) {
         // Cap at (30d − days active this cycle) so a long restriction can't extend the renewal
         // date indefinitely (see cappedDowntimeMs; mirrors the recover + replace flows).
-        const creditMs = cappedDowntimeMs(new Date(startMs), active.currentPeriodEnd);
+        const creditMs = cappedDowntimeMs(new Date(startMs), active.startDate);
         const creditedDays = Math.round(creditMs / 86400000);
         if (creditedDays > 0) {
           await prisma.rental.update({

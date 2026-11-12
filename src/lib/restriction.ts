@@ -134,7 +134,7 @@ export async function restrictionUpdate(
     // Cap the credit at (30d − days active this cycle) so a long restriction can't extend the
     // renewal date indefinitely (see cappedDowntimeMs).
     const creditMs = active?.currentPeriodEnd
-      ? cappedDowntimeMs(account.restrictedAt, active.currentPeriodEnd)
+      ? cappedDowntimeMs(account.restrictedAt, active.startDate)
       : 0;
     if (active?.currentPeriodEnd && creditMs > 0) {
       const extended = new Date(new Date(active.currentPeriodEnd).getTime() + creditMs);
