@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
 import { list, start, engine } from "@/lib/maturing/service.mjs";
 import { categoryResolver, programStages, programLabel } from "@/lib/maturing/programs.mjs";
-import { newMaturePlan } from "@/lib/maturing/shared/mature-profile-plan.mjs";
+import { autoMaturePlan } from "@/lib/maturing/replan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -20,23 +20,6 @@ export const maxDuration = 180;
 // past onboarding (owner directive: mature everything that isn't rented).
 const DISQUALIFYING_APP_STATUS = new Set(["rejected", "unreachable"]);
 const norm = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
-
-function autoMaturePlan(gid: string, name: string, linkedinUrl: string | null, recovered: boolean, category: string, connections: number | null) {
-  const p = newMaturePlan() as Record<string, unknown>;
-  const stages = programStages(category, recovered, connections) as { warmDaily: number; coldDaily: number }[];
-  // Enable each channel only if the chosen ramp actually uses it — a 0-connection
-  // pre-payout account runs cold-only, so warm must be off (the plan rejects a warm
-  // campaign with nothing scheduled on day one).
-  p.warmEnabled = stages.some((s) => s.warmDaily > 0);
-  p.coldEnabled = stages.some((s) => s.coldDaily > 0);
-  p.warmPool = "linkedvelocity_owned";
-  p.coldPoolSource = "default"; // the shared default cold sheet (DEFAULT_MATURE_COLD_SHEET_URL)
-  p.warmUntilExhausted = false; // warm runs its fixed stages, then cold carries on
-  p.stages = stages;
-  p.targetProfileIds = [gid];
-  p.accounts = { [gid]: { name, linkedinUrl } };
-  return p;
-}
 
 export async function POST(req: NextRequest) {
   if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
