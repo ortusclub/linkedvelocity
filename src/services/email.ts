@@ -300,8 +300,8 @@ export async function sendRentalOnboardingEmail(email: string, accountName: stri
       </div>
 
       <div style="background:#F7F7F4;border:1px solid #E8E6E1;border-radius:12px;padding:18px 20px;margin-bottom:14px;">
-        <p style="margin:0 0 4px;font-weight:700;font-size:15px;">Step 2 — We get it ready (within 24 hours)</p>
-        <p style="margin:0;font-size:14px;color:#374151;line-height:1.6;">Our team prepares and verifies the account, then shares the profile to your GoLogin. Sharing can take a few minutes to appear after we send it.</p>
+        <p style="margin:0 0 4px;font-weight:700;font-size:15px;">Step 2 — We share it to you</p>
+        <p style="margin:0;font-size:14px;color:#374151;line-height:1.6;">As soon as you're signed in to GoLogin, we share the profile to you — usually within minutes. What can take longer is anything custom: profile edits, sign-in credentials, or adding Sales Navigator. We'll keep you posted on those.</p>
       </div>
 
       <div style="background:#F7F7F4;border:1px solid #E8E6E1;border-radius:12px;padding:18px 20px;margin-bottom:24px;">
