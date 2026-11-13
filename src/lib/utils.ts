@@ -20,6 +20,20 @@ export function formatName(name: string | null | undefined): string {
   ).join(" ");
 }
 
+// Renter-facing display name: tidy the casing (via formatName) AND drop middle initials so
+// long names fit in email tables. "Marian V. Araos" → "Marian Araos"; "AIRA FEJ ENCINARES" →
+// "Aira Fej Encinares" (FEJ isn't an initial, so it stays). Only single-letter middle tokens
+// (optionally with a trailing dot) are removed; the first and last word are always kept.
+export function formatNameShort(name: string | null | undefined): string {
+  const tidy = formatName(name);
+  if (!tidy) return "";
+  const words = tidy.split(/\s+/);
+  if (words.length <= 2) return tidy;
+  const isInitial = (w: string) => /^[A-Za-z]\.?$/.test(w);
+  const kept = words.filter((w, i) => i === 0 || i === words.length - 1 || !isInitial(w));
+  return kept.join(" ");
+}
+
 // Sales Navigator add-on: a flat +$70/mo layered on top of an account's base rate.
 // Matches the catalogue banner ("add +$70/mo"). When a renter selects it, billing
 // charges base + this amount and stores it as the rental's lockedPrice, so every

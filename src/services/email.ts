@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { type Currency, CURRENCY_CONFIG, formatMoney } from "@/lib/referral-currency";
 import { monthlyDueDate } from "@/lib/payment-schedule";
+import { formatNameShort } from "@/lib/utils";
 
 let _resend: Resend | null = null;
 function getResend(): Resend {
@@ -286,6 +287,7 @@ export async function sendAccountMailAlert(opts: {
 // after vetting + freeing the account internally — so this email is about what to
 // do NOW (set up GoLogin) and what to expect, not "you're live yet".
 export async function sendRentalOnboardingEmail(email: string, accountName: string) {
+  accountName = formatNameShort(accountName);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
   return sendEmail({
     to: email,
@@ -321,6 +323,7 @@ export async function sendRentalOnboardingEmail(email: string, accountName: stri
 // per-account emails that Gmail threads / Resend rate-limits).
 export async function sendRentalReadyEmail(email: string, accounts: { name: string; ready: boolean }[]) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
+  accounts = accounts.map((a) => ({ ...a, name: formatNameShort(a.name) }));
   const count = accounts.length;
   const headline = count === 1
     ? `You're live — <strong>${accounts[0].name}</strong> is ready to use.`
@@ -348,6 +351,7 @@ export async function sendRentalReadyEmail(email: string, accounts: { name: stri
 }
 
 export async function sendAccessReadyEmail(email: string, accountName: string) {
+  accountName = formatNameShort(accountName);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
   return sendEmail({
     to: email,
@@ -440,7 +444,7 @@ export async function sendRenewalWinBack(
   email: string, firstName: string, renewUrl: string, amount: string, accountName?: string, releaseDate?: string
 ) {
   const hi = firstName ? `Hi ${firstName},` : "Hi there,";
-  const acct = accountName ? `<strong>${accountName}</strong>` : "your account";
+  const acct = accountName ? `<strong>${formatNameShort(accountName)}</strong>` : "your account";
   const deadline = releaseDate
     ? `We're about to <strong>release ${acct} to other renters on ${releaseDate}</strong>. This is your last chance to keep it.`
     : `Your rental lapsed — but everything's intact and waiting for you.`;
@@ -463,6 +467,7 @@ export async function sendRenewalReminder(
   daysUntilExpiry: number,
   autoRenew: boolean
 ) {
+  accountName = formatNameShort(accountName);
   const urgency =
     daysUntilExpiry <= 1 ? "Final Warning" : daysUntilExpiry <= 3 ? "Reminder" : "Upcoming Renewal";
 
@@ -489,7 +494,7 @@ export async function sendRenewalReminder(
 }
 
 export async function sendRenewalConfirmation(email: string, accounts?: string | string[]) {
-  const list = accounts ? (Array.isArray(accounts) ? accounts : [accounts]) : [];
+  const list = (accounts ? (Array.isArray(accounts) ? accounts : [accounts]) : []).map(formatNameShort);
   const what = list.length === 1
     ? `Your rental of <strong>${list[0]}</strong> has been renewed`
     : list.length > 1
@@ -554,7 +559,7 @@ export async function sendRenewalHeadsUpBatch(
   const rows = items
     .map(
       (i) => `<tr>
-        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${i.account}</td>
+        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${formatNameShort(i.account)}</td>
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:13px;color:#536471;">renews ${i.date}</td>
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;text-align:right;font-weight:600;">${i.amount}</td>
       </tr>`
@@ -606,14 +611,14 @@ export async function sendBillingPausedEmail(
     : "An account you rent was restricted";
 
   const intro = opts.trigger === "renewal_off"
-    ? `You've turned off renewal for <strong>${opts.highlightAccount}</strong>. It stays active until the date shown below, then returns to LinkedVelocity's control, and you won't be charged for it again.`
-    : `<strong>${opts.highlightAccount}</strong> was restricted by LinkedIn. We've paused its billing while we work to recover it, so you're not charged while it's down. If it's still restricted after 2 days, you can swap it for an equivalent account from your dashboard.`;
+    ? `You've turned off renewal for <strong>${formatNameShort(opts.highlightAccount)}</strong>. It stays active until the date shown below, then returns to LinkedVelocity's control, and you won't be charged for it again.`
+    : `<strong>${formatNameShort(opts.highlightAccount)}</strong> was restricted by LinkedIn. We've paused its billing while we work to recover it, so you're not charged while it's down. If it's still restricted after 2 days, you can swap it for an equivalent account from your dashboard.`;
 
   const notRenewingTable = opts.notRenewing.length ? `
     <p style="font-size:13px;font-weight:700;color:#0F1419;margin:22px 0 6px;">Accounts not renewing (returning to LinkedVelocity)</p>
     <table style="width:100%;border-collapse:collapse;margin:0 0 8px;">
       <tbody>${opts.notRenewing.map((i) => `<tr>
-        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${i.name}</td>
+        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${formatNameShort(i.name)}</td>
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:13px;color:#536471;">active until ${i.endDate}</td>
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:13px;color:#536471;text-align:right;">returns ${i.returnDate}</td>
       </tr>`).join("")}</tbody>
@@ -623,7 +628,7 @@ export async function sendBillingPausedEmail(
     <p style="font-size:13px;font-weight:700;color:#0F1419;margin:22px 0 6px;">Accounts temporarily paused (being recovered)</p>
     <table style="width:100%;border-collapse:collapse;margin:0 0 8px;">
       <tbody>${opts.restricted.map((i) => `<tr>
-        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${i.name}</td>
+        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${formatNameShort(i.name)}</td>
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:13px;color:#536471;">restricted ${i.restrictedDate}, not charged while down</td>
       </tr>`).join("")}</tbody>
     </table>` : "";
@@ -783,7 +788,7 @@ export async function sendAccessRevokedEmail(
   email: string, firstName: string, payUrl: string, releaseDate?: string, accountName?: string
 ) {
   const hi = firstName ? `Hi ${firstName},` : "Hi there,";
-  const acct = accountName ? `<strong>${accountName}</strong>` : "your rented account";
+  const acct = accountName ? `<strong>${formatNameShort(accountName)}</strong>` : "your rented account";
   // If we're holding the profile for a reclaim window, make that crystal clear.
   const reclaim = releaseDate
     ? `<p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 16px;">Good news — we're <strong>holding ${acct} for you</strong>. Re-activate before <strong>${releaseDate}</strong> and you'll pick up the <strong>same account</strong> exactly where you left off, campaigns and all. After that date it'll be released and available for anyone to rent.</p>`
@@ -807,7 +812,7 @@ export async function sendAccessRevokedEmail(
 // to it has been removed. Plain, no celebratory opener.
 export async function sendShadowYieldEmail(email: string, accountName: string, due: Date, credit: number) {
   if (!process.env.RESEND_API_KEY) throw new Error("Email delivery is not configured");
-  const acct = accountName.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const acct = formatNameShort(accountName).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
   const deadline = due.toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }) + " UTC";
   return sendEmail({
     to: email,
@@ -905,7 +910,7 @@ export async function sendReferralPayoutEmail(email: string, fullName: string, a
 type AcctItem = { account: string; date?: string; amount?: string };
 function acctRows(items: AcctItem[]) {
   return items.map((i) => `<tr>
-        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${i.account}</td>${i.date ? `
+        <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;">${formatNameShort(i.account)}</td>${i.date ? `
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:13px;color:#536471;">${i.date}</td>` : ""}${i.amount ? `
         <td style="padding:9px 12px;border-top:1px solid #eef0f2;font-size:14px;color:#0F1419;text-align:right;font-weight:600;">${i.amount}</td>` : ""}
       </tr>`).join("");
