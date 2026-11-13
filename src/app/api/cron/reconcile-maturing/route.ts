@@ -94,6 +94,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Pipeline accounts whose application was marked rejected or unreachable are no longer
+  // being onboarded, so they must not keep maturing. Auto-start already refuses to START
+  // them, but a campaign started while they were Level 4 kept running (or was revived)
+  // after the status changed. Resolve each account to its application the same way
+  // auto-start does: onboarding session first, then a unique LinkedIn URL, then owner email.
+  const DISQUALIFYING_APP_STATUS = new Set(["rejected", "unreachable"]);
+  const normUrl = (u?: string | null) => (u || "").split("?")[0].replace(/\/+$/, "").toLowerCase().trim();
+  const apps = await prisma.ambassadorApplication.findMany({ select: { id: true, status: true, linkedinUrl: true, email: true } });
+  const appStatus = new Map<string, string>();
+  const appsByUrl = new Map<string, string[]>();
+  const appsByEmail = new Map<string, string[]>();
+  for (const ap of apps) {
+    appStatus.set(ap.id, ap.status);
+    const u = normUrl(ap.linkedinUrl);
+    if (u) appsByUrl.set(u, [...(appsByUrl.get(u) || []), ap.status]);
+    const em = (ap.email || "").toLowerCase().trim();
+    if (em) appsByEmail.set(em, [...(appsByEmail.get(em) || []), ap.status]);
+  }
+  const sessionApp = new Map<string, string>();
+  for (const s of await prisma.selfServiceOnboarding.findMany({ select: { accountId: true, applicationId: true } })) {
+    if (s.accountId && s.applicationId) sessionApp.set(s.accountId, s.applicationId);
+  }
+  const allDisqualified = (statuses?: string[]) => !!statuses && statuses.length > 0 && statuses.every((st) => DISQUALIFYING_APP_STATUS.has(st));
+  const applicationDropped = (a: { id: string; linkedinUrl: string | null; notes: string | null }): boolean => {
+    const sid = sessionApp.get(a.id);
+    if (sid && appStatus.has(sid)) return DISQUALIFYING_APP_STATUS.has(appStatus.get(sid)!);
+    const byUrl = appsByUrl.get(normUrl(a.linkedinUrl));
+    if (byUrl && byUrl.length === 1) return allDisqualified(byUrl);
+    const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
+    return ownerEmail ? allDisqualified(appsByEmail.get(ownerEmail)) : false;
+  };
+
   const accounts = await prisma.linkedInAccount.findMany({
     where: { gologinProfileId: { not: null }, status: { not: "removed" } },
     select: {
@@ -130,17 +162,23 @@ export async function POST(req: NextRequest) {
       (a.status === "unavailable" && !!a.exitReason) ||
       // Campaign pool = our own LinkedArmy outreach personas, run by hand. If the engine
       // ever has a live warm-up/maturing campaign on one, stop it — we don't auto-warm these.
-      a.inventoryPool === "campaign";
+      a.inventoryPool === "campaign" ||
+      // Application rejected / unreachable — no longer onboarding, stop maturing.
+      applicationDropped(a);
 
     if (blocked) {
-      if (entry && entry.ids.length) {
+      // Include campaigns parked on a login/identity review (needs_review): they are not
+      // terminal, so left alone they show as "not sending" forever and can be resumed.
+      const liveIds = [...(entry?.ids || []), ...(stall?.ids || [])];
+      if (liveIds.length) {
         // Best-effort stop of every live campaign on this profile. Once stopped the
         // campaign goes terminal and drops out of byProfile, so this won't repeat.
-        for (const id of entry.ids) { try { await control(id, "stop"); } catch { /* retried next run */ } }
+        for (const id of liveIds) { try { await control(id, "stop"); } catch { /* retried next run */ } }
         const reason =
           a.status === "rented" || a.rentals.length > 0 ? "account rented"
           : a.restrictedAt || a.permanentlyRestricted ? "account restricted"
           : a.inventoryPool === "campaign" ? "campaign pool (manual outreach)"
+          : applicationDropped(a) ? "application rejected / unreachable"
           : `account ${a.status}`;
         await logWarmupActivity(a.id, a.linkedinUrl, a.notes, `Maturing stopped (auto) — ${reason}`, "system").catch(() => {});
         stopped++;
