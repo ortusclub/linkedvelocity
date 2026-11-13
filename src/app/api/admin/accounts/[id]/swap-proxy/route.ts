@@ -8,16 +8,27 @@ import { swapNonRentedProxy } from "@/lib/fix-account-proxy";
 // if the account is currently rented — that path belongs to the renter's own "fix my proxy".
 // No body. Returns the new proxy host:port and how many candidates it tried on success.
 //
-// Auth: an admin session OR the shared CRON_SECRET bearer, so support tooling (a script run
-// by an ambassador-support assistant) can trigger it without the GoLogin/DB creds — those stay
-// server-side. The verify+retry loop makes several live probes, hence the extended duration.
+// Auth: an admin session OR a bearer key, so support tooling (a script run by an
+// ambassador-support assistant) can trigger it without the GoLogin/DB creds — those stay
+// server-side. Two keys are accepted: PROXY_SWAP_KEY, a key scoped to JUST this endpoint that
+// can be handed to support and revoked on its own, and CRON_SECRET as a fallback. Each is only
+// honoured when actually set, so an unset env var can never match a "Bearer undefined" header.
+// The verify+retry loop makes several live probes, hence the extended duration.
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+function hasValidKey(req: NextRequest): boolean {
+  const auth = req.headers.get("authorization");
+  if (!auth) return false;
+  for (const secret of [process.env.PROXY_SWAP_KEY, process.env.CRON_SECRET]) {
+    if (secret && auth === `Bearer ${secret}`) return true;
+  }
+  return false;
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const bearer = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
-    if (!bearer) await requireAdmin();
+    if (!hasValidKey(req)) await requireAdmin();
     const { id } = await params;
     const result = await swapNonRentedProxy(id);
 
