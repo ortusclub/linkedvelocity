@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import * as gologin from "@/services/gologin";
 import { pickAvailableProxy } from "@/lib/proxy-select";
-import { testProxy } from "@/lib/proxy-verify";
+import { testProxy, probeProxyLinkedIn } from "@/lib/proxy-verify";
 
 // Mid-rental proxy swap for a RENTED account — the one thing provisionAccount deliberately
 // refuses to do (it bails on status === "rented"). Safe because swapping a proxy is a PATCH
@@ -89,6 +89,110 @@ export async function assignProxyToAccount(accountId: string): Promise<FixResult
   });
 
   return { outcome: "swapped", newProxyHost: next.host, newProxyPort: next.port };
+}
+
+// Self-serve proxy swap for a NON-RENTED account — the ops-side swap that ambassadors
+// support (Gigi) can run on any account that isn't currently rented, without escalating.
+// It differs from assignProxyToAccount in three ways that matter for self-serve:
+//
+//   1. Rented guard. It refuses outright if the account has a live rental (active /
+//      pending_access / payment_failed, shadow included). A rented account's proxy is
+//      only ever swapped through the renter's own "fix my proxy" flow, never here.
+//   2. Picks by PERSONA country first (acct.location), not the proxy label. Picking by the
+//      label is how a US account drifts onto a PH IP — the label can already be wrong.
+//   3. Real verification + retry. Each candidate must return an actual egress IP (an open
+//      port alone is not enough) AND have LinkedIn answer through it. If a candidate fails,
+//      it tries the next one, up to MAX_SWAP_ATTEMPTS, so one bad proxy doesn't dead-end
+//      the way the old one-retry guide did. On total failure it restores the original proxy.
+//
+// Only touches the GoLogin profile's proxy subresource and the DB proxy columns — profile
+// id/name (and any share link) are untouched. Picks from our pool only; never buys.
+const LIVE_RENTAL_STATUSES = ["active", "pending_access", "payment_failed"] as const;
+const MAX_SWAP_ATTEMPTS = 5;
+
+export type SwapOutcome = FixOutcome | "rented";
+export type SwapResult = {
+  outcome: SwapOutcome;
+  newProxyHost?: string;
+  newProxyPort?: number;
+  tried?: number;
+};
+
+export async function swapNonRentedProxy(accountId: string): Promise<SwapResult> {
+  const acct = await prisma.linkedInAccount.findUnique({ where: { id: accountId } });
+  if (!acct) throw new Error("Account not found");
+
+  // Guard: never swap a rented/live account here. The renter's own flow owns that.
+  const liveRentals = await prisma.rental.count({
+    where: { linkedinAccountId: accountId, status: { in: [...LIVE_RENTAL_STATUSES] } },
+  });
+  if (liveRentals > 0) return { outcome: "rented" };
+
+  if (!acct.gologinProfileId) return { outcome: "no_proxy" };
+  const profileId = acct.gologinProfileId;
+  const token = gologin.tokenForAccount(acct.gologinAccount);
+  const old = {
+    host: acct.proxyHost,
+    port: acct.proxyPort,
+    username: acct.proxyUsername,
+    password: acct.proxyPassword,
+  };
+
+  // Persona country first (see note above), falling back to the label only if unset.
+  const country = acct.location || acct.proxyLocation;
+
+  const exclude = new Set<string>();
+  if (old.host && old.port) exclude.add(`${old.host}:${old.port}`);
+
+  let lastOutcome: SwapOutcome = "no_proxy";
+  let profileHoldsOld = true; // the profile still carries the original proxy (or none)
+
+  for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+    const picked = await pickAvailableProxy({ provider: "", type: "", country, exclude });
+    if (!picked || !picked.username || !picked.password) break; // pool exhausted for this geo
+    const next = { host: picked.host, port: picked.port, username: picked.username, password: picked.password };
+    exclude.add(`${next.host}:${next.port}`); // never retry the same candidate
+
+    await gologin.updateProxy(profileId, next, token);
+    profileHoldsOld = false;
+
+    // Real check: an open port alone ("port" method) is not proof the proxy serves traffic,
+    // and a proxy that can't reach LinkedIn is no use to us — require both.
+    const probe = testProxy(next);
+    const li = probeProxyLinkedIn(next);
+    const trulyAlive = probe.ok && probe.method !== "port";
+    if (trulyAlive && li.reachable) {
+      await prisma.linkedInAccount.update({
+        where: { id: acct.id },
+        data: {
+          proxyHost: next.host,
+          proxyPort: next.port,
+          proxyUsername: next.username,
+          proxyPassword: next.password,
+          proxyLocation: picked.country ?? acct.proxyLocation,
+        },
+      });
+      return { outcome: "swapped", newProxyHost: next.host, newProxyPort: next.port, tried: attempt + 1 };
+    }
+    lastOutcome = "verify_failed";
+    // else: leave the bad proxy on the profile; the next attempt overwrites it.
+  }
+
+  // Exhausted candidates (or none free). Restore the original proxy so the account is left
+  // exactly as we found it, and leave the DB untouched.
+  if (!profileHoldsOld && old.host && old.port) {
+    try {
+      await gologin.updateProxy(profileId, {
+        host: old.host,
+        port: old.port,
+        username: old.username ?? undefined,
+        password: old.password ?? undefined,
+      }, token);
+    } catch (e) {
+      console.error("swapNonRentedProxy: restore old proxy failed", accountId, e instanceof Error ? e.message : e);
+    }
+  }
+  return { outcome: lastOutcome };
 }
 
 export async function fixAccountProxy(rentalId: string): Promise<FixResult> {
