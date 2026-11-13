@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { swapNonRentedProxy } from "@/lib/fix-account-proxy";
 
@@ -7,9 +7,17 @@ import { swapNonRentedProxy } from "@/lib/fix-account-proxy";
 // and retries through several candidates so one bad proxy doesn't dead-end. Refuses outright
 // if the account is currently rented — that path belongs to the renter's own "fix my proxy".
 // No body. Returns the new proxy host:port and how many candidates it tried on success.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+//
+// Auth: an admin session OR the shared CRON_SECRET bearer, so support tooling (a script run
+// by an ambassador-support assistant) can trigger it without the GoLogin/DB creds — those stay
+// server-side. The verify+retry loop makes several live probes, hence the extended duration.
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin();
+    const bearer = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+    if (!bearer) await requireAdmin();
     const { id } = await params;
     const result = await swapNonRentedProxy(id);
 
