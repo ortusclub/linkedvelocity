@@ -8,6 +8,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/bench-leaked-accounts",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/detect-deposits",
       "schedule": "* * * * *"
     },
