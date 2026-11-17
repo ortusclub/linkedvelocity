@@ -165,6 +165,26 @@ export async function POST(req: NextRequest) {
     return !a.maturingStartFailedAt || Date.now() - a.maturingStartFailedAt.getTime() >= STARTFAIL_COOLDOWN_MS;
   }
 
+  // Release cool-down — a just-returned rental account must REST before maturing. When a
+  // rental ends the account drops to under_construction, which is maturing-eligible, so
+  // without this it gets thrown into a warm-up campaign within minutes of hand-back (seen
+  // 2026-11-14: 3 PP accounts enrolled ~16 min after release). Freshly-returned accounts —
+  // especially renters' whose downstream usage burns them — restrict easily in the first
+  // days, so hold any account whose MOST RECENT rental access was revoked inside the window.
+  // Default 14 days; MATURING_RELEASE_COOLDOWN_DAYS overrides (0 disables). After the window
+  // the account becomes eligible normally — no manual un-hold needed.
+  const RELEASE_COOLDOWN_DAYS = Math.max(0, Number(process.env.MATURING_RELEASE_COOLDOWN_DAYS ?? 14));
+  const releasedRecently = new Set<string>();
+  if (RELEASE_COOLDOWN_DAYS > 0) {
+    const since = new Date(Date.now() - RELEASE_COOLDOWN_DAYS * 86400000);
+    const freshlyReleased = await prisma.rental.findMany({
+      where: { accessRevokedAt: { gte: since } },
+      select: { linkedinAccountId: true },
+    });
+    for (const r of freshlyReleased) if (r.linkedinAccountId) releasedRecently.add(r.linkedinAccountId);
+  }
+  const releaseCooldownOver = (a: { id: string }): boolean => !releasedRecently.has(a.id);
+
   // ?explain=<login email>: say which check excludes one account, start nothing.
   // Added when the job answered "eligible: 0" for accounts every outside model
   // said were eligible (Sam, 2026-11-08).
@@ -184,6 +204,7 @@ export async function POST(req: NextRequest) {
       notCampaignPool: raw.inventoryPool !== "campaign",
       noRestrictionMark: !raw.restrictedAt && !raw.permanentlyRestricted,
       noActiveRental: raw.rentals.length === 0,
+      releaseCooldownOver: releaseCooldownOver(raw),
       noRunningCampaign: !gid || !running.has(gid),
       retryCooldownOver: !gid || !lastEndedAt.has(gid) || Date.now() - (lastEndedAt.get(gid) || 0) >= RETRY_COOLDOWN_MS,
       startFailCooldownOver: startFailOk(raw),
@@ -200,6 +221,7 @@ export async function POST(req: NextRequest) {
     (a) =>
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
+      releaseCooldownOver(a) &&
       campaignOk(a.gologinProfileId) &&
       startFailOk(a) &&
       // Inventory grouping decides, not the raw status: an 'unavailable' account whose
