@@ -145,6 +145,24 @@ export async function POST(req: NextRequest) {
     return recentlyRestricted(a);
   }
 
+  // Post-recovery rest — after an account recovers from a restriction it must REST before
+  // maturing again. Recovered accounts re-burn fast (median 17d between restrictions, ~half
+  // within 14d), and the moment the restriction flag cleared it was re-enrolled with ZERO
+  // rest. Hold it until N days have passed since its most recent restriction-or-recovery
+  // event. We do NOT retire repeat offenders — they keep their place; this just slows the
+  // re-introduction. Pairs with the slower warm-only re-warm ramp in programStages. Default
+  // 21 days; MATURING_RECOVERY_REST_DAYS overrides (0 disables).
+  const RECOVERY_REST_MS = Math.max(0, Number(process.env.MATURING_RECOVERY_REST_DAYS ?? 21)) * 86400000;
+  function recoveryRestOver(a: { restrictionLog: unknown }): boolean {
+    if (RECOVERY_REST_MS <= 0) return true;
+    const log = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string; event?: string }[]) : [];
+    let latest = 0;
+    for (const e of log) {
+      if (e?.at && (e.event === "restricted" || e.event === "recovered")) latest = Math.max(latest, new Date(e.at).getTime() || 0);
+    }
+    return latest === 0 || Date.now() - latest >= RECOVERY_REST_MS;
+  }
+
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
   function atLevel4(a: (typeof accounts)[number]): boolean {
     if (verifiedBySession.has(a.id)) return verifiedBySession.get(a.id)!;
@@ -192,7 +210,7 @@ export async function POST(req: NextRequest) {
   if (explain) {
     const raw = await prisma.linkedInAccount.findFirst({
       where: { loginEmail: { equals: explain, mode: "insensitive" } },
-      select: { id: true, gologinProfileId: true, status: true, inventoryPool: true, restrictedAt: true, permanentlyRestricted: true, notes: true, maturingStartFailedAt: true, maturingStartFailedReason: true,
+      select: { id: true, gologinProfileId: true, status: true, inventoryPool: true, restrictedAt: true, permanentlyRestricted: true, notes: true, restrictionLog: true, maturingStartFailedAt: true, maturingStartFailedReason: true,
         rentals: { where: { status: { in: ["active", "pending_access", "payment_failed"] } }, select: { id: true, status: true } } },
     });
     if (!raw) return NextResponse.json({ explain, found: false });
@@ -205,6 +223,7 @@ export async function POST(req: NextRequest) {
       noRestrictionMark: !raw.restrictedAt && !raw.permanentlyRestricted,
       noActiveRental: raw.rentals.length === 0,
       releaseCooldownOver: releaseCooldownOver(raw),
+      recoveryRestOver: recoveryRestOver(raw),
       noRunningCampaign: !gid || !running.has(gid),
       retryCooldownOver: !gid || !lastEndedAt.has(gid) || Date.now() - (lastEndedAt.get(gid) || 0) >= RETRY_COOLDOWN_MS,
       startFailCooldownOver: startFailOk(raw),
@@ -222,6 +241,7 @@ export async function POST(req: NextRequest) {
       !!a.gologinProfileId &&
       a.rentals.length === 0 &&
       releaseCooldownOver(a) &&
+      recoveryRestOver(a) &&
       campaignOk(a.gologinProfileId) &&
       startFailOk(a) &&
       // Inventory grouping decides, not the raw status: an 'unavailable' account whose
