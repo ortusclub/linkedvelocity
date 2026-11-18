@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createAccountCodeLink } from "@/lib/account-code-link";
 import { onboardingMailRequest } from "@/services/onboarding-mail";
+import { parseStoredCase } from "@/lib/recovery-case";
 import { formatName } from "@/lib/utils";
 
 // Admin: actually EMAIL the owner + referrer the private /recover link (the phone-first page
@@ -31,7 +33,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params;
     const account = await prisma.linkedInAccount.findUnique({
       where: { id },
-      select: { linkedinName: true, linkedinUrl: true, notes: true, recoveryQrUrl: true, recoveryQrAt: true, selfServiceOnboarding: { select: { applicationId: true } } },
+      select: { linkedinName: true, linkedinUrl: true, notes: true, recoveryQrUrl: true, recoveryQrAt: true, recoverySentAt: true, recoveryCase: true, selfServiceOnboarding: { select: { applicationId: true } } },
     });
     if (!account) return NextResponse.json({ error: "Account not found" }, { status: 404 });
     if (!account.recoveryQrUrl) return NextResponse.json({ error: "Attach a QR first — there's nothing to send yet." }, { status: 400 });
@@ -72,7 +74,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       sent.push({ recipient, to });
     }
 
-    await prisma.linkedInAccount.update({ where: { id }, data: { recoverySentAt: new Date(), recoverySentVia: "email" } });
+    // Log THIS send as its own recovery step so the timeline keeps a line per send (sent + each
+    // resend), instead of the single derived "Owner contacted" row just jumping to the latest time.
+    // A logged email step also suppresses the auto-derived one (see buildCase), so there's no dupe.
+    const stored = parseStoredCase(account.recoveryCase);
+    const steps = stored.steps ?? [];
+    const isResend = steps.some((s) => s.k === "email") || account.recoverySentAt != null;
+    steps.push({ k: "email", o: "ok", at: stamp, note: `Owner link ${isResend ? "resent" : "sent"} via email` });
+    stored.steps = steps;
+    await prisma.linkedInAccount.update({ where: { id }, data: { recoverySentAt: new Date(), recoverySentVia: "email", recoveryCase: stored as unknown as Prisma.InputJsonValue } });
     return NextResponse.json({ ok: true, sent, skipped });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not send the recovery email.";
