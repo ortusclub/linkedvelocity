@@ -16,6 +16,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/detect-bsc-deposits",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/proxy-health",
       "schedule": "0 7 * * *"
     },
