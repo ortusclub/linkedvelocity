@@ -316,6 +316,7 @@ export function deriveCase(
   }
   else if (qr && qr.o === "fail" && !id && !fm) { next = "Send ID verification form"; urgent = true; bucket = "action"; }
   else if (idRejects > 0 && !id && !fm) { next = "Resubmit ID verification (passport)"; urgent = true; bucket = "action"; }
+  else if (li && li.o === "fail" && !fm) { next = "Submit appeal form"; urgent = true; bucket = "action"; }
   else if (li && li.o === "fail") { next = "Retire or replace account"; urgent = true; bucket = "action"; }
   // An ID-verification challenge is in flight with LinkedIn (captured "ID verification" email that
   // isn't yet a clear pass/fail, or a hand-logged pending ID step) — we're waiting on THEM, not the
@@ -406,7 +407,7 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const cd = opts.cooldownDays ?? 30;
   const DAY = 86400e3;
   const L = (k: StepKind) => lastOf(built.steps, k);
-  const qr = L("qr"), id = L("id"), fm = L("form"), gl = L("gl"), pw = L("pw"), rl = L("relist"), hb = L("handback");
+  const qr = L("qr"), id = L("id"), fm = L("form"), li = L("li"), gl = L("gl"), pw = L("pw"), rl = L("relist"), hb = L("handback");
   // How many times LinkedIn has rejected a submitted ID (each "ID unaccepted" resubmit logs one note).
   // The ID path is "in play" after any of these — even without a failed QR — so Step 2 stays actionable.
   const idRejects = built.steps.filter((s) => s.k === "note" && /^ID unaccepted/i.test(s.note || "")).length;
@@ -434,8 +435,11 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
 
   // 1 — Owner verifies (QR relay is the fallback, not the default)
   {
-    let st: WfState = !qr ? "todo" : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
-    if (!qr && (rec || id || fm || idRejects)) st = "skip";
+    // A QR grabbed from GoLogin but not yet relayed (recover-send not clicked) is the Send-QR
+    // stage (L2), not L1 — so the matrix column lines up with the "Send QR link to owner" next step.
+    const qrReady = !!a.recoveryQrAt && !a.recoverySentAt;
+    let st: WfState = !qr ? (qrReady ? "wait" : "todo") : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
+    if (!qr && !qrReady && (rec || id || fm || idRejects || (li && li.o === "fail"))) st = "skip";
     const actions: WfAction[] = [];
     if (!rec && !lost && st !== "skip") {
       // Default exit: the owner verifies on their own after the email. QR relay is only for when
@@ -472,9 +476,10 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
     const sub = id?.err || (idRejects && !id ? `LinkedIn rejected the ID ${idRejects}× — have them resubmit a clear, well-lit photo of a government ID or passport.` : "If the QR doesn't work — owner submits ID through LinkedIn's form");
     mk(2, "Send ID verification form", sub, st, { actions });
   }
-  // 3 — Appeal (opens when ID fails)
+  // 3 — Appeal (opens when ID fails, OR when LinkedIn directly rejected us — a "doesn't comply /
+  // remains restricted" reply still offers a Help-Center appeal, so it belongs at L4, not retire).
   {
-    const open = !!(id && id.o === "fail");
+    const open = !!(id && id.o === "fail") || !!(li && li.o === "fail");
     const st: WfState = fm ? (fm.o === "ok" ? "done" : fm.o === "fail" ? "fail" : "wait") : rec ? "skip" : open ? "todo" : "lock";
     const actions: WfAction[] = [];
     if (!rec && !lost && (open || fm)) {
