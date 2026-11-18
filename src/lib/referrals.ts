@@ -82,11 +82,23 @@ export function isReferralEarned(a: ReferralGate): boolean {
 export function referralMatureDays(_a: Pick<ReferralGate, "accountFreshness" | "createdAt">): number {
   return 7;
 }
+
+// Payouts run on Thursdays: a payout date that lands Mon/Tue/Wed rolls forward to that same
+// week's Thursday; Thu and Fri stay; Sat/Sun roll to the next Thursday. Weekday is read in
+// Manila (the team's wall clock), and whole days are added so the displayed Manila date lands
+// on the Thursday. Applied to the setup-fee / referral-commission "ready" dates so the portal,
+// the payouts console and the digest all show the same payday.
+export function rollToPayout(d: Date): Date {
+  const day = new Date(d.getTime() + 8 * 3600 * 1000).getUTCDay(); // Manila weekday; 0=Sun..6=Sat
+  const add = day === 0 ? 4 : day === 6 ? 5 : day <= 3 ? 4 - day : 0; // →Thursday (day 4)
+  return add ? new Date(d.getTime() + add * 86400000) : d;
+}
+
 export function referralMaturesAt(a: ReferralGate): Date | null {
   if (a.status === "onboarded" || !a.verifiedAt) return null; // null = already matured / n/a
   const base = new Date(a.verifiedAt);
   if (Number.isNaN(base.getTime())) return null;
-  return new Date(base.getTime() + referralMatureDays(a) * 86400000);
+  return rollToPayout(new Date(base.getTime() + referralMatureDays(a) * 86400000));
 }
 
 // The setup fee (and the referrer's commission) come due one week after QC passes. This is
@@ -98,7 +110,7 @@ export function setupFeeReadyDate(verifiedAt: Date | string | null): Date | null
   if (!verifiedAt) return null;
   const d = new Date(verifiedAt);
   if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getTime() + 7 * 86400000);
+  return rollToPayout(new Date(d.getTime() + 7 * 86400000));
 }
 export function isReferralMatured(a: ReferralGate, now: Date = new Date()): boolean {
   if (a.status === "onboarded") return true;

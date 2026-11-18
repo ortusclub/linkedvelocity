@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { computePaymentsDue } from "@/lib/payment-schedule";
 import { sendPaymentsDueDigest } from "@/services/email";
 
-// Weekly "who's due to be paid" digest, emailed to Milee. Ambassadors are paid the
-// following Monday, so this runs Monday morning. Vercel cron hits it via GET.
+// Weekly "who's due to be paid" digest, emailed to Milee. Ambassadors are paid on
+// Thursdays, so this runs Thursday morning. Vercel cron hits it via GET.
 
 const DIGEST_TO = process.env.PAYMENTS_DIGEST_EMAIL || "milee@linkedvelocity.com";
 
