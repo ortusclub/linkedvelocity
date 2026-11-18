@@ -20,7 +20,8 @@ export type A360Row = {
 };
 
 // Account age in months -> compact label, e.g. 38 -> "3y 2m", 5 -> "5m". Matches the public catalogue.
-const ageLabel = (m: number | null | undefined) => { if (!m || m <= 0) return ""; const y = Math.floor(m / 12), mo = m % 12; return y > 0 ? `${y}y${mo ? ` ${mo}m` : ""}` : `${mo}m`; };
+// Accounts under a year old show no age at all (Sam, 18 Nov 2026).
+const ageLabel = (m: number | null | undefined) => { if (!m || m < 12) return ""; const y = Math.floor(m / 12), mo = m % 12; return y > 0 ? `${y}y${mo ? ` ${mo}m` : ""}` : `${mo}m`; };
 
 // Per-catalogue display chrome. Defaults below reproduce the Agent360 catalogue exactly, so callers
 // that pass no cfg (the Agent360 branch) are unchanged; Will Cura passes its own (browse-only).
