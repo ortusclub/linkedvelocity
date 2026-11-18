@@ -13,12 +13,13 @@ import { activeShadowAccountIds } from "@/lib/shadow-rental";
 export const PUBLIC_TOTAL_CAP = 20;
 
 // Inventory pools that are NEVER rentable and NEVER shown publicly (catalogue, /api/accounts,
-// sitemap, checkout). "ortus"/"apex" are referrer-brought pools auto-owned at $0; "campaign" is
-// our own idle/fresh accounts earmarked to run LinkedArmy outreach (warmed by the engine, never
-// rented). Add a pool here once and every public/rental guard that imports this stays in sync.
+// sitemap, checkout). "ortus"/"apex" are referrer-brought pools auto-owned at $0. The "campaign"
+// (LinkedArmy) pool is NOT segregated: its available accounts are listed and rentable like any
+// other (Sam, 18 Nov 2026). Add a pool here once and every public/rental guard that imports this
+// stays in sync.
 // NOTE: this does NOT affect the warming/outreach engine feed (/api/outreach/accounts), which
 // intentionally ignores pool so campaign accounts still get matured.
-export const SEGREGATED_POOLS = ["ortus", "apex", "campaign"];
+export const SEGREGATED_POOLS = ["ortus", "apex"];
 
 // Password that unlocks the FULL roster on the catalogue / API. Set via the
 // FULL_LIST_PASSWORD env var on Vercel (never in code). Unset = feature off. Works via
