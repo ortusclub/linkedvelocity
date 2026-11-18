@@ -52,7 +52,13 @@ export function pipelineMatcher(apps, sessions) {
   const links=sessions.filter(s=>s.accountId===a.id);
   const ids=[...new Set(links.map(s=>s.applicationId))];
   const owner=(a.notes||'').match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, '').toLowerCase();
-  const app=ids.length===1?byId.get(ids[0]):ids.length>1?null:unique(x=>norm(x.linkedinUrl),norm(a.linkedinUrl))||unique(x=>String(x.email||'').toLowerCase(),owner);
+  let app=ids.length===1?byId.get(ids[0]):ids.length>1?null:unique(x=>norm(x.linkedinUrl),norm(a.linkedinUrl))||unique(x=>String(x.email||'').toLowerCase(),owner);
+  // A setup session can tie the account to an old, unverified duplicate application while the
+  // same person's other application passed QC (Wendelyn Raydanas Ocampo, 18 Nov 2026). Prefer
+  // that verified, live one so a Pipeline Level 4 account is maturing here too.
+  if(app&&!app.verifiedAt){const mail=String(app.email||'').trim().toLowerCase();
+   const verified=mail?apps.filter(x=>x.id!==app.id&&x.verifiedAt&&String(x.email||'').trim().toLowerCase()===mail&&!['rejected','unreachable'].includes(x.status)):[];
+   if(verified.length)app=verified.reduce(better);}
   const pipeline=!!app?.verifiedAt && app.applicationReceived!==false
    && !['onboarded','rejected','unreachable'].includes(app.status)
    && !sessions.some(s=>s.applicationId===app.id&&['reserved','needs_help','ready'].includes(s.state))

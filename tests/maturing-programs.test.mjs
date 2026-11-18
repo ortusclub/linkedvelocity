@@ -59,3 +59,13 @@ test('a duplicate application does not hide a verified Level 4 account from Pipe
   const account = { id: 'a1', status: 'under_construction', linkedinUrl: url, notes: 'Owner: w@gmail.com', loginEmail: 'wendelyn.ocampo@lotuspost.fyi' };
   assert.ok(categoriesResolver(apps, [])(account).includes('pipeline'));
 });
+
+test('a setup session on an old unverified duplicate does not hide the verified application', async () => {
+  const { categoriesResolver } = await import('../src/lib/maturing/programs.mjs');
+  const apps = [
+    { id: 'old', linkedinUrl: 'https://www.linkedin.com/in/w', email: 'w@gmail.com', status: 'onboarding', verifiedAt: null, applicationReceived: true },
+    { id: 'new', linkedinUrl: 'https://www.linkedin.com/in/w?utm_source=x', email: 'w@gmail.com', status: 'approved', verifiedAt: '2026-11-09T23:00:00Z', applicationReceived: true },
+  ];
+  const sessions = [{ accountId: 'acc', applicationId: 'old', state: 'reserved' }];
+  assert.ok(categoriesResolver(apps, sessions)({ id: 'acc', status: 'under_construction', linkedinUrl: 'https://www.linkedin.com/in/w' }).includes('pipeline'));
+});
