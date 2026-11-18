@@ -102,6 +102,8 @@ export interface Row {
   accountRestrictedAt: string | null;
   warmupStartedAt: string | null;
   maturingStartedAt: string | null;
+  // LV Agent login state on Profile Maturing (linkedin_accounts.maturing_login).
+  maturingLogin?: MaturingLogin | null;
   profileBuild: ProfileBuild | null;
   profilePhotoUrl: string | null;
   linkedinJoinedAt: string | null;
@@ -133,6 +135,21 @@ export const isLive = (r: Row) => r.status === "approved" || r.status === "onboa
 export type Health = "active" | "awaiting" | "review" | "hold" | "unreachable" | "rejected";
 
 export const EARNING_INVENTORY = new Set(["available", "rented", "trial"]);
+export type MaturingLogin = { requiresLogin?: boolean; reason?: string; autoLogin?: { phase: string; at: string } | null; at?: string };
+const AUTO_LOGIN_WHY: Record<string, string> = {
+  invalid_credentials: "LinkedIn rejected the saved password", otp_rejected: "LinkedIn rejected the authenticator code",
+  challenge: "LinkedIn asked for a security check", restricted: "LinkedIn says the account is restricted",
+  account_not_found: "LinkedIn found no account for this email", persistence_failed: "GoLogin did not keep the session",
+  identity_mismatch: "a different LinkedIn account signed in", no_credential: "no saved password in LinkedVelocity", temporary_error: "the attempt could not finish",
+};
+// Icons for the Pipeline row: 🔑 Requires login, ⚠️ Auto login attempted (and failed). Hover = meaning.
+export function maturingLoginIcons(m: MaturingLogin | null | undefined): { icon: string; title: string }[] {
+  if (!m || !m.requiresLogin) return [];
+  const out = [{ icon: "🔑", title: `Requires login — ${m.reason || "the account is signed out of LinkedIn on Profile Maturing"}. The LV Agent checks it is not restricted and tries the saved password.` }];
+  const a = m.autoLogin;
+  if (a && a.phase !== "verified") out.push({ icon: "⚠️", title: `Auto login attempted${a.at ? ` ${fmtDate(a.at)}` : ""} — ${AUTO_LOGIN_WHY[a.phase] || a.phase.replace(/_/g, " ")}. Fix it in GoLogin or LinkedVelocity, then Retry on Profile Maturing.` });
+  return out;
+}
 export const levelOf = (r: Row): 0 | 0.5 | 1 | 2 | 3 | 4 | 5 => {
   if (r.setupInProgress && !["rejected", "unreachable", "onboarded"].includes(r.status)) return 0.5;
   if (!isApplicationReceived(r)) return 0;

@@ -13,7 +13,7 @@ import PipelineOverview from "@/components/admin/pipeline-overview";
 import {
   type Row, type Status, type Turn, F_SANS, F_GRO, labelCss, inputCss,
   applicationType, effectiveType, effectiveTypeKey, APPLICATION_TYPES, levelOf, levelKey, LEVEL_CHIP, LEVEL_GROUPS,
-  healthOf, HEALTH_OPTIONS, isRestricted, turnOf, referralInvite,
+  healthOf, HEALTH_OPTIONS, isRestricted, turnOf, referralInvite, maturingLoginIcons,
   cfgOf, monthlyAmt, fmtDate, ageDays, initialsOf, lastTouchActivity,
 } from "@/lib/pipeline-model";
 
@@ -695,6 +695,7 @@ function Rowline({ r, t, open, selected, me, handlerNames, onToggle, onSel, onCl
             {r.maturingStartedAt
               ? <span title={`Currently maturing — a LinkedVelocity warm/cold campaign is running (auto) · since ${fmtDate(r.maturingStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 {ageDays(r.maturingStartedAt)}d</span>
               : r.warmupStartedAt && <span title={`Warming up since ${fmtDate(r.warmupStartedAt)}`} style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)" }}>🔥 {ageDays(r.warmupStartedAt)}d</span>}
+            {maturingLoginIcons(r.maturingLogin).map((m) => <span key={m.icon} title={m.title} aria-label={m.title} style={{ flex: "none", font: `13px ${F_SANS}`, cursor: "help" }}>{m.icon}</span>)}
             {r.linkedinVerified && <span style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--blue-chip-bg,#e8f0fe)", color: "var(--blue-chip-text,#1a56db)" }}>✓</span>}
             {lvl >= 4 && r.accountId && !r.linkedinJoinedAt && <span title="Account history (Level 4) not filled — open this row and record the account's 'Joined LinkedIn' month + current connections." style={{ flex: "none", font: `700 10px ${F_SANS}`, padding: "2px 7px", borderRadius: 999, background: "var(--warn-badge-bg,#fef3c7)", color: "var(--warn-badge-text,#b7791f)", border: "1px dashed var(--warn-badge-text,#b7791f)" }}>⚠ History</span>}
             {isLikelyTestEmail(r.email) && <span style={{ flex: "none", font: `700 9px ${F_SANS}`, padding: "2px 6px", borderRadius: 5, background: "var(--test-bg,#fde68a)", color: "var(--test-fg,#92400e)" }}>TEST</span>}

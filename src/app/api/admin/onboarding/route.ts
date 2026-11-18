@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { decryptSecret } from "@/lib/crypto-creds";
 import { forwardingActive } from "@/lib/onboarding-email-policy";
 import type { ProfileBuild } from "@/lib/profile-generator";
+import type { MaturingLogin } from "@/lib/pipeline-model";
 
 // Onboarding pipeline — every ambassador application, bucketed by how far along it
 // is. The one non-obvious rule: an application only counts as ONBOARDED once the
@@ -39,7 +40,7 @@ export async function GET() {
         personalEmail: true, workEmail: true, accountPassword: true, twoFactor: true,
         gologinProfileId: true, gologinShareLink: true, monthlyPrice: true,
         ambassadorPayment: true, connectionCount: true, status: true,
-        restrictedAt: true, warmupStartedAt: true, maturingStartedAt: true, profileBuild: true, profilePhotoUrl: true, linkedinJoinedAt: true, connectionHistory: true, restrictionLog: true, notes: true, linkedinVerified: true, linkedinAccountHealth: true, healthCheckedAt: true,
+        restrictedAt: true, warmupStartedAt: true, maturingStartedAt: true, maturingLogin: true, profileBuild: true, profilePhotoUrl: true, linkedinJoinedAt: true, connectionHistory: true, restrictionLog: true, notes: true, linkedinVerified: true, linkedinAccountHealth: true, healthCheckedAt: true,
         proxyHost: true, proxyPort: true, proxyUsername: true,
         proxyPassword: true, proxyLocation: true, provisionStatus: true, createdAt: true,
         poc: true,
@@ -241,6 +242,7 @@ export async function GET() {
         accountRestrictedAt: acct?.restrictedAt || null,
         warmupStartedAt: acct?.warmupStartedAt ? new Date(acct.warmupStartedAt).toISOString() : null,
         maturingStartedAt: acct?.maturingStartedAt ? new Date(acct.maturingStartedAt).toISOString() : null,
+        maturingLogin: (acct?.maturingLogin as MaturingLogin | null) || null,
         profileBuild: (acct?.profileBuild as ProfileBuild | null) || null,
         profilePhotoUrl: acct?.profilePhotoUrl || null,
         linkedinJoinedAt: acct?.linkedinJoinedAt ? new Date(acct.linkedinJoinedAt).toISOString() : null,
@@ -307,6 +309,7 @@ export async function GET() {
         accountRestrictedAt: a.restrictedAt,
         warmupStartedAt: a.warmupStartedAt ? new Date(a.warmupStartedAt).toISOString() : null,
         maturingStartedAt: a.maturingStartedAt ? new Date(a.maturingStartedAt).toISOString() : null,
+        maturingLogin: (a.maturingLogin as MaturingLogin | null) || null,
         profileBuild: (a.profileBuild as ProfileBuild | null) || null,
         profilePhotoUrl: a.profilePhotoUrl || null,
         linkedinJoinedAt: a.linkedinJoinedAt ? new Date(a.linkedinJoinedAt).toISOString() : null,
