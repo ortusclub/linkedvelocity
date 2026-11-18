@@ -105,6 +105,10 @@ function mailDerivedSteps(a: CaseAccount): Step[] {
     if (m.type === "appeal_update") {
       if (/reinstat|access (?:has been|is|was) restored|we.?ve restored|your account (?:has been )?restored|restriction (?:has been |was )?(?:removed|lifted)|no longer restricted|back online/i.test(t)) out.push({ k: "li", o: "ok", at, note: "LinkedIn: appeal approved (email)" });
       else if (/remain(?:s)? restricted|does ?n.?t comply|not comply|rejected|declin|unable to (?:restore|reinstate)|will remain restricted/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn: appeal rejected (email)" });
+      // Email-mismatch stonewall: LinkedIn refuses to act unless contacted FROM the on-file address,
+      // which we can't do (the login .co.uk is receive-only). That's a dead end on the normal path,
+      // so treat it as a rejection that needs a formal appeal (routes to L4), not an open "pending".
+      else if (/registered to a different email|from the email address registered|using the registered email|unable to share any information/i.test(t)) out.push({ k: "li", o: "fail", at, err: "LinkedIn won't act unless emailed from the on-file address — appeal needed (email)" });
       else out.push({ k: "li", o: "pending", at, note: "LinkedIn appeal update (email)" });
     } else if (m.type === "id_verification") {
       // FAILURE / resubmit FIRST. LinkedIn's rejection emails lead with "Thanks for TRYING to verify
@@ -438,8 +442,13 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
     // A QR grabbed from GoLogin but not yet relayed (recover-send not clicked) is the Send-QR
     // stage (L2), not L1 — so the matrix column lines up with the "Send QR link to owner" next step.
     const qrReady = !!a.recoveryQrAt && !a.recoverySentAt;
-    let st: WfState = !qr ? (qrReady ? "wait" : "todo") : qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : "wait";
-    if (!qr && !qrReady && (rec || id || fm || idRejects || (li && li.o === "fail"))) st = "skip";
+    // The owner/QR step is superseded once the case has moved on — recovered, into ID/appeal, or a
+    // LinkedIn rejection that needs an appeal. It then steps aside so the current step advances to the
+    // real next action, even when a QR was left pending (chasing a scan is moot after a rejection).
+    const superseded = rec || !!id || !!fm || idRejects > 0 || !!(li && li.o === "fail");
+    let st: WfState = qr
+      ? (qr.o === "ok" ? "done" : qr.o === "fail" ? "fail" : superseded ? "skip" : "wait")
+      : superseded ? "skip" : qrReady ? "wait" : "todo";
     const actions: WfAction[] = [];
     if (!rec && !lost && st !== "skip") {
       // Default exit: the owner verifies on their own after the email. QR relay is only for when
