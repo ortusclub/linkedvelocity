@@ -189,11 +189,22 @@ const GROUPS: { key: string; title: string; note: string; dot: string }[] = [
   { key: "Trial", title: "Trial", note: "3-day hold", dot: AMBER },
   { key: "Rented", title: "Rented", note: "with a customer", dot: BLUE },
   { key: "Construction", title: "Construction", note: "warming up", dot: "#b45309" },
-  { key: "Maintenance", title: "Restricted / Maintenance", note: "needs attention", dot: "#64748b" },
+  { key: "Restricted", title: "Restricted", note: "LinkedIn restricted · profile doesn't load", dot: RED },
+  { key: "Maintenance", title: "Maintenance", note: "another issue to fix", dot: "#64748b" },
   { key: "Initial", title: "Initial / pipeline", note: "not yet in inventory", dot: MUT },
   { key: "Permanently restricted/Inaccessible", title: "Permanently restricted", note: "retired", dot: RED },
   { key: "Showcase", title: "Showcase", note: "demo accounts", dot: AMBER },
 ];
+
+// Board group for this page: the canonical "Maintenance" bucket is split in two (Sam, 18 Nov 2026).
+// Restricted = LinkedIn has restricted the account (restrictedAt set — its profile URL no longer
+// shows the profile). Maintenance = not restricted, but another issue needs fixing (maintenance
+// status, 2FA reset, …). Every other group is the canonical status unchanged.
+function boardGroup(a: Account): string {
+  if (isDummy(a)) return "Showcase";
+  const g = canonicalStatus(a);
+  return g === "Maintenance" && a.restrictedAt ? "Restricted" : g;
+}
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const fmtD = (d: string | null) => { if (!d) return "—"; const x = new Date(d); return `${MON[x.getMonth()]} ${x.getDate()}`; };
@@ -525,7 +536,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
     await patch(a.id, { connectionCount: n }, false);
   };
 
-  const withGroup = useMemo(() => accounts.map((a) => ({ a, g: isDummy(a) ? "Showcase" : canonicalStatus(a) })), [accounts]);
+  const withGroup = useMemo(() => accounts.map((a) => ({ a, g: boardGroup(a) })), [accounts]);
 
   const pocCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -632,7 +643,7 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
 
   const grouped = useMemo(() => {
     const m = new Map<string, Account[]>();
-    for (const a of sorted) { const g = isDummy(a) ? "Showcase" : canonicalStatus(a); (m.get(g) || m.set(g, []).get(g)!).push(a); }
+    for (const a of sorted) { const g = boardGroup(a); (m.get(g) || m.set(g, []).get(g)!).push(a); }
     return GROUPS.map((g) => ({ ...g, rows: m.get(g.key) || [] })).filter((g) => g.rows.length);
   }, [sorted]);
 
@@ -655,7 +666,8 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
       { key: "Available", label: "Available", n: avail, sub: "ready to offer", dot: GREEN, subFg: GREEND },
       { key: "Rented", label: "Rented", n: rented, sub: "with a customer", dot: BLUE, subFg: SUB },
       { key: "Construction", label: "Construction", n: count("Construction"), sub: "warming up", dot: "#b45309", subFg: SUB },
-      { key: "Maintenance", label: "Restricted / Maint.", n: count("Maintenance"), sub: "needs attention", dot: "#64748b", subFg: REDD },
+      { key: "Restricted", label: "Restricted", n: count("Restricted"), sub: "profile doesn't load", dot: RED, subFg: REDD },
+      { key: "Maintenance", label: "Maintenance", n: count("Maintenance"), sub: "issue to fix", dot: "#64748b", subFg: REDD },
       { key: "__earn", label: "Earned, all-time", n: Math.round(totalEarn), sub: "gross collected", dot: "#7c3aed", subFg: SUB, money: true },
       { key: "__util", label: "Avg utilisation", n: avgUtil, sub: "rented share, lifetime", dot: GREEN, subFg: SUB, pct: true },
     ];
