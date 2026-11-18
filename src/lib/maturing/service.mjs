@@ -22,7 +22,7 @@ export async function accounts(db=prisma) {
   const rows=await db.linkedInAccount.findMany({where:{status:{not:'removed'}},select:{id:true,gologinProfileId:true,gologinAccount:true,loginEmail:true,linkedinName:true,linkedinUrl:true,connectionCount:true,status:true,exitReason:true,restrictedAt:true,permanentlyRestricted:true,notes:true,inventoryPool:true,rentals:{where:{status:{in:['active','pending_access','payment_failed']}},select:{id:true},take:1}}});
   const [apps,sessions]=await Promise.all([db.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true}}),db.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}})]);
   const category=categoryResolver(apps,sessions);
-  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,category:category(a),inventoryStatus:a.status,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:a.status==='maintenance'||a.inventoryPool==='campaign'||a.status==='unavailable'&&!!a.exitReason}));
+  return rows.filter(a=>!(a.notes||'').includes('[SHOWCASE]')).map(a=>({id:a.id,category:category(a),inventoryStatus:a.status,gologinProfileId:a.gologinProfileId,name:a.linkedinName,loginEmail:a.loginEmail,linkedinUrl:a.linkedinUrl,connections:a.connectionCount,workspace:a.gologinAccount==='klabber'?'linkedvelocity':'ortus',rented:a.status==='rented'||a.rentals.length>0,restricted:!!a.restrictedAt||a.permanentlyRestricted||a.status==='retired',removed:a.status==='removed',unavailable:a.status==='maintenance'||a.status==='unavailable'&&!!a.exitReason}));
 }
 export async function owned(id){
   if(!/^[\w-]{1,100}$/.test(id))throw new MaturingError('Invalid campaign ID.');
@@ -75,9 +75,14 @@ export async function start(input, actor){
     const inventory=await accounts(tx),account=inventory.find(a=>a.id===input.accountId);
     if(!eligible(account))throw new MaturingError('Account is not eligible for maturing.');
     const live=await engine('/api/campaign/list');
-    const prior=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId));
+    // Only maturing plans count here. Outreach campaigns on the same profile (LinkedArmy, client
+    // campaigns) neither block a light maturing plan nor count as foreign history — the engine's
+    // per-account lock keeps their turns apart (Sam, 18 Nov 2026: "even if they are in live
+    // outreach you can still include them in a light maturing campaign").
+    const onProfile=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId));
+    const prior=onProfile.filter(c=>c.maturing||c.config?.matureWarm);
     const prefix='lv_'+createHash('sha256').update(input.accountId+':'+input.launchId).digest('hex').slice(0,24);
-    const replay=prior.filter(c=>c.id===prefix+'_warm'||c.id===prefix+'_cold');
+    const replay=onProfile.filter(c=>c.id===prefix+'_warm'||c.id===prefix+'_cold');
     if(replay.length){
       const expected=Number(input.plan?.warmEnabled!==false)+Number(input.plan?.coldEnabled===true);
       if(replay.length!==expected || replay.some(c=>['cancelled','error'].includes(c.status)))throw new MaturingError('This launch was incomplete or stopped. Inspect its results, then create a new replacement plan.',409);

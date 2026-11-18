@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
-import { list, start } from "@/lib/maturing/service.mjs";
+import { list, start, engine } from "@/lib/maturing/service.mjs";
 import { categoryResolver, programLabel } from "@/lib/maturing/programs.mjs";
 import { autoMaturePlan } from "@/lib/maturing/replan";
 import { SUSPECTED_RESTRICTION } from "@/lib/suspected-restriction";
@@ -117,7 +117,8 @@ export async function POST(req: NextRequest) {
       status: { notIn: ["removed", "rented", "retired", "maintenance"] },
       // Campaign pool = our own LinkedArmy outreach personas, run by hand. Never auto-start
       // a warm-up/maturing campaign on them (it would fight the real outreach we run).
-      inventoryPool: { not: "campaign" },
+      // LinkedArmy (campaign pool) accounts mature too (Sam, 18 Nov 2026: "they should also have
+      // a maturing plan"). The engine's per-account lock keeps maturing and outreach from overlapping.
       // Only hard exclusions: rented (renter is using it) and an explicit restriction
       // mark (restrictedAt / permanentlyRestricted — reconcile auto-STOPS those, so
       // starting them would just fight it). No readiness gate otherwise: if a verified
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest) {
       OR: [{ linkedinAccountHealth: null }, { linkedinAccountHealth: { not: SUSPECTED_RESTRICTION } }],
     },
     select: {
-      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true, twoFactorResetNeeded: true, restrictedAt: true,
+      id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, inventoryPool: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true, twoFactorResetNeeded: true, restrictedAt: true,
       // Any active rental blocks maturing, INCLUDING shadow rentals (Ortus / PP /
       // Agent360): the renter is using the account, so it must not fire its own
       // connection requests. Shadow rentals keep status "available", so they'd slip
@@ -144,8 +145,16 @@ export async function POST(req: NextRequest) {
     const log = Array.isArray(a.restrictionLog) ? (a.restrictionLog as { at?: string }[]) : [];
     return log.some((e) => e?.at && Date.now() - new Date(e.at).getTime() < RESTR_WINDOW_MS);
   }
-  function isFragile(a: { restrictionLog: unknown; status: string }): boolean {
-    return recentlyRestricted(a);
+  // LinkedArmy (campaign pool) accounts get the light ramp: they also run real outreach by hand,
+  // so maturing must stay gentle (Sam, 18 Nov 2026).
+  // Accounts staffed in a live outreach campaign get the light ramp too (Sam, 18 Nov 2026).
+  const inOutreach = new Set<string>();
+  try {
+    const all = ((await engine("/api/campaign/list")) as { campaigns?: { status?: string; maturing?: boolean; config?: { matureWarm?: boolean }; profile_ids?: string[] }[] }).campaigns || [];
+    for (const c of all) if (!(c.maturing || c.config?.matureWarm) && !TERMINAL.has(c.status || "")) for (const p of c.profile_ids || []) inOutreach.add(p);
+  } catch { /* unknown → normal ramp rules */ }
+  function isFragile(a: { restrictionLog: unknown; status: string; inventoryPool?: string | null; gologinProfileId?: string | null }): boolean {
+    return recentlyRestricted(a) || a.inventoryPool === "campaign" || (!!a.gologinProfileId && inOutreach.has(a.gologinProfileId));
   }
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
@@ -207,7 +216,7 @@ export async function POST(req: NextRequest) {
     const checks = {
       hasGoLoginProfile: !!gid,
       statusAllowed: !["removed", "rented", "retired", "maintenance"].includes(raw.status),
-      notCampaignPool: raw.inventoryPool !== "campaign",
+      notCampaignPool: true, // LinkedArmy accounts mature too (18 Nov 2026)
       noRestrictionMark: !raw.restrictedAt && !raw.permanentlyRestricted,
       noActiveRental: raw.rentals.length === 0,
       releaseCooldownOver: releaseCooldownOver(raw),
