@@ -11,7 +11,10 @@ import { formatName } from "@/lib/utils";
 // owner = the one linked ambassador application's email, referrer = the referrer's email — so
 // the link goes to the people who can do the phone identity check, NEVER the renter. Admin-
 // triggered per click; fails safe (no unique application linked, or no QR attached = no send).
-// Dedupes on the current QR capture time so re-clicking for the same QR can't double-send.
+// Each click mints a fresh one-time /recover link, so the Resend idempotency key must be unique
+// per click too: a stable key (e.g. the QR capture time) + a changing body makes Resend reject
+// the resend with a 409 invalid_idempotent_request. Rapid double-clicks are guarded client-side
+// (the button disables while the request is in flight).
 const RECOVER_BASE = "https://linkedvelocity.com/recover";
 
 function message(name: string, recipient: "ambassador" | "referrer", link: string) {
@@ -49,7 +52,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const name = formatName(account.linkedinName) || formatName(app.fullName) || "your account";
     const codeLink = await createAccountCodeLink(id).catch(() => "");
     const link = codeLink ? codeLink.replace("/c#", "/recover#") : RECOVER_BASE;
-    const stamp = account.recoveryQrAt ? new Date(account.recoveryQrAt).toISOString() : new Date().toISOString();
+    const stamp = new Date().toISOString(); // unique per click: each send carries a fresh one-time link, so the idempotency key must change too (a stable key + changing body => Resend 409).
 
     const recipients: Array<{ recipient: "ambassador" | "referrer"; to: string }> = [];
     if (z.string().email().safeParse(app.email).success) recipients.push({ recipient: "ambassador", to: app.email });
