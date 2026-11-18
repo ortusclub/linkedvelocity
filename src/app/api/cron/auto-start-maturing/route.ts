@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logWarmupActivity } from "@/lib/warmup-activity";
-import { list, start } from "@/lib/maturing/service.mjs";
+import { list, start, engine } from "@/lib/maturing/service.mjs";
 import { categoryResolver, programLabel } from "@/lib/maturing/programs.mjs";
 import { autoMaturePlan } from "@/lib/maturing/replan";
 import { SUSPECTED_RESTRICTION } from "@/lib/suspected-restriction";
@@ -147,8 +147,14 @@ export async function POST(req: NextRequest) {
   }
   // LinkedArmy (campaign pool) accounts get the light ramp: they also run real outreach by hand,
   // so maturing must stay gentle (Sam, 18 Nov 2026).
-  function isFragile(a: { restrictionLog: unknown; status: string; inventoryPool?: string | null }): boolean {
-    return recentlyRestricted(a) || a.inventoryPool === "campaign";
+  // Accounts staffed in a live outreach campaign get the light ramp too (Sam, 18 Nov 2026).
+  const inOutreach = new Set<string>();
+  try {
+    const all = ((await engine("/api/campaign/list")) as { campaigns?: { status?: string; maturing?: boolean; config?: { matureWarm?: boolean }; profile_ids?: string[] }[] }).campaigns || [];
+    for (const c of all) if (!(c.maturing || c.config?.matureWarm) && !TERMINAL.has(c.status || "")) for (const p of c.profile_ids || []) inOutreach.add(p);
+  } catch { /* unknown → normal ramp rules */ }
+  function isFragile(a: { restrictionLog: unknown; status: string; inventoryPool?: string | null; gologinProfileId?: string | null }): boolean {
+    return recentlyRestricted(a) || a.inventoryPool === "campaign" || (!!a.gologinProfileId && inOutreach.has(a.gologinProfileId));
   }
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.

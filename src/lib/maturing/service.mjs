@@ -75,7 +75,11 @@ export async function start(input, actor){
     const inventory=await accounts(tx),account=inventory.find(a=>a.id===input.accountId);
     if(!eligible(account))throw new MaturingError('Account is not eligible for maturing.');
     const live=await engine('/api/campaign/list');
-    const prior=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId));
+    // Only maturing plans count here. Outreach campaigns on the same profile (LinkedArmy, client
+    // campaigns) neither block a light maturing plan nor count as foreign history — the engine's
+    // per-account lock keeps their turns apart (Sam, 18 Nov 2026: "even if they are in live
+    // outreach you can still include them in a light maturing campaign").
+    const prior=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId)&&(c.maturing||c.config?.matureWarm));
     const prefix='lv_'+createHash('sha256').update(input.accountId+':'+input.launchId).digest('hex').slice(0,24);
     const replay=prior.filter(c=>c.id===prefix+'_warm'||c.id===prefix+'_cold');
     if(replay.length){
