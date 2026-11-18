@@ -96,10 +96,13 @@ export async function GET(req: Request) {
     const rentals = ids.length
       ? await prisma.rental.findMany({
           where: { linkedinAccountId: { in: ids } },
-          select: { linkedinAccountId: true, status: true, user: { select: { company: true, fullName: true } } },
+          select: { linkedinAccountId: true, status: true, startDate: true, user: { select: { company: true, fullName: true } } },
         })
       : [];
     const renterByAccount = new Map<string, string>();
+    // Earliest active-rental start per account, so recovery can tell a hand-back (rented BEFORE the
+    // restriction, renter was blocked) from a fresh relist (rented AFTER recovery, nothing owed).
+    const rentedSinceByAccount = new Map<string, string>();
     // Ever rented (any status) = a hard signal the account was genuinely onboarded/live at some point.
     const everRented = new Set<string>();
     for (const r of rentals) {
@@ -107,6 +110,9 @@ export async function GET(req: Request) {
       if (r.status === "active" || r.status === "pending_access") {
         const label = r.user?.company || r.user?.fullName || "";
         if (label && !renterByAccount.has(r.linkedinAccountId)) renterByAccount.set(r.linkedinAccountId, label);
+        const startIso = r.startDate?.toISOString() || null;
+        const prev = rentedSinceByAccount.get(r.linkedinAccountId);
+        if (startIso && (!prev || startIso < prev)) rentedSinceByAccount.set(r.linkedinAccountId, startIso);
       }
     }
 
@@ -139,7 +145,7 @@ export async function GET(req: Request) {
       const pocResolved = app?.poc || a.poc || "";
       const mailEvents = (mailByAccount.get(a.id) || []).map((m) => ({ type: m.type, receivedAt: m.receivedAt.toISOString(), subject: m.subject, bodyText: m.bodyText }));
       const acct: CaseAccount = {
-        ...a, renterName: renterByAccount.get(a.id) || null, poc: pocResolved,
+        ...a, renterName: renterByAccount.get(a.id) || null, rentedSince: rentedSinceByAccount.get(a.id) || null, poc: pocResolved,
         accountIssue: app?.accountIssue || null,
         restrictionReport: (app?.restrictionReport as CaseAccount["restrictionReport"]) || null,
         outreachEmailAt: outreachEmailAtFor(app?.id),
