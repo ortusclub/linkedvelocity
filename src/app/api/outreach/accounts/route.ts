@@ -61,6 +61,21 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // Why an account has no maturing plan yet, and when it should start — so Profile Maturing can
+  // list it as "Scheduled" instead of silently leaving it out (Sam, 18 Nov 2026). Mirrors the
+  // auto-start cool-downs: 14 days' rest after a rental ends, 6 h after a failed start.
+  const RELEASE_REST_MS = Math.max(0, Number(process.env.MATURING_RELEASE_COOLDOWN_DAYS ?? 14)) * 86400000;
+  const STARTFAIL_MS = Math.max(1, Number(process.env.MATURING_STARTFAIL_COOLDOWN_H) || 6) * 3600000;
+  const released = await prisma.rental.findMany({ where: { accessRevokedAt: { gte: new Date(Date.now() - RELEASE_REST_MS) } }, select: { linkedinAccountId: true, accessRevokedAt: true } });
+  const releasedAt = new Map<string, number>();
+  for (const r of released) if (r.linkedinAccountId && r.accessRevokedAt) releasedAt.set(r.linkedinAccountId, Math.max(releasedAt.get(r.linkedinAccountId) || 0, r.accessRevokedAt.getTime()));
+  const waitingFor = (a: { id: string; maturingStartFailedAt: Date | null; maturingStartFailedReason: string | null }) => {
+    const rel = releasedAt.get(a.id);
+    if (rel) return { reason: "Resting after rental", startsAt: new Date(rel + RELEASE_REST_MS).toISOString() };
+    if (a.maturingStartFailedAt) return { reason: `Start failed · ${(a.maturingStartFailedReason || "").replace(/^couldn't start\s*[—–-]\s*/i, "").slice(0, 120)}`, startsAt: new Date(a.maturingStartFailedAt.getTime() + STARTFAIL_MS).toISOString() };
+    return { reason: "Starting soon", startsAt: null };
+  };
+
   const [apps,sessions] = await Promise.all([
     prisma.ambassadorApplication.findMany({select:{id:true,verifiedAt:true,status:true,linkedinUrl:true,email:true,applicationReceived:true,paidAt:true,onboardedAt:true}}),
     prisma.selfServiceOnboarding.findMany({select:{accountId:true,applicationId:true,state:true}}),
@@ -86,6 +101,8 @@ export async function GET(req: NextRequest) {
       // say it under a stopped row (Sam, 2026-11-08). Cleared on a successful start.
       maturingStartFailedAt: a.maturingStartFailedAt || null,
       maturingStartFailedReason: a.maturingStartFailedReason || "",
+      // Shown on Profile Maturing only when the account has no plan: why, and when it starts.
+      maturingWaiting: waitingFor(a),
       // Weekly LinkedIn connection readings taken during maturing: latest count + 30-day change.
       connections: connectionSummary(a.connectionHistory),
       gologinProfileId: a.gologinProfileId || "",
