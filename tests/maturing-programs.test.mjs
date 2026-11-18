@@ -47,3 +47,15 @@ test('inventory grouping: unavailable with a not-yet-onboarded owner is Construc
  const classify=categoryResolver([app],[{accountId:'one',applicationId:'a',state:'complete'}]);
  assert.equal(classify({id:'one',status:'unavailable',loginEmail:'x@lotuspost.fyi',hasPassword:true}),'construction');
 });
+
+test('a duplicate application does not hide a verified Level 4 account from Pipeline Maturing', async () => {
+  const { categoriesResolver } = await import('../src/lib/maturing/programs.mjs');
+  const url = 'https://www.linkedin.com/in/wendelyn-raydanas-476113445';
+  const apps = [
+    { id: 'old', linkedinUrl: url, email: 'w@gmail.com', status: 'pending', verifiedAt: null, applicationReceived: '2026-11-01' },
+    { id: 'new', linkedinUrl: url + '?utm_source=share_via', email: 'w@gmail.com', status: 'approved', verifiedAt: '2026-11-09T23:00:00Z', applicationReceived: '2026-11-08' },
+    { id: 'dead', linkedinUrl: url, email: 'w@gmail.com', status: 'rejected', verifiedAt: '2026-11-10T00:00:00Z' },
+  ];
+  const account = { id: 'a1', status: 'under_construction', linkedinUrl: url, notes: 'Owner: w@gmail.com', loginEmail: 'wendelyn.ocampo@lotuspost.fyi' };
+  assert.ok(categoriesResolver(apps, [])(account).includes('pipeline'));
+});

@@ -37,7 +37,17 @@ export function inventoryGroup(a, app) {
 // session in progress, and not already earning inventory with its setup fee paid.
 export function pipelineMatcher(apps, sessions) {
  const byId = new Map(apps.map(a=>[a.id,a]));
- const unique = (key,value) => { const found=apps.filter(a=>key(a)===value); return value && found.length===1?found[0]:null; };
+ // Duplicate applications (the same person applying twice, e.g. once with a ?utm_ share
+ // link) must not hide the account from the pipeline: pick the most advanced live one —
+ // never a rejected/unreachable duplicate, a verified one before an unverified one, then
+ // the most recently verified/created. Wendelyn Raydanas Ocampo, 18 Nov 2026.
+ const rank = x => [['rejected','unreachable'].includes(x.status)?0:1, x.verifiedAt?1:0, Date.parse(x.verifiedAt||x.applicationReceived||'')||0];
+ const better = (x,y) => { const a=rank(x), b=rank(y); for (let i=0;i<a.length;i++) if (a[i]!==b[i]) return a[i]>b[i]?x:y; return x; };
+ const unique = (key,value) => { if(!value)return null; const found=apps.filter(a=>key(a)===value); if(found.length<2)return found[0]||null;
+  // Only when every match is the SAME person (same applicant email); two different people
+  // claiming one profile stay ambiguous and infer nothing.
+  const emails=new Set(found.map(x=>String(x.email||'').trim().toLowerCase())); if(emails.size!==1||emails.has(''))return null;
+  const live=found.filter(x=>!['rejected','unreachable'].includes(x.status)); return (live.length?live:found).reduce(better); };
  return a => {
   const links=sessions.filter(s=>s.accountId===a.id);
   const ids=[...new Set(links.map(s=>s.applicationId))];
