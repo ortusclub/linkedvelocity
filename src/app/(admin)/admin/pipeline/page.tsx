@@ -23,7 +23,7 @@ const TURN_META: Record<Turn | "all", { tile: string; chip: string; bg: string; 
   us:    { tile: "To action",       chip: "ACTION",    bg: "var(--warn-badge-bg,#fef3e2)", fg: "var(--warn-badge-text,#b7791f)", dot: "var(--warn-badge-text,#b7791f)", sub: "needs us now" },
   recovery: { tile: "In recovery",  chip: "RECOVERY",  bg: "var(--rose-chip-bg,#fff1f2)",  fg: "var(--rose-chip-text,#be123c)",  dot: "var(--rose-chip-text,#be123c)",  sub: "restricted · handle in Restrictions" },
   them:  { tile: "Waiting on them", chip: "WAITING",   bg: "var(--blue-chip-bg,#e8f0fe)",  fg: "var(--blue-chip-text,#1a56db)",  dot: "var(--blue-chip-text,#1a56db)",  sub: "applicant or referrer" },
-  timer: { tile: "Maturing",        chip: "TIMER",     bg: "var(--st-conv-bg,#efe8fd)",    fg: "var(--st-conv-fg,#6d28d9)",      dot: "var(--st-conv-fg,#6d28d9)",      sub: "1-week hold" },
+  timer: { tile: "Maturing",        chip: "TIMER",     bg: "var(--st-conv-bg,#efe8fd)",    fg: "var(--st-conv-fg,#6d28d9)",      dot: "var(--st-conv-fg,#6d28d9)",      sub: "on Profile Maturing 🔥" },
   live:  { tile: "Onboarded",       chip: "ONBOARDED", bg: "var(--st-active-bg,#e6f4ea)",  fg: "var(--st-active-fg,#188038)",    dot: "var(--st-active-fg,#188038)",    sub: "live & earning" },
   dead:  { tile: "Stopped",         chip: "STOPPED",   bg: "var(--st-cancel-bg,#fdecea)",  fg: "var(--st-cancel-fg,#c0392b)",    dot: "var(--st-cancel-fg,#c0392b)",    sub: "not progressing" },
 };
@@ -379,6 +379,10 @@ export default function PipelineNewPage() {
   }, [rows, me]);
 
   const withTurn = useMemo(() => (rows || []).map((r) => ({ r, t: turnOf(r) })), [rows]);
+  // The Maturing tile counts every account actually maturing (the 🔥 badge: a running
+  // warm/cold campaign, or a manual warm-up), at any level, not only the 1-week hold
+  // (Sam, 18 Nov 2026). Stopped/dead rows are left out. Clicking it filters to the same set.
+  const isMaturingRow = (r: Row, t: { turn: Turn }) => t.turn !== "dead" && !!(r.maturingStartedAt || r.warmupStartedAt);
 
   // Maturing daily check scope: the 1-week-hold rows that have a linked account to check.
   const maturingCheck = useMemo(() => withTurn.filter(({ r, t }) => t.turn === "timer" && !!r.accountId).map((x) => x.r), [withTurn]);
@@ -389,7 +393,8 @@ export default function PipelineNewPage() {
   // Tile counts — over everything (ignores the who/level/search filters, like a scoreboard).
   const tileCounts = useMemo(() => {
     const c: Record<Turn, number> = { us: 0, recovery: 0, them: 0, timer: 0, live: 0, dead: 0 };
-    for (const { t } of withTurn) c[t.turn]++;
+    for (const { t } of withTurn) if (t.turn !== "timer") c[t.turn]++;
+    c.timer = withTurn.filter(({ r, t }) => isMaturingRow(r, t)).length;
     return c;
   }, [withTurn]);
   // Per-handler open-action load (turn === us), including resurfaced chases.
@@ -402,7 +407,8 @@ export default function PipelineNewPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return withTurn.filter(({ r, t }) => {
-      if (turnF !== "all" && t.turn !== turnF) return false;
+      if (turnF === "timer") { if (!isMaturingRow(r, t)) return false; }
+      else if (turnF !== "all" && t.turn !== turnF) return false;
       if (whoF !== "all") { const p = (r.poc || "").trim(); if (whoF === "__unassigned" ? p !== "" : whoF === "__me" ? p !== me : p !== whoF) return false; }
       if (levelF !== "all" && levelKey(r) !== levelF) return false;
       if (healthF !== "all") { if (healthF === "maturing") { if (!r.maturingStartedAt) return false; } else if (healthF === "restricted") { if (!isRestricted(r)) return false; } else if (healthOf(r) !== healthF) return false; }
