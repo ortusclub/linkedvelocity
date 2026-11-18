@@ -79,9 +79,10 @@ export async function start(input, actor){
     // campaigns) neither block a light maturing plan nor count as foreign history — the engine's
     // per-account lock keeps their turns apart (Sam, 18 Nov 2026: "even if they are in live
     // outreach you can still include them in a light maturing campaign").
-    const prior=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId)&&(c.maturing||c.config?.matureWarm));
+    const onProfile=(live.campaigns||[]).filter(c=>(c.profile_ids||[]).includes(account.gologinProfileId));
+    const prior=onProfile.filter(c=>c.maturing||c.config?.matureWarm);
     const prefix='lv_'+createHash('sha256').update(input.accountId+':'+input.launchId).digest('hex').slice(0,24);
-    const replay=prior.filter(c=>c.id===prefix+'_warm'||c.id===prefix+'_cold');
+    const replay=onProfile.filter(c=>c.id===prefix+'_warm'||c.id===prefix+'_cold');
     if(replay.length){
       const expected=Number(input.plan?.warmEnabled!==false)+Number(input.plan?.coldEnabled===true);
       if(replay.length!==expected || replay.some(c=>['cancelled','error'].includes(c.status)))throw new MaturingError('This launch was incomplete or stopped. Inspect its results, then create a new replacement plan.',409);
