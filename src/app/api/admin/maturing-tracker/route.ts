@@ -38,7 +38,7 @@ export async function GET() {
         where: { status: { not: "removed" }, gologinProfileId: { not: null } },
         select: {
           id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, loginEmail: true,
-          status: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true,
+          status: true, exitReason: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true,
           accountPassword: true, connectionCount: true, notes: true, inventoryPool: true,
           maturingStartedAt: true, maturingStalledAt: true, maturingStalledReason: true,
           maturingStartFailedAt: true, maturingStartFailedReason: true, maturingFlag: true, restrictionLog: true,
@@ -87,7 +87,9 @@ export async function GET() {
       const group = inventoryGroup(shaped, app);
       const rented = a.rentals.length > 0 || a.status === "rented";
       if (a.restrictedAt || a.permanentlyRestricted) { restrictedCount++; continue; }
-      if (["unavailable", "retired", "maintenance"].includes(a.status)) continue;
+      // Same exclusion as the Outreach feed / Profile Maturing: "unavailable" only counts as gone
+      // with an exit reason (Sam, 18 Nov 2026).
+      if (["retired", "maintenance"].includes(a.status) || (a.status === "unavailable" && a.exitReason)) continue;
       const eligible = pipeline || group === "Construction" || group === "Available";
       if (!eligible || rented) continue;
 
