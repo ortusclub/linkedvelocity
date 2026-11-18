@@ -5,6 +5,7 @@ import { logWarmupActivity } from "@/lib/warmup-activity";
 import { list, start } from "@/lib/maturing/service.mjs";
 import { categoryResolver, programLabel } from "@/lib/maturing/programs.mjs";
 import { autoMaturePlan } from "@/lib/maturing/replan";
+import { SUSPECTED_RESTRICTION } from "@/lib/suspected-restriction";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -124,6 +125,8 @@ export async function POST(req: NextRequest) {
       restrictedAt: null,
       exitReason: null,
       permanentlyRestricted: false,
+      // LV Agent's suspected-restriction mark (null-safe: most rows hold "unchecked"/null).
+      OR: [{ linkedinAccountHealth: null }, { linkedinAccountHealth: { not: SUSPECTED_RESTRICTION } }],
     },
     select: {
       id: true, gologinProfileId: true, linkedinName: true, linkedinUrl: true, notes: true, loginEmail: true, restrictionLog: true, status: true, maturingStartFailedAt: true, createdAt: true, connectionCount: true, twoFactorResetNeeded: true, restrictedAt: true,

@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { categoryResolver, categoriesResolver } from "@/lib/maturing/programs.mjs";
 import { prisma } from "@/lib/prisma";
+import { SUSPECTED_RESTRICTION } from "@/lib/suspected-restriction";
 import { connectionSummary } from "@/lib/connection-count-report";
 
 // Read-only identity feed for the Ortus Outreach app: which LinkedIn profile
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
       twoFactorResetNeeded: true,
       maturingStartFailedAt: true,
       maturingStartFailedReason: true,
+      linkedinAccountHealth: true,
       connectionHistory: true, // reduced to the engine-read summary below
       accountPassword: true, // only reduced to hasPassword below; never sent
       rentals: {
@@ -90,7 +92,9 @@ export async function GET(req: NextRequest) {
       name: a.linkedinName,
       linkedinUrl: a.linkedinUrl,
       // Restricted profiles can still be named, but are no use as invite targets.
-      restricted: a.status === "retired" || !!a.restrictedAt || a.permanentlyRestricted,
+      restricted: a.status === "retired" || !!a.restrictedAt || a.permanentlyRestricted || a.linkedinAccountHealth === SUSPECTED_RESTRICTION,
+      // LV Agent: profile not available from a healthy account. Off Profile Maturing.
+      suspectedRestriction: a.linkedinAccountHealth === SUSPECTED_RESTRICTION,
       // Eligibility only: do not expose renters or rental details to Outreach.
       rented: a.status === "rented" || a.rentals.length > 0,
     }));
