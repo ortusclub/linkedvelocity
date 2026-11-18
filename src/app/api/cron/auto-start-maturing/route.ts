@@ -150,10 +150,13 @@ export async function POST(req: NextRequest) {
 
   // Is this account's application at Level 4? session link wins, then unique URL, then owner-email.
   function atLevel4(a: (typeof accounts)[number]): boolean {
-    if (verifiedBySession.has(a.id)) return verifiedBySession.get(a.id)!;
+    const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
+    // A setup session tied to an old, unverified duplicate application must not hide the SAME
+    // person's verified one (matched by owner email) — Wendelyn Raydanas Ocampo, 18 Nov 2026,
+    // the same rule as programs.mjs pipelineMatcher. A different person's URL match still can't.
+    if (verifiedBySession.has(a.id)) return verifiedBySession.get(a.id)! || (!!ownerEmail && verifiedByEmail.has(ownerEmail));
     const u = norm(a.linkedinUrl);
     if (u && urlCount.get(u) === 1 && verifiedByUrl.has(u)) return true;
-    const ownerEmail = (a.notes || "").match(/Owner:\s*(\S+@\S+)/i)?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
     if (ownerEmail && verifiedByEmail.has(ownerEmail)) return true;
     return false;
   }
