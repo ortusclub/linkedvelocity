@@ -46,7 +46,8 @@ function getInitials(name: string) { return name.replace(/\s*\(.*\)\s*$/, "").sp
 // Compact, uniform display name: "Tony Otto" -> "Tony O." (View Profile still links the full identity)
 function shortName(name: string) { const p = formatName(name.replace(/\s*\(.*\)\s*$/, "")).trim().split(/\s+/).filter(Boolean); return p.length < 2 ? (p[0] || "") : `${p[0]} ${p[p.length - 1][0].toUpperCase()}.`; }
 // Account age in months -> compact label, e.g. 38 -> "3y 2m", 5 -> "5m".
-function ageLabel(m: number | null | undefined) { if (!m || m <= 0) return ""; const y = Math.floor(m / 12), mo = m % 12; return y > 0 ? `${y}y${mo ? ` ${mo}m` : ""}` : `${mo}m`; }
+// Accounts under a year old show no age at all (Sam, 18 Nov 2026).
+function ageLabel(m: number | null | undefined) { if (!m || m < 12) return ""; const y = Math.floor(m / 12), mo = m % 12; return y > 0 ? `${y}y${mo ? ` ${mo}m` : ""}` : `${mo}m`; }
 
 // Tiered rental pricing by connection count + account age. Highest tier the
 // profile qualifies for wins (evaluated top-down). The last tier is the FLOOR —
