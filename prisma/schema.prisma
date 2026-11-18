@@ -602,6 +602,12 @@ model AmbassadorApplication {
   // restriction record (restrictedAt / restrictionLog stay the system of truth until the
   // team confirms). Shape: { type: "qr_done"|"recovered", at: ISO }. Null = no report.
   restrictionReport Json?             @map("restriction_report")
+  // Real owner contact the referrer hands over when hiding a PAID (setup-fee-paid or
+  // live-onboarded) signup from their portal. Unpaid signups hide with no contact
+  // needed; for paid ones the hide is the lever that finally gets us a direct line to
+  // the owner, so the team can recover the account while the referrer keeps their
+  // credit. Shape: { mobile, email, at, source }. Null = never captured.
+  ownerContact      Json?             @map("owner_contact")
   accountFreshness  String?          @map("account_freshness")
   paidAt            DateTime?         @map("paid_at")
   marketerPaidAt    DateTime?         @map("marketer_paid_at")

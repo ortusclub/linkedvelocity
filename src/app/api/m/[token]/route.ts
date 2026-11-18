@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { isReferralEarned, referralCommissionAmount, referralMaturesAt } from "@/lib/referrals";
+import { isReferralEarned, isReferralOnboarded, referralCommissionAmount, referralMaturesAt } from "@/lib/referrals";
 import { currencyConfig } from "@/lib/referral-currency";
 import { monthlyDueDate, setupPaidDate } from "@/lib/payment-schedule";
 import { deleteApplicationCascade } from "@/lib/application-delete";
@@ -130,10 +130,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // Server DELETE re-checks the same rule; this flag just drives the UI affordance.
       const deletable = !paid && !onboarded && state !== "handed_off";
       // Withdraw is the keep-the-record alternative to delete, for signups the referrer can no
-      // longer delete (already onboarded / handed off) but wants off their portal. Never for a
-      // paid signup (a real payment record) or one still deletable (use delete there).
+      // longer delete (already onboarded / handed off) but wants off their portal. Paid signups
+      // CAN be withdrawn now, but only after handing over the owner's real contact (the gate
+      // below) — so a retired/dead paid account can leave the list without us losing the owner.
       const withdrawn = !!a.withdrawnAt;
-      const withdrawable = !deletable && !paid && !withdrawn;
+      const withdrawable = !deletable && !withdrawn;
+      // Hiding a paid / live-onboarded signup requires the owner's real mobile + email first
+      // (the lever to recover it while the referrer keeps credit). A merely-logged-in-but-
+      // unpaid signup hides cleanly with no contact needed — we don't chase those.
+      const withdrawNeedsContact = withdrawable && isReferralOnboarded(a);
       const amount = referralCommissionAmount(a, t);
       const whoLabel = method === "phone" ? "LV ran it" : (method === "computer" || (isDiy && (onboarded || state === "handed_off"))) ? "You ran it" : isDiy ? "You ran it" : "Form only";
       const path = method === "computer" ? `Guided · computer${a.onboardingVerified ? " · verified" : ""}`
@@ -332,7 +337,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // A booked setup call gates the "onboard them yourself" CTA — the team is already lined up
       // to onboard this person, so the referrer shouldn't also start it.
       const callBookedAt = a.scheduledMeeting?.startsAt ? new Date(a.scheduledMeeting.startsAt).toISOString() : null;
-      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide, callBookedAt };
+      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawNeedsContact, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide, callBookedAt };
     });
 
   // Show EVERY signup the referrer owns — no cap. Any cap (the old one was the 25 most recent
@@ -412,18 +417,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
   }
 
   // The referrer withdraws (or restores) one of their OWN signups — a soft-hide that keeps
-  // the record. Only their own signups, never a paid one (that's a real payment record).
+  // the record and the referrer's credit; the admin pipeline is unaffected. Paid/onboarded
+  // signups can be hidden too, but only after the owner-contact gate below.
   if ((body.action === "withdraw" || body.action === "restore") && typeof body.applicationId === "string") {
-    const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, paidAt: true, restrictionReport: true } });
+    const app = await prisma.ambassadorApplication.findUnique({ where: { id: body.applicationId }, select: { referredBy: true, status: true, paidAt: true, monthlyPayouts: true, restrictionReport: true, ownerContact: true } });
     if (!app || (app.referredBy || "").trim() !== me.slug) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (body.action === "withdraw" && app.paidAt) return NextResponse.json({ error: "A paid signup can't be withdrawn — contact the team." }, { status: 409 });
+    // Hiding a PAID / live-onboarded signup is gated: the referrer must hand over the owner's
+    // real mobile + email first, so the team can recover the (often dead) account directly while
+    // the referrer keeps their credit. Unpaid signups hide cleanly — we don't chase those.
+    let ownerContactToStore: { mobile: string; email: string; at: string; source: string } | undefined;
+    if (body.action === "withdraw" && isReferralOnboarded(app)) {
+      const oc = body.ownerContact;
+      const mobile = typeof oc?.mobile === "string" ? oc.mobile.trim() : "";
+      const email = typeof oc?.email === "string" ? oc.email.trim() : "";
+      if (!mobile || !email || !/^\S+@\S+\.\S+$/.test(email)) {
+        return NextResponse.json({ error: "Add the owner's real mobile and email so we can recover the account — your credit stays.", needsContact: true }, { status: 400 });
+      }
+      ownerContactToStore = { mobile, email, at: new Date().toISOString(), source: "referrer-hide" };
+    }
     // Withdrawing takes the signup off the list, so drop any saved guided-unlock progress (keep the
     // qr/recovered report itself). On restore the referrer starts the guide fresh.
     const prevReport = (app.restrictionReport && typeof app.restrictionReport === "object" ? app.restrictionReport : null) as { type?: string; at?: string; by?: string } | null;
     await prisma.ambassadorApplication.update({
       where: { id: body.applicationId },
       data: body.action === "withdraw"
-        ? { withdrawnAt: new Date(), restrictionReport: { type: prevReport?.type, at: prevReport?.at, by: prevReport?.by } }
+        ? { withdrawnAt: new Date(), restrictionReport: { type: prevReport?.type, at: prevReport?.at, by: prevReport?.by }, ...(ownerContactToStore ? { ownerContact: ownerContactToStore } : {}) }
         : { withdrawnAt: null },
     });
     return NextResponse.json({ ok: true });
