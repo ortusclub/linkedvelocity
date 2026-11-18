@@ -16,6 +16,7 @@ import Link from "next/link";
 import { tierPricing } from "@/lib/account-pricing";
 import { formatName } from "@/lib/utils";
 import { canonicalStatus } from "@/lib/inventory-stage";
+import { maturingLoginIcons, type MaturingLogin } from "@/lib/pipeline-model";
 import { RENTAL_READY_ITEMS, RENTAL_READY_OPTIONAL, rentalReadyStatus, type ChecklistState } from "@/lib/rental-ready";
 import { SHARED_TOGGLES, OFFBOARDING_ITEMS, offboardingAuto, offboardingLeft, type Offboarding, type SharedWithRenter } from "@/lib/offboarding";
 import { currencyConfigFor, formatMoney } from "@/lib/referral-currency";
@@ -91,6 +92,7 @@ interface Account {
   offboarding: Offboarding | null;
   rentalReady: boolean;
   readyToPromote: boolean;
+  maturingLogin?: MaturingLogin | null; // LV Agent login state on Profile Maturing (🔑 / ⚠️ / 📧)
   gologinStillShared: boolean;
   manualPaidUntil: string | null;
   inventoryPool?: string | null;
@@ -926,6 +928,9 @@ mikka@example.com,Mikka Aloria,https://www.linkedin.com/in/mikka-aloria/,5000,Te
                     if (proxyDown) flags.push({ l: "Proxy down", ...RP, tip: "GoLogin proxy check failed" });
                     if (proxyExpiring) flags.push({ l: "Proxy expiring", bg: "#fffbeb", fg: "#92400e", tip: "Proxy plan expires within 7 days" });
                     if (linkedArmy) flags.push({ l: "⚑ LinkedArmy", bg: "#ecfeff", fg: "#0e7490", tip: r.inCampaign ? "Currently staffed in a live outreach campaign — a rented/restricted account here is double-booked" : "LinkedArmy campaign pool — our own outreach personas (never rented, never auto-warmed)" });
+                    // Same login icons as Pipeline and Profile Maturing (LV Agent, every 30 min), so
+                    // Construction / Available here show the same "needs login" accounts (18 Nov 2026).
+                    for (const m of maturingLoginIcons(r.maturingLogin)) flags.push({ l: m.icon, bg: "#fef2f2", fg: "#b91c1c", tip: m.title });
                     if (r.readyToPromote) flags.push({ l: "✅ Ready to promote", bg: "#dcfce7", fg: "#166534", tip: "Earned Available: ≥2 months since joining LinkedIn, matured ≥2 weeks with no restriction, ≥100 connections, setup paid, safety checks pass. Open the account and list it." });
                     if (matDays != null) flags.push({ l: `🔥 ${matDays}d`, bg: "#fff7ed", fg: "#c2410c", tip: "Currently maturing — a LinkedVelocity warm/cold campaign is running (auto)" });
                     else if (stalledDays != null) flags.push({ l: `⚠ stalled ${stalledDays}d`, bg: "#fef9c3", fg: "#854d0e", tip: `Maturing needs attention — ${stalledWhy}. It isn't actually maturing (stuck, or the campaign couldn't start); fix it (e.g. the login), not a healthy fire.` });
