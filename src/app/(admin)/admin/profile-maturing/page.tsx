@@ -39,7 +39,9 @@ export default function MaturingPage(){
  // maturing-eligible set the tracker/inventory show. (Unavailable accounts stay startable in the
  // picker — see canCreate — they're just not part of the headline count.)
  const LIVE_BUCKETS=['pipeline','construction','available'];
- const bucketOf=(a:Account)=>(!a.restricted&&!a.rented&&!a.unavailable&&a.inventoryStatus!=='unavailable'&&LIVE_BUCKETS.includes(a.category||'')?(a.category as string):'other');
+ // `unavailable` (maintenance, or unavailable WITH an exit reason) is the only status exclusion — the
+ // same rule as Inventory, Pipeline and the Outreach feed, so the three counts agree (Sam, 18 Nov 2026).
+ const bucketOf=(a:Account)=>(!a.restricted&&!a.rented&&!a.unavailable&&LIVE_BUCKETS.includes(a.category||'')?(a.category as string):'other');
  const hasCampaign=(a:Account)=>campaigns.some(c=>c.profileIds.includes(a.gologinProfileId));
  const isMaturingNow=(a:Account)=>state(a).label==='Active';
  // Show every account in a live bucket (even with no campaign yet — it's queued for auto-start), plus
