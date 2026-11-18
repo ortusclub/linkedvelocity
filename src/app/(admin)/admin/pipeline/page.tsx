@@ -23,7 +23,7 @@ const TURN_META: Record<Turn | "all", { tile: string; chip: string; bg: string; 
   us:    { tile: "To action",       chip: "ACTION",    bg: "var(--warn-badge-bg,#fef3e2)", fg: "var(--warn-badge-text,#b7791f)", dot: "var(--warn-badge-text,#b7791f)", sub: "needs us now" },
   recovery: { tile: "In recovery",  chip: "RECOVERY",  bg: "var(--rose-chip-bg,#fff1f2)",  fg: "var(--rose-chip-text,#be123c)",  dot: "var(--rose-chip-text,#be123c)",  sub: "restricted · handle in Restrictions" },
   them:  { tile: "Waiting on them", chip: "WAITING",   bg: "var(--blue-chip-bg,#e8f0fe)",  fg: "var(--blue-chip-text,#1a56db)",  dot: "var(--blue-chip-text,#1a56db)",  sub: "applicant or referrer" },
-  timer: { tile: "Maturing",        chip: "TIMER",     bg: "var(--st-conv-bg,#efe8fd)",    fg: "var(--st-conv-fg,#6d28d9)",      dot: "var(--st-conv-fg,#6d28d9)",      sub: "on Profile Maturing 🔥" },
+  timer: { tile: "Maturing",        chip: "TIMER",     bg: "var(--st-conv-bg,#efe8fd)",    fg: "var(--st-conv-fg,#6d28d9)",      dot: "var(--st-conv-fg,#6d28d9)",      sub: "Level 4 · not restricted" },
   live:  { tile: "Onboarded",       chip: "ONBOARDED", bg: "var(--st-active-bg,#e6f4ea)",  fg: "var(--st-active-fg,#188038)",    dot: "var(--st-active-fg,#188038)",    sub: "live & earning" },
   dead:  { tile: "Stopped",         chip: "STOPPED",   bg: "var(--st-cancel-bg,#fdecea)",  fg: "var(--st-cancel-fg,#c0392b)",    dot: "var(--st-cancel-fg,#c0392b)",    sub: "not progressing" },
 };
@@ -379,10 +379,10 @@ export default function PipelineNewPage() {
   }, [rows, me]);
 
   const withTurn = useMemo(() => (rows || []).map((r) => ({ r, t: turnOf(r) })), [rows]);
-  // The Maturing tile counts every account actually maturing (the 🔥 badge: a running
-  // warm/cold campaign, or a manual warm-up), at any level, not only the 1-week hold
-  // (Sam, 18 Nov 2026). Stopped/dead rows are left out. Clicking it filters to the same set.
-  const isMaturingRow = (r: Row, t: { turn: Turn }) => t.turn !== "dead" && !!(r.maturingStartedAt || r.warmupStartedAt);
+  // The Maturing tile = every Level 4 account that is not restricted (Level 4 is never
+  // onboarded — onboarded is Level 5), whether or not its 1-week hold is over (Sam,
+  // 18 Nov 2026). Stopped rows are left out. Clicking it filters to the same set.
+  const isMaturingRow = (r: Row, t: { turn: Turn }) => t.turn !== "dead" && levelOf(r) === 4 && !isRestricted(r);
 
   // Maturing daily check scope: the 1-week-hold rows that have a linked account to check.
   const maturingCheck = useMemo(() => withTurn.filter(({ r, t }) => t.turn === "timer" && !!r.accountId).map((x) => x.r), [withTurn]);
