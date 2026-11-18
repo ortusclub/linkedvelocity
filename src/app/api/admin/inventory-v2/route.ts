@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { rentalReadyStatus, rentalReadyAuto, type ChecklistState } from "@/lib/rental-ready";
+import { linkedinOlderThanMonths } from "@/lib/account-age";
 import { liveCampaignProfileIds } from "@/lib/outreach-campaigns";
 
 // Inventory v2 read endpoint. Returns the SAME per-account shape as
@@ -157,7 +158,7 @@ export async function GET(_req: NextRequest) {
       const earnedTotal = Math.max(0, Math.round(((cryptoByAccount.get(a.id) ?? 0) + (txnByAccount.get(a.id) ?? 0)) * 100) / 100);
       // "Ready to promote" — a construction account that has earned its way to Available by
       // actually SURVIVING maturing: currently maturing AND maturing for ≥2 weeks with no
-      // restriction in that run, PLUS ≥1 month old, ≥100 connections, setup fee paid, and every
+      // restriction in that run, PLUS ≥2 months old on LinkedIn (joined month, see account-age.ts), ≥100 connections, setup fee paid, and every
       // rental-ready AUTO check passing (not restricted, 2FA not pending, proxy assigned, no
       // leftover GoLogin share). The 2-week-maturing gate is the point: an old, well-connected
       // account that only just started maturing hasn't proven anything yet (Sam, 2026-11-11 —
@@ -171,7 +172,8 @@ export async function GET(_req: NextRequest) {
       const restrictedDuringMaturing = matStart > 0 && restrLog.some((e) => e?.event === "restricted" && Date.parse(e.at || "") >= matStart);
       const readyToPromote =
         ["under_construction", "construction_immature"].includes(a.status) &&
-        now - new Date(a.createdAt).getTime() >= 30 * DAY &&
+        // ≥2 months since the LinkedIn account was CREATED (About → "Joined"), not since we got it (Sam, 2026-11-18).
+        linkedinOlderThanMonths(a, 2, now) &&
         matStart > 0 && now - matStart >= 14 * DAY &&
         (a.connectionCount ?? 0) >= 100 &&
         !restrictedDuringMaturing &&
