@@ -79,6 +79,7 @@ export type CaseAccount = {
   poc?: string | null;
   notes?: string | null;
   renterName?: string | null;
+  rentedSince?: Date | string | null; // start of the current active rental — used to tell a hand-back (rented before recovery) from a fresh relist (rented after)
   // Backtracked from the linked application (pipeline/inventory parity):
   accountIssue?: string | null; // free-text pipeline issue flag ("restricted", "permanently restricted", …)
   restrictionReport?: { type?: "qr_done" | "recovered"; at?: string; helpSentAt?: string; appealSentAt?: string } | null; // owner self-report + guided-unlock actions from the portal
@@ -306,10 +307,16 @@ export function deriveCase(
     // already handled — it's just Recovered/done, not "needs securing".
     const gl = lastOf(steps, "gl"), pw = lastOf(steps, "pw"), relist = lastOf(steps, "relist"), handback = lastOf(steps, "handback");
     const rented = a.status === "rented";
+    // A rental that STARTED AFTER the recovery is a fresh relist, not the renter who was blocked by
+    // the restriction — so there is no hand-back owed (and no downtime credit). The account is back
+    // in service; the case is done.
+    const rentedSinceMs = a.rentedSince ? Date.parse(iso(a.rentedSince)!) : null;
+    const freshRental = rented && rentedSinceMs != null && rentedSinceMs > resolvedAt;
     const inWorkflow = !!stored.resolvedAt;
     if (relist) { next = `Relisted ${rel(Date.parse(relist.at), now)}`; bucket = "done"; }
     else if (handback) { next = "Back with renter · gentle use"; bucket = "done"; }
     else if (!inWorkflow) { next = `Recovered ${rel(resolvedAt, now)}`; bucket = "done"; }
+    else if (freshRental) { next = `Rented out ${rel(rentedSinceMs!, now)}`; bucket = "done"; }
     else if (!gl || !pw) { next = "Log in on GoLogin + reset password"; urgent = true; bucket = "action"; }
     else if (rented) { next = "Hand back to renter (gentle)"; urgent = true; bucket = "action"; }
     else {
@@ -512,7 +519,12 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
     const ready = rec && !!gl && !!pw;
     const base = resolvedAt || 0; // warm-up counted from recovery ("construction for 30 days after restriction")
     const histDone: WfState | null = rec && !securing ? "done" : null; // old-way recovery: already handled
-    if (rented && !rl) {
+    // A rental that STARTED AFTER recovery is a fresh relist, not the blocked renter — no hand-back.
+    const rentedSinceMs = a.rentedSince ? Date.parse(iso(a.rentedSince)!) : null;
+    const freshRental = rented && rentedSinceMs != null && resolvedAt != null && rentedSinceMs > resolvedAt;
+    if (freshRental && !rl) {
+      mk(5, "Back in service", `Recovered, then rented out fresh ${rentedSinceMs ? rel(rentedSinceMs, now) : ""} — no hand-back owed.`, rec ? "done" : "lock", {});
+    } else if (rented && !rl) {
       mk(5, "Hand back to renter", "Rented — no cooldown. Keep activity gentle for the first 2 weeks.", hb ? "done" : ready ? "todo" : histDone || "lock", {
         actions: ready && !hb ? [{ id: "handback", label: "Mark handed back", variant: "primary" }] : [],
         note: ready ? `Tell ${a.renterName || "the renter"}: low volume, ~5–10 connection requests/day, no bulk messaging.` : "",
