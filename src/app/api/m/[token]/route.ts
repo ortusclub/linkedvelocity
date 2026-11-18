@@ -267,7 +267,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         const nm = monthlyDueDate(setupPaidDate(a.paidAt, a.monthlyPayouts), paidCount);
         pay = { text: "Setup fee paid ✓", sub: nm ? `next monthly around ${fmtDate(nm.toISOString())}` : "monthly payouts continue in the first few days of each month" };
       } else if (restrictionHold) {
-        pay = { text: "Payment on hold after a recent restriction", sub: "it resumes once the account is stable again" };
+        // Recovered but inside the ~1-week re-stabilisation window. Show the expected date
+        // instead of an open-ended "on hold" so a QC-passed signup still has a payout date:
+        // the later of the QC maturation (QC + 1wk) and the post-recovery window (recovery +
+        // 1wk). Only the "restricted" sync-gap case (no recovery timestamp) keeps the old copy.
+        const ready = referralMaturesAt(a); // QC + 1 week; null if not QC'd or already matured
+        const stabiliseUntil = lastRestr.event === "recovered" ? new Date(new Date(lastRestr.at!).getTime() + 7 * 86400000) : null;
+        const when = stabiliseUntil && (!ready || stabiliseUntil.getTime() >= ready.getTime()) ? stabiliseUntil : ready;
+        pay = when && when.getTime() > Date.now()
+          ? { text: `Setup fee expected around ${fmtDate(when.toISOString())}`, sub: "held about a week while the account re-stabilises after the restriction; your commission follows" }
+          : { text: "Payment on hold after a recent restriction", sub: "it resumes once the account is stable again" };
       } else if (onboarded) {
         const ready = referralMaturesAt(a); // QC + 1 week; null when not QC'd yet or already matured
         if (!a.verifiedAt) {
