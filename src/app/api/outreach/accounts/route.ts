@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { categoryResolver, categoriesResolver } from "@/lib/maturing/programs.mjs";
 import { prisma } from "@/lib/prisma";
+import { connectionSummary } from "@/lib/connection-count-report";
 
 // Read-only identity feed for the Ortus Outreach app: which LinkedIn profile
 // sits behind each GoLogin profile. Outreach uses it to name an account it is
@@ -47,6 +48,7 @@ export async function GET(req: NextRequest) {
       twoFactorResetNeeded: true,
       maturingStartFailedAt: true,
       maturingStartFailedReason: true,
+      connectionHistory: true, // reduced to the engine-read summary below
       accountPassword: true, // only reduced to hasPassword below; never sent
       rentals: {
         where: { status: { in: ["active", "pending_access", "payment_failed"] } },
@@ -81,6 +83,8 @@ export async function GET(req: NextRequest) {
       // say it under a stopped row (Sam, 2026-11-08). Cleared on a successful start.
       maturingStartFailedAt: a.maturingStartFailedAt || null,
       maturingStartFailedReason: a.maturingStartFailedReason || "",
+      // Weekly LinkedIn connection readings taken during maturing: latest count + 30-day change.
+      connections: connectionSummary(a.connectionHistory),
       gologinProfileId: a.gologinProfileId || "",
       loginEmail: (a.loginEmail || "").trim().toLowerCase(),
       name: a.linkedinName,
