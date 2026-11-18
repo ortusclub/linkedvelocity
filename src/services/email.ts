@@ -1246,9 +1246,11 @@ export async function sendTopUpNotification(opts: {
   customerName?: string | null;
   amount: number | string;
   method: "card" | "crypto";
+  // Crypto only: what arrived where, when it was not USDC on Base.
+  cryptoLabel?: string;
 }) {
   const amountStr = Number(opts.amount).toFixed(2);
-  const methodLabel = opts.method === "card" ? "Card (Stripe)" : "Crypto (USDC on Base)";
+  const methodLabel = opts.method === "card" ? "Card (Stripe)" : `Crypto (${opts.cryptoLabel || "USDC on Base"})`;
   const amountUnit = opts.method === "card" ? `$${amountStr}` : `$${amountStr} USDC`;
   return sendEmail({
     to: adminEmail,

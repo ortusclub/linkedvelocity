@@ -699,6 +699,10 @@ model DepositAddress {
   address          String   @unique
   derivationIndex  Int      @unique @map("derivation_index")
   lastSeenBalance  Decimal  @default(0) @map("last_seen_balance") @db.Decimal(18, 6)
+  // BNB Smart Chain (BEP-20) balances already credited, in whole tokens (18 decimals).
+  // Customers sometimes pay USDT on BSC instead of USDC on Base; see src/lib/bsc-deposits.ts.
+  bscUsdtLastSeen  Decimal  @default(0) @map("bsc_usdt_last_seen") @db.Decimal(38, 18)
+  bscUsdcLastSeen  Decimal  @default(0) @map("bsc_usdc_last_seen") @db.Decimal(38, 18)
   createdAt        DateTime @default(now()) @map("created_at")
 
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)

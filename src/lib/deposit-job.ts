@@ -9,14 +9,19 @@ export async function withDepositJob<T>(work: (assertActive: () => Promise<void>
   return withNetworkDepositJob(8453, work);
 }
 
+// BNB Smart Chain deposits (wrong-network USDT/USDC payments) use their own lock.
+export async function withBscDepositJob<T>(work: (assertActive: () => Promise<void>) => Promise<T>): Promise<T> {
+  return withNetworkDepositJob(56, work);
+}
+
 export async function withEthereumDepositJob<T>(work: (assertActive: () => Promise<void>) => Promise<T>): Promise<T> {
   return withNetworkDepositJob(1, work);
 }
 
-async function withNetworkDepositJob<T>(chainId: 1 | 8453, work: (assertActive: () => Promise<void>) => Promise<T>): Promise<T> {
+async function withNetworkDepositJob<T>(chainId: 1 | 56 | 8453, work: (assertActive: () => Promise<void>) => Promise<T>): Promise<T> {
   return prisma.$transaction(async tx => {
     const rows = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${chainId}::integer, 17001) AS acquired`;
-    if (!rows[0]?.acquired) throw new DepositJobBusy(chainId === 1 ? "Another Ethereum sweep is already running. Wait for it to finish, then review again." : "A deposit check or sweep is already running. Refresh shortly.");
+    if (!rows[0]?.acquired) throw new DepositJobBusy(chainId === 1 ? "Another Ethereum sweep is already running. Wait for it to finish, then review again." : chainId === 56 ? "A BSC deposit check or sweep is already running. Refresh shortly." : "A deposit check or sweep is already running. Refresh shortly.");
     const started = Date.now();
     return work(async () => {
       if (Date.now() - started > 150_000) throw new Error("Deposit job time limit reached");
