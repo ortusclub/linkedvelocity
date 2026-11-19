@@ -10,7 +10,7 @@ import UnlockGuide, { type ScreenId } from "./unlock-guide";
 interface BoardRow { name: string; signups: number; converted: number; lifetimeEarnings: string; isMe: boolean; }
 interface Activity { kind: string; name: string; referrer: string | null; mine: boolean; date: string; }
 type FixIssue = "application_incomplete" | "email_added" | "email_primary" | "twofa" | "password";
-interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; callBookedAt: string | null; }
+interface Signup { id: string; name: string; date: string; whoLabel: string; pill: { text: string; tone: "green" | "blue" | "amber" | "red" | "grey" }; line: string; sub: string; path: string; fee: string; progress: number; action: "resume" | "onboard" | "clear" | null; kind: "action" | "blocked" | "waiting" | "paid"; fix: { issues: FixIssue[]; state: "open" | "referrer_done" } | null; restricted: boolean; restrictionReport: { type: "qr_done" | "recovered"; at: string } | null; liUrl: string | null; pay: { text: string; sub?: string } | null; journey: { label: string; date: string | null; state: "done" | "now" | "todo" | "warn" }[] | null; onboarded: boolean; deletable: boolean; withdrawable: boolean; withdrawn: boolean; resumeSessionId: string | null; codeSessionId: string | null; method: "computer" | "phone" | null; recoveryGuide: { step: string | null; history: string[]; helpSentAt: string | null; appealSentAt: string | null } | null; callBookedAt: string | null; payout: { method: string | null; details: string | null; name: string | null }; }
 interface Payout { id: string; type: string; description: string | null; amount: number; method: string | null; reference: string | null; paidAt: string | null; confirmedAt: string | null; }
 interface Tier { base: number; verified: number; }
 interface Config { currency: string; symbol: string; offer: { setup: string; monthly: string }; referralTiers: { referral: number; phone: Tier; computer: Tier }; payoutMethods: string[]; defaultPayoutMethod: string; }
@@ -157,6 +157,54 @@ function LockOpenGlyph({ size = 14, color = "#fff" }: { size?: number; color?: s
   );
 }
 
+// Per-person payout editor on a signup card: where THIS onboarded account's own setup fee +
+// monthly payouts are sent. Collapsed to a one-line summary; "Edit"/"Add" opens the form. The
+// referrer is the contact for people they brought in, so they can keep each person's GCash /
+// bank right. Saving raises the "payout changed — verify" flag on the admin payouts console.
+function SignupPayout({ s, methods, onSave }: { s: Signup; methods: string[]; onSave: (id: string, p: { paymentMethod: string; paymentDetails: string; payoutName: string }) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  const [method, setMethod] = useState(s.payout.method && methods.includes(s.payout.method) ? s.payout.method : (methods[0] || "GCash"));
+  const [details, setDetails] = useState(s.payout.details || "");
+  const [name, setName] = useState(s.payout.name || s.name || "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const has = !!(s.payout.method && s.payout.details);
+  const lbl: React.CSSProperties = { font: `600 11px ${JAK}`, color: C.slate, marginBottom: 6 };
+  const field: React.CSSProperties = { flex: 1, minWidth: 0, background: C.inputBg, border: `1px solid ${C.inputBorder}`, borderRadius: 10, padding: "10px 12px", font: `500 13px ${JAK}`, color: C.ink, outline: "none", boxSizing: "border-box" };
+  const submit = async () => {
+    setSaving(true); setSaved(false);
+    const ok = await onSave(s.id, { paymentMethod: method, paymentDetails: details.trim(), payoutName: name.trim() });
+    setSaving(false);
+    if (ok) { setSaved(true); setOpen(false); setTimeout(() => setSaved(false), 2500); }
+  };
+  if (!open) {
+    return (
+      <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: has ? "#f6f7f9" : C.warnBg, border: `1px solid ${has ? C.line : "#fed7aa"}`, borderRadius: 9 }}>
+        <span style={{ font: `600 11.5px ${JAK}`, color: has ? C.slate : "#9a3412", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {saved ? "Payout saved ✓ — we'll verify before paying" : has ? `Payout: ${s.payout.method} · ${s.payout.details}${s.payout.name ? ` · ${s.payout.name}` : ""}` : "No payout details yet — add where their setup fee goes"}
+        </span>
+        <button onClick={() => setOpen(true)} style={{ marginLeft: "auto", flex: "none", font: `700 11.5px ${JAK}`, color: has ? "#2563eb" : "#c2410c", background: "none", border: "none", cursor: "pointer" }}>{has ? "Edit" : "Add"}</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 9, padding: "11px 12px", background: "#f6f7f9", border: `1px solid ${C.line}`, borderRadius: 11 }}>
+      <div style={{ font: `700 11.5px ${JAK}`, color: C.ink, marginBottom: 8 }}>Where {(s.name || "they").split(/\s+/)[0]}&apos;s payout goes</div>
+      <div style={lbl}>Pay via</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ ...field, flex: "none", width: 130, cursor: "pointer", font: `600 13px ${JAK}` }}>{methods.map((m) => <option key={m}>{m}</option>)}</select>
+        <input value={details} onChange={(e) => setDetails(e.target.value)} placeholder="account number / details" style={field} />
+      </div>
+      <div style={lbl}>Account name</div>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name the account is registered under" style={{ ...field, width: "100%", marginBottom: 10 }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => setOpen(false)} disabled={saving} style={{ flex: "none", font: `700 12.5px ${JAK}`, color: C.slate, background: "#fff", border: `1px solid ${C.line}`, padding: "10px 14px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
+        <button onClick={submit} disabled={saving || !details.trim()} style={{ flex: 1, font: `700 13px ${JAK}`, color: "#fff", background: C.green, border: "none", padding: 11, borderRadius: 10, cursor: saving || !details.trim() ? "default" : "pointer", opacity: !details.trim() ? 0.6 : 1 }}>{saving ? "Saving…" : "Save payout"}</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Portal({ token }: { token: string }) {
   const [data, setData] = useState<Data | null>(null);
   const preference = useDisplayCurrency(token, data?.me.displayCurrency, token);
@@ -254,6 +302,17 @@ export default function Portal({ token }: { token: string }) {
       const fresh = await fetch(`/api/m/${token}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (fresh) setData(fresh);
     } finally { setWithdrawingId(null); }
+  };
+  // Save the payout destination for one onboarded person (their own setup fee + monthly). The
+  // server verifies the signup belongs to this referrer and flags the change for the team.
+  const saveSignupPayout = async (applicationId: string, p: { paymentMethod: string; paymentDetails: string; payoutName: string }): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/m/${token}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "signupPayout", applicationId, ...p }) });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); alert(b.error || "Could not save the payout details. Please try again."); return false; }
+      const b = await res.json().catch(() => ({}));
+      if (b.payout) setData((d) => d && ({ ...d, signups: d.signups.map((s) => s.id === applicationId ? { ...s, payout: b.payout } : s) }));
+      return true;
+    } catch { alert("Check your connection and try again."); return false; }
   };
   // Pull the latest LinkedIn sign-in code for one signup's onboarding session. Reuses the
   // onboarding GET, which only returns a code while forwarding is live (pre-onboarding).
@@ -679,6 +738,9 @@ export default function Portal({ token }: { token: string }) {
                       <div style={{ font: `700 11.5px ${JAK}`, color: C.blueInk }}>📅 {s.pay.text}</div>
                       {s.pay.sub && <div style={{ font: `500 11px/1.4 ${JAK}`, color: C.slate, marginTop: 2 }}>{s.pay.sub}</div>}
                     </div>
+                  )}
+                  {(s.onboarded || s.kind === "waiting") && !s.withdrawn && (
+                    <SignupPayout s={s} methods={config.payoutMethods} onSave={saveSignupPayout} />
                   )}
                   {(!s.restricted || s.withdrawn) && s.action !== "onboard" && (
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.line2}` }}>

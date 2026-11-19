@@ -23,11 +23,15 @@ export const AMBASSADOR_PAYOUT_FIELDS = [
   "bankRoutingNumber", "bankSortCode", "usdcWalletAddress", "usdcNetwork",
   "paypalEmail", "wiseEmail",
 ] as const;
+// The GCash-style free-text payout an ambassador is paid on, as set from the referrer portal
+// (per onboarded person). A different, smaller set than the logged-in owner's bank form above.
+export const AMBASSADOR_PORTAL_PAYOUT_FIELDS = ["paymentMethod", "paymentDetails", "payoutName"] as const;
 
 const FIELD_LABELS: Record<string, string> = {
   paymentMethod: "method",
   paymentDetails: "account details",
   paymentName: "account name",
+  payoutName: "account name",
   bankName: "bank",
   bankAccountName: "account name",
   bankAccountNumber: "account number",
