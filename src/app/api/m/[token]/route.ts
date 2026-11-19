@@ -5,7 +5,7 @@ import { currencyConfig } from "@/lib/referral-currency";
 import { monthlyDueDate, setupPaidDate } from "@/lib/payment-schedule";
 import { deleteApplicationCascade } from "@/lib/application-delete";
 import { appIssueIsRestricted } from "@/lib/restriction";
-import { diffPayout, nextPayoutChange, REFERRER_PAYOUT_FIELDS } from "@/lib/payout-change";
+import { diffPayout, nextPayoutChange, REFERRER_PAYOUT_FIELDS, AMBASSADOR_PORTAL_PAYOUT_FIELDS } from "@/lib/payout-change";
 import type { Prisma } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     prisma.referrer.findMany({ select: { slug: true, name: true } }),
     prisma.ambassadorApplication.findMany({
       orderBy: { createdAt: "desc" },
-      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, withdrawnAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, selfServiceOnboarding: { select: { state: true, id: true } }, scheduledMeeting: { select: { startsAt: true } } },
+      select: { id: true, fullName: true, referredBy: true, referralSource: true, status: true, verifiedAt: true, accountIssue: true, onboardingFix: true, restrictionReport: true, onboardedAt: true, onboardingMethod: true, onboardingVerified: true, paidAt: true, withdrawnAt: true, createdAt: true, email: true, linkedinUrl: true, accountFreshness: true, monthlyPayouts: true, paymentMethod: true, paymentDetails: true, payoutName: true, selfServiceOnboarding: { select: { state: true, id: true } }, scheduledMeeting: { select: { startsAt: true } } },
     }),
     // For surfacing an active LinkedIn restriction to the referrer we need the linked
     // account's live restriction flag. Match the same way the admin does (below).
@@ -334,7 +334,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // A booked setup call gates the "onboard them yourself" CTA — the team is already lined up
       // to onboard this person, so the referrer shouldn't also start it.
       const callBookedAt = a.scheduledMeeting?.startsAt ? new Date(a.scheduledMeeting.startsAt).toISOString() : null;
-      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide, callBookedAt };
+      // Where this onboarded person's own setup fee + monthly payouts are sent. The referrer is
+      // the contact for the people they brought in (often friends/family with no login of their
+      // own), so they can set/correct it per person from the card. Feeds the owner payout on
+      // /admin/payouts; editing it raises the "payout changed — verify" flag there.
+      const payout = { method: a.paymentMethod, details: a.paymentDetails, name: a.payoutName };
+      return { id: a.id, name: a.fullName, date: a.createdAt, whoLabel, pill, line, sub, path, fee, progress, action, kind, fix, restricted: accountRestricted, restrictionReport, liUrl, pay, journey, onboarded: reachedOnboarded, deletable, withdrawable, withdrawn, resumeSessionId, codeSessionId, method, recoveryGuide, callBookedAt, payout };
     });
 
   // Show EVERY signup the referrer owns — no cap. Any cap (the old one was the 25 most recent
@@ -460,6 +465,33 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
     }
     await prisma.ambassadorApplication.update({ where: { id: body.applicationId }, data: { restrictionReport: next } });
     return NextResponse.json({ ok: true });
+  }
+
+  // The referrer sets/corrects the payout destination for ONE person they onboarded (the
+  // account owner's own setup fee + monthly). Onboarded friends/family often have no login of
+  // their own, so the referrer — their contact — manages it from the card. Writes the owner's
+  // payout fields and raises the "payout changed — verify" flag on /admin/payouts.
+  if (body.action === "signupPayout" && typeof body.applicationId === "string") {
+    const app = await prisma.ambassadorApplication.findUnique({
+      where: { id: body.applicationId },
+      select: { referredBy: true, paymentMethod: true, paymentDetails: true, payoutName: true, payoutChange: true },
+    });
+    if (!app || (app.referredBy || "").trim() !== me.slug) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const nextPay = {
+      paymentMethod: typeof body.paymentMethod === "string" ? body.paymentMethod : app.paymentMethod,
+      paymentDetails: typeof body.paymentDetails === "string" ? body.paymentDetails.trim() : app.paymentDetails,
+      payoutName: typeof body.payoutName === "string" ? body.payoutName.trim() : app.payoutName,
+    };
+    const changed = diffPayout(app, nextPay, AMBASSADOR_PORTAL_PAYOUT_FIELDS);
+    const updated = await prisma.ambassadorApplication.update({
+      where: { id: body.applicationId },
+      data: {
+        ...nextPay,
+        ...(changed ? { payoutChange: nextPayoutChange(app.payoutChange, changed, "referrer") as unknown as Prisma.InputJsonValue } : {}),
+      },
+      select: { paymentMethod: true, paymentDetails: true, payoutName: true },
+    });
+    return NextResponse.json({ ok: true, payout: { method: updated.paymentMethod, details: updated.paymentDetails, name: updated.payoutName } });
   }
 
   const nextPayout = {
