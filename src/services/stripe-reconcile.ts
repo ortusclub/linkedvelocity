@@ -54,6 +54,25 @@ const DAY = 86_400_000;
 const near = (aMs: number, bMs: number, days: number) => Math.abs(aMs - bMs) <= days * DAY;
 const eq = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
+// Does any non-empty subset of `amountsCents` sum exactly to `targetCents`? Used to match
+// one Stripe charge against several per-account ledger rows (a grouped renewal recorded as
+// split entries), so a renter with more than one batch in the window still matches the
+// right subset instead of the whole window. Works in integer cents; rows are capped by the
+// caller, so the reachable-sums set stays small.
+function subsetSumHits(amountsCents: number[], targetCents: number): boolean {
+  if (targetCents <= 0) return false;
+  const reachable = new Set<number>([0]);
+  for (const a of amountsCents) {
+    for (const s of [...reachable]) {
+      const next = s + a;
+      if (next > targetCents) continue; // amounts are positive — never overshoot
+      if (next === targetCents) return true;
+      reachable.add(next);
+    }
+  }
+  return false;
+}
+
 export async function reconcileStripe({ sinceDays = 60 }: { sinceDays?: number } = {}): Promise<ReconResult> {
   const sinceSec = Math.floor(Date.now() / 1000) - sinceDays * 86_400;
 
@@ -108,13 +127,21 @@ export async function reconcileStripe({ sinceDays = 60 }: { sinceDays?: number }
     let accounted = keys.some((k) => descBlob.includes(k));
     let reason = accounted ? "matched by Stripe id" : "";
 
-    // (b) same-amount entry near the date for this user; or several summing to it (split entries).
+    // (b) same-amount entry near the date for this user; or a SUBSET of nearby per-account
+    // entries summing to it (one grouped Stripe charge recorded as several split rows).
+    // We look for a subset that sums to the charge — not the whole window — so a renter
+    // with more than one batch in the window (e.g. back-to-back daily card runs) still
+    // matches the right subset instead of overshooting.
     if (!accounted && user) {
       const mine = (byUser.get(user.id) || []).filter((r) => near(r.at, atMs, 12));
       if (mine.some((r) => eq(Math.abs(r.amount), amt))) { accounted = true; reason = "matched to this renter's ledger entry"; }
       else {
-        const tight = mine.filter((r) => near(r.at, atMs, 3));
-        if (tight.length > 0 && eq(tight.reduce((s, r) => s + Math.abs(r.amount), 0), amt)) { accounted = true; reason = "matched to this renter's split entries"; }
+        const tight = mine
+          .filter((r) => near(r.at, atMs, 3))
+          .sort((a, b) => Math.abs(a.at - atMs) - Math.abs(b.at - atMs))
+          .slice(0, 25); // cap so the subset-sum set stays bounded
+        const cents = tight.map((r) => Math.round(Math.abs(r.amount) * 100));
+        if (subsetSumHits(cents, Math.round(amt * 100))) { accounted = true; reason = "matched to this renter's split entries"; }
       }
     }
 
