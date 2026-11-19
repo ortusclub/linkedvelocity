@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { computePaymentsDue, type DueItem, type ReferralDue } from "@/lib/payment-schedule";
 import { currencyConfig, currencyConfigFor, type Currency } from "@/lib/referral-currency";
 import { reasonNote, reasonLabel } from "@/lib/payout-pause";
+import { payoutChangeFlag, type PayoutChangeFlag } from "@/lib/payout-change";
 
 // Unified payouts layer — ONE normalized view over the two payout stores that today
 // live apart: referral commissions (the `payouts` table) and ambassador setup+monthly
@@ -76,6 +77,7 @@ export interface UnifiedReadyPayout {
   sentViaWise: boolean;       // paid and the receipt is a wise.com link
   paused: PayoutPause | null; // manual pause (console) — when set this row is held
   flagged: boolean;           // its payee has a visible "check before paying" flag
+  payoutChange: PayoutChangeFlag | null; // payee self-changed their payout method — verify before paying
   // Setup rows only: pipeline Step-5 security lockdown complete? undefined for non-setup /
   // non-owed rows. Does not gate payment — the console flags "ready but not locked down".
   secured?: boolean;
@@ -120,6 +122,7 @@ export interface UnifiedPayee {
   history: UnifiedPayment[];  // newest first
   flags: PayeeFlags | null;   // "check before paying" signals (ambassadors)
   pause: PayoutPause | null;  // manual payout pause (console)
+  payoutChange: PayoutChangeFlag | null; // payee self-changed their payout method — verify before paying
 }
 
 export interface UnifiedPayouts {
@@ -272,12 +275,12 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   // Payment method/details per payee, fetched once so referral and ambassador rows can
   // both show a masked destination and a Wise rail. Referrers key by slug; ambassadors by email.
   const [referrers, apps, accounts] = await Promise.all([
-    prisma.referrer.findMany({ select: { id: true, slug: true, name: true, paymentName: true, paymentMethod: true, paymentDetails: true, email: true } }),
+    prisma.referrer.findMany({ select: { id: true, slug: true, name: true, paymentName: true, paymentMethod: true, paymentDetails: true, email: true, payoutChange: true } }),
     prisma.ambassadorApplication.findMany({
       select: {
         id: true, email: true, fullName: true, referredBy: true, payoutCurrency: true, linkedinUrl: true,
         paymentMethod: true, paymentDetails: true, payoutName: true, paypalEmail: true, wiseEmail: true,
-        monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true,
+        monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true, payoutChange: true,
       },
     }),
     // Live accounts for the check-before-paying flags — exited accounts (exitReason set) are
@@ -339,6 +342,14 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ambMethod = (a: (typeof apps)[number] | undefined) =>
     a?.paymentMethod || (a?.paypalEmail ? `PayPal: ${a.paypalEmail}` : a?.wiseEmail ? `Wise: ${a.wiseEmail}` : null);
 
+  // Pending "payout method changed" flags (self-serve edits not yet verified), keyed the same
+  // way payees are: referrers by slug, ambassadors by email. An ambassador email may have more
+  // than one application — the first with an unacked change wins.
+  const refChangeBySlug = new Map<string, PayoutChangeFlag>();
+  for (const r of referrers) { const f = payoutChangeFlag(r.payoutChange); if (f) refChangeBySlug.set(r.slug.toLowerCase(), f); }
+  const ambChangeByEmail = new Map<string, PayoutChangeFlag>();
+  for (const a of apps) { const k = a.email.toLowerCase(); if (!ambChangeByEmail.has(k)) { const f = payoutChangeFlag(a.payoutChange); if (f) ambChangeByEmail.set(k, f); } }
+
   const ready: UnifiedReadyPayout[] = [];
 
   // ── Owed: referral commissions ────────────────────────────────────────
@@ -357,6 +368,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       method, details, rail: railFor(method), dueDate: r.dueDate, overdue, state,
       holdReason: paused ? reasonLabel(paused.reason) : r.holdReason ?? null,
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused, flagged: false,
+      payoutChange: r.referrerSlug ? refChangeBySlug.get(r.referrerSlug.toLowerCase()) || null : null,
     });
   };
   // Consolidate the READY referrals per referrer into a single payout — one row, one total,
@@ -391,6 +403,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       method, details, rail: railFor(method), dueDate: earliestDue, overdue, state,
       holdReason: paused ? reasonLabel(paused.reason) : null,
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false, paused, flagged: false,
+      payoutChange: first.referrerSlug ? refChangeBySlug.get(first.referrerSlug.toLowerCase()) || null : null,
       refApps: group.map((r) => ({ applicationId: r.applicationId, person: r.person, amount: r.amount, type: r.onboardingType })),
     });
   }
@@ -414,6 +427,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       holdReason: paused ? reasonLabel(paused.reason) : held ? d.blocked : null,
       receipt: null, paidAt: null, confirmed: false, sentViaWise: false,
       paused, flagged: !!flagsByEmail.get(email)?.flagged,
+      payoutChange: ambChangeByEmail.get(email) || null,
       ...(d.kind === "setup" ? { secured: d.secured } : {}),
     });
   };
@@ -426,7 +440,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
   const ensurePayee = (key: string, name: string, sub: string | null, kind: PayoutKind,
     method: string | null, details: string | null, referredBy: string | null): UnifiedPayee => {
     let p = payeeMap.get(key);
-    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, rental: null, currency: "PHP", nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key) }; payeeMap.set(key, p); }
+    if (!p) { p = { key, name, sub, kinds: [], referredBy, method, details, rail: railFor(method), email: null, phone: null, holder: null, accounts: 0, linkedinUrls: [], workEmail: null, rental: null, currency: "PHP", nextDue: null, note: null, totalPaid: 0, lastPaidAt: null, history: [], flags: null, pause: pauseFor(key), payoutChange: null }; payeeMap.set(key, p); }
     if (!p.kinds.includes(kind)) p.kinds.push(kind);
     if (!p.method && method) { p.method = method; p.rail = railFor(method); }
     if (!p.details && details) p.details = details;
@@ -445,6 +459,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     payee.currency = currencyConfig(r?.slug || "").currency;
     if (!payee.email && r?.email) payee.email = r.email;
     if (!payee.holder && r?.paymentName) payee.holder = r.paymentName;
+    if (!payee.payoutChange && r?.slug) payee.payoutChange = refChangeBySlug.get(r.slug.toLowerCase()) || null;
     const amt = Number(p.amount) || 0;
     payee.history.push({
       date: p.paidAt ? (p.paidAt as Date).toISOString() : null, amount: amt, kind: "referral",
@@ -464,6 +479,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     payee.currency = r.currency;
     if (!payee.email && ref?.email) payee.email = ref.email;
     if (!payee.holder && ref?.paymentName) payee.holder = ref.paymentName;
+    if (!payee.payoutChange && ref?.slug) payee.payoutChange = refChangeBySlug.get(ref.slug.toLowerCase()) || null;
   }
   // Owners owed a payout this run (setup / monthly / upcoming), so a first-ever setup fee with
   // no payment history still gets a payee — and therefore a populated detail panel (LinkedIn,
@@ -487,6 +503,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
     if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
     if (!payee.accounts && payee.rental) payee.accounts = payee.rental.totalCount;
+    if (!payee.payoutChange) payee.payoutChange = ambChangeByEmail.get(a.email.toLowerCase()) || null;
     payee.currency = currencyConfigFor(a.payoutCurrency, a.referredBy).currency;
     for (const e of entries) {
       const kind: PayoutKind = e.kind === "setup" ? "setup" : "monthly";
@@ -512,7 +529,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
       payeeKey: `ref:${(r?.slug || p.referrerId).toLowerCase()}`, payeeName: r?.name || r?.paymentName || p.referrerId, payeeSub: r?.slug || null,
       referredBy: null, description: p.description || "Referral", amount: Number(p.amount) || 0, currency: currencyConfig(r?.slug || "").currency,
       method, details: r?.paymentDetails || null, rail: railFor(method), dueDate: iso as string, overdue: false, state: "paid", holdReason: null,
-      receipt: p.reference || null, paidAt: iso, confirmed: !!p.confirmedAt, sentViaWise: isWiseReceipt(p.reference), paused: null, flagged: false,
+      receipt: p.reference || null, paidAt: iso, confirmed: !!p.confirmedAt, sentViaWise: isWiseReceipt(p.reference), paused: null, flagged: false, payoutChange: null,
     });
   }
   for (const a of apps) {
@@ -528,7 +545,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
         payeeKey: `amb:${a.email.toLowerCase()}`, payeeName: a.fullName || a.email, payeeSub: a.email,
         referredBy, description: kind === "setup" ? "Setup fee" : "Monthly", amount: Number(e.amount) || 0, currency: cur,
         method, details: a.paymentDetails || null, rail: railFor(method), dueDate: e.paidAt as string, overdue: false, state: "paid", holdReason: null,
-        receipt: e.proofUrl || null, paidAt: e.paidAt || null, confirmed: !!e.acknowledged, sentViaWise: isWiseReceipt(e.proofUrl), paused: null, flagged: false,
+        receipt: e.proofUrl || null, paidAt: e.paidAt || null, confirmed: !!e.acknowledged, sentViaWise: isWiseReceipt(e.proofUrl), paused: null, flagged: false, payoutChange: null,
       });
     }
   }

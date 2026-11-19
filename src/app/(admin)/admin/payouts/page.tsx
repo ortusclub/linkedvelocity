@@ -37,6 +37,7 @@ type State = "ready" | "upcoming" | "hold" | "needs_details" | "manual" | "paid"
 interface UnreadMail { from: string; subject: string; when: string }
 interface Flags { linkedinUrl: string | null; unreadMail: UnreadMail[]; recoveredAt: string | null; recoveryNote: string | null; checkedAt: string | null; flagged: boolean; }
 interface Pause { reason: string; pausedAt: string; note: string; emailed: string[]; }
+interface ChangeFlag { at: string; by: string; fields: string[]; }
 interface Rental { renterName: string | null; since: string | null; rentedCount: number; totalCount: number; }
 interface Row {
   id: string; kind: Kind; payeeKey: string; payeeName: string; payeeSub: string | null;
@@ -44,7 +45,7 @@ interface Row {
   method: string | null; rail: "wallet" | "bank" | null; dueDate: string; overdue: boolean;
   state: State; holdReason: string | null; masked: string | null;
   receipt: string | null; paidAt: string | null; confirmed: boolean; sentViaWise: boolean;
-  paused: Pause | null; flagged: boolean; secured?: boolean;
+  paused: Pause | null; flagged: boolean; secured?: boolean; payoutChange: ChangeFlag | null;
   refApps?: { applicationId: string; person: string; amount: number; type: string }[];
 }
 interface Payment { date: string | null; amount: number; kind: Kind; label: string; by: string | null; receipt: string | null; notified: boolean; acknowledged: boolean; }
@@ -52,11 +53,11 @@ interface Payee {
   key: string; name: string; sub: string | null; kinds: Kind[]; referredBy: string | null;
   method: string | null; masked: string | null; details: string | null; rail: "wallet" | "bank" | null;
   email: string | null; phone: string | null; holder: string | null; accounts: number; linkedinUrls: string[]; workEmail: string | null; rental: Rental | null; currency: "PHP" | "USD"; nextDue: string | null; note: string | null;
-  totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null;
+  totalPaid: number; lastPaidAt: string | null; history: Payment[]; flags: Flags | null; pause: Pause | null; payoutChange: ChangeFlag | null;
 }
 interface Feed { ready: Row[]; payees: Payee[]; wiseEnabled: boolean; }
 interface MarkPaidPayload { id: string; payeeKey: string; kind: Kind; amount: number; receiptUrl: string; apps?: { applicationId: string; amount: number }[]; }
-interface PayoutActions { markChecked: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; markPaid: (p: MarkPaidPayload) => Promise<boolean>; }
+interface PayoutActions { markChecked: (payeeKey: string) => void; verifyPayoutChange: (payeeKey: string) => void; pause: (p: PausePayload) => void; resume: (payeeKey: string) => void; markPaid: (p: MarkPaidPayload) => Promise<boolean>; }
 
 const money = (n: number, c: "PHP" | "USD" = "PHP") =>
   c === "USD" ? `$${(n || 0).toLocaleString()}` : new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(n || 0);
@@ -140,6 +141,26 @@ function CheckBlock({ flags, rental, onMarkChecked }: { flags: Flags; rental?: R
     </div>
   );
 }
+// Row pill: a payee changed their OWN payout method/details and no one has verified it yet.
+// Sits by the method cell so it's visible before paying. Expands to the ChangeBlock below.
+function ChangePill({ change }: { change: ChangeFlag }) {
+  return <span title={`Changed ${fmtShort(change.at)} by ${change.by} · ${change.fields.join(", ")}`} style={{ ...smallPill(PILLS.red.bg, PILLS.red.fg), marginTop: 3, display: "inline-block" }}>⚠ Payout changed</span>;
+}
+
+// Expanded block: the payee self-changed their payout destination. Make the team confirm the
+// new details before paying, then clear the flag with "Verified". No money moves here.
+function ChangeBlock({ change, onVerify }: { change: ChangeFlag; onVerify: () => void }) {
+  const who = change.by === "referrer" ? "The referrer" : change.by === "owner" ? "The account owner" : "The payee";
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderBottom: `1px solid ${C.divider}`, background: "#fef2f2" }}>
+      <span style={{ flex: 1, font: `500 12.5px/1.5 ${SANS}`, color: "#7f1d1d" }}>
+        <b>⚠ Payout details changed {fmtShort(change.at)}.</b> {who} updated their {change.fields.join(", ")} from the portal. Confirm the new destination is right — ideally with the payee on a channel you trust — before sending.
+      </span>
+      <button onClick={onVerify} style={{ border: "1px solid #fecaca", background: C.card, color: "#b91c1c", borderRadius: 8, padding: "6px 11px", font: `700 12px ${SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>✓ Verified</button>
+    </div>
+  );
+}
+
 // Context the Pause form needs to compose the owner email + know who can be notified.
 interface PauseCtx { payeeKey: string; ownerFirst: string; ownerEmail: string | null; referrerFirst: string | null; kind: string; amt: string; dest: string; }
 interface PausePayload { payeeKey: string; reason: PauseReason; notifyOwner: boolean; notifyReferrer: boolean; ownerEmailBody: string | null; }
@@ -408,6 +429,7 @@ export default function PayoutsPage() {
     const post = (path: string, body: object) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => load()).catch(() => {});
     return {
       markChecked: (payeeKey) => void post("/api/admin/payouts/mark-checked", { payeeKey }),
+      verifyPayoutChange: (payeeKey) => void post("/api/admin/payouts/ack-payout-change", { payeeKey }),
       pause: (p) => void post("/api/admin/payouts/pause", p),
       resume: (payeeKey) => void post("/api/admin/payouts/resume", { payeeKey }),
       markPaid: async (p) => {
@@ -642,11 +664,13 @@ function RunRow({ r, colTemplate, wiseEnabled, selected, onToggleSel, expanded, 
         <div style={{ minWidth: 0 }}>
           <div style={{ font: `600 13px ${SANS}`, color: C.ink }}>{r.method || "—"}</div>
           <div style={{ font: `500 12px ${GRO}`, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.masked || ""}</div>
+          {r.payoutChange && <ChangePill change={r.payoutChange} />}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0, overflow: "hidden" }}><WiseCell r={r} wiseEnabled={wiseEnabled} onResume={() => actions.resume(r.payeeKey)} /></div>
       </div>
       {expanded && (
         <div style={{ margin: "0 16px 16px 56px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
+          {r.payoutChange && <ChangeBlock change={r.payoutChange} onVerify={() => actions.verifyPayoutChange(r.payeeKey)} />}
           {flags && <CheckBlock flags={flags} rental={payee?.rental} onMarkChecked={() => actions.markChecked(r.payeeKey)} />}
           {canPause && <PausePanel ctx={ctxForRow(r, payee)} paused={r.paused} onPause={actions.pause} onResume={() => actions.resume(r.payeeKey)} />}
           {["ready", "manual", "needs_details"].includes(r.state) && <MarkPaid r={r} markPaid={actions.markPaid} />}
@@ -838,6 +862,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                   <div style={{ minWidth: 0 }}>
                     <div style={{ font: `600 13px ${SANS}`, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.method || "—"}</div>
                     <div style={{ font: `500 12px ${GRO}`, color: C.faint }}>{p.masked || ""}</div>
+                    {p.payoutChange && <ChangePill change={p.payoutChange} />}
                   </div>
                   <span style={{ font: `500 13px ${SANS}`, color: C.ink2 }}>{p.accounts > 0 ? p.accounts : "—"}</span>
                   <div style={{ minWidth: 0 }}>
@@ -849,6 +874,7 @@ function AllPayees({ payees, ready, actions }: { payees: Payee[]; ready: Row[]; 
                 </div>
                 {isOpen && (
                   <div style={{ margin: "0 16px 16px 34px", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.card }}>
+                    {p.payoutChange && <ChangeBlock change={p.payoutChange} onVerify={() => actions.verifyPayoutChange(p.key)} />}
                     {p.flags && <CheckBlock flags={p.flags} rental={p.rental} onMarkChecked={() => actions.markChecked(p.key)} />}
                     {st !== "ended" && <PausePanel ctx={ctxForPayee(p)} paused={p.pause} onPause={actions.pause} onResume={() => actions.resume(p.key)} />}
                     {p.note && <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.divider}`, font: `500 12.5px/1.5 ${SANS}`, background: st === "restricted" ? "#fef2f2" : st === "hold" ? "#fff7ed" : C.inset, color: st === "restricted" ? "#7f1d1d" : st === "hold" ? "#9a3412" : C.ink2 }}>{p.note}</div>}

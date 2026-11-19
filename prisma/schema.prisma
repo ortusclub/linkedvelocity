@@ -571,6 +571,11 @@ model AmbassadorApplication {
   // Legal/registered account-holder name for the payout method — must match the name
   // on the GCash / bank account or the transfer is rejected.
   payoutName        String?          @map("payout_name")
+  // Set when the account owner changes their own payout method/bank/wallet details from the
+  // self-serve payout form, so the payouts console can flag "mode of payment changed — verify
+  // before paying" until someone checks it. Same shape as Referrer.payoutChange (see
+  // src/lib/payout-change.ts): { at, by, from:{<field>:<old value>}, ackedAt, ackedBy }.
+  payoutChange      Json?            @map("payout_change")
   // Recurring ₱500/month payout log: [{ paidAt: ISO, amount: number, note?: string }].
   // The one-time ₱1,000 setup fee's paid date is `paidAt` above.
   monthlyPayouts    Json?            @map("monthly_payouts")
@@ -638,6 +643,11 @@ model Referrer {
   paymentMethod    String?  @map("payment_method")
   paymentDetails   String?  @map("payment_details")
   paymentName      String?  @map("payment_name") // account-holder / registered name on the payout account (may differ from `name`)
+  // Set when the referrer changes their own payout method/details/name from the portal, so the
+  // payouts console can flag "mode of payment changed — verify before paying" until someone
+  // checks it. Shape: { at, by, from:{<field>:<old value>}, ackedAt, ackedBy }. Cleared-to-acked
+  // (ackedAt set) by the "Verified" button; a fresh change re-flags. See src/lib/payout-change.ts.
+  payoutChange     Json?    @map("payout_change")
   assignedDay      String?  @map("assigned_day")
   assignedLocation String?  @map("assigned_location")
   active           Boolean  @default(true)
