@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { computePaymentsDue, type DueItem, type ReferralDue } from "@/lib/payment-schedule";
 import { currencyConfig, currencyConfigFor, type Currency } from "@/lib/referral-currency";
 import { reasonNote, reasonLabel } from "@/lib/payout-pause";
+import { resolveAccountForApplication, canonicalLinkedinUrl } from "@/lib/account-link";
 import { payoutChangeFlag, type PayoutChangeFlag } from "@/lib/payout-change";
 
 // Unified payouts layer — ONE normalized view over the two payout stores that today
@@ -161,7 +162,7 @@ const isWiseReceipt = (url: string | null | undefined) => !!url && /wise\.com/i.
 
 const DAY_MS = 86400000;
 
-type HealthAccount = { id: string; linkedinUrl: string | null; notes: string | null; workEmail: string | null; restrictedAt: Date | null; permanentlyRestricted: boolean; twoFactorResetNeeded: boolean; restrictionLog: unknown };
+type HealthAccount = { id: string; linkedinUrl: string | null; personalEmail: string | null; notes: string | null; workEmail: string | null; restrictedAt: Date | null; permanentlyRestricted: boolean; twoFactorResetNeeded: boolean; restrictionLog: unknown };
 // Raw (pre-checkedAt) flag signals per owner email: unread account-inbox mail + a recent recovery.
 type RawFlags = { linkedinUrl: string | null; unreadMail: UnreadMail[]; recoveredAt: string | null; recoveryNote: string | null };
 
@@ -281,15 +282,30 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
         id: true, email: true, fullName: true, referredBy: true, payoutCurrency: true, linkedinUrl: true,
         paymentMethod: true, paymentDetails: true, payoutName: true, paypalEmail: true, wiseEmail: true,
         monthlyPayouts: true, onboardedAt: true, status: true, contactNumber: true, payoutChange: true,
+        selfServiceOnboarding: { select: { accountId: true } },
       },
     }),
     // Live accounts for the check-before-paying flags — exited accounts (exitReason set) are
     // no longer ours, so they don't drive flags either.
     prisma.linkedInAccount.findMany({
       where: { status: { notIn: ["removed", "retired", "under_review"] }, exitReason: null },
-      select: { id: true, linkedinUrl: true, notes: true, workEmail: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
+      select: { id: true, linkedinUrl: true, personalEmail: true, notes: true, workEmail: true, restrictedAt: true, permanentlyRestricted: true, twoFactorResetNeeded: true, restrictionLog: true },
     }),
   ]);
+
+  // Canonical LinkedIn URL per payee email, resolved the SAME way pipeline does (self-service
+  // FK → exact URL match → unique personal email) and showing the live account URL once linked.
+  // This is the one link admins open to verify before paying, so it must match pipeline/inventory.
+  const canonicalUrlByEmail = new Map<string, string[]>();
+  for (const a of apps) {
+    const acct = resolveAccountForApplication(a, accounts);
+    const url = canonicalLinkedinUrl(a, acct);
+    if (!url) continue;
+    const k = a.email.toLowerCase();
+    const arr = canonicalUrlByEmail.get(k) || [];
+    if (!arr.includes(url)) arr.push(url);
+    canonicalUrlByEmail.set(k, arr);
+  }
 
   // "Check before paying" signals per ambassador email + admin overrides (checkedAt / pause).
   const [{ raw: rawFlagsByEmail, urls: accountUrlsByEmail, workEmails: workEmailByEmail, rentals: rentalByEmail }, overrideRows] = await Promise.all([
@@ -307,7 +323,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     const unreadMail = checkedAt ? rf.unreadMail.filter((m) => m.when > checkedAt) : rf.unreadMail;
     const recoveredVisible = rf.recoveredAt && (!checkedAt || rf.recoveredAt > checkedAt) ? rf.recoveredAt : null;
     flagsByEmail.set(email, {
-      linkedinUrl: rf.linkedinUrl,
+      linkedinUrl: canonicalUrlByEmail.get(email)?.[0] || rf.linkedinUrl,
       unreadMail,
       recoveredAt: recoveredVisible,
       recoveryNote: recoveredVisible ? rf.recoveryNote : null,
@@ -499,7 +515,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     if (!payee.holder && a.payoutName) payee.holder = a.payoutName;
     if (!payee.nextDue) payee.nextDue = nextDueByEmail.get(a.email.toLowerCase()) || null;
     if (!payee.flags) payee.flags = flagsByEmail.get(a.email.toLowerCase()) || null;
-    if (payee.linkedinUrls.length === 0) payee.linkedinUrls = accountUrlsByEmail.get(a.email.toLowerCase()) || [];
+    if (payee.linkedinUrls.length === 0) payee.linkedinUrls = canonicalUrlByEmail.get(a.email.toLowerCase()) || accountUrlsByEmail.get(a.email.toLowerCase()) || [];
     if (!payee.workEmail) payee.workEmail = workEmailByEmail.get(a.email.toLowerCase()) || null;
     if (!payee.rental) payee.rental = rentalByEmail.get(a.email.toLowerCase()) || null;
     if (!payee.accounts && payee.rental) payee.accounts = payee.rental.totalCount;

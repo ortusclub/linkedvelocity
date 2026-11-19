@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { getCallMaps, pickCall } from "@/lib/calendar-calls";
+import { resolveAccountForApplication, canonicalLinkedinUrl } from "@/lib/account-link";
 
 export async function GET() {
   try {
@@ -27,17 +28,8 @@ export async function GET() {
 
     // Private admin views read the inventory notes from the account itself.
     const accounts = await prisma.linkedInAccount.findMany({ select: { id: true, linkedinUrl: true, personalEmail: true, notes: true, restrictedAt: true, permanentlyRestricted: true, status: true } });
-    const norm = (url: string | null) => (url || "").toLowerCase().replace(/^https?:\/\/(www\.)?/, "").split("?")[0].replace(/\/+$/, "");
-    const accountFor = (a: typeof applications[number]) => {
-      if (a.selfServiceOnboarding?.accountId) return accounts.find(account => account.id === a.selfServiceOnboarding!.accountId);
-      const urlMatches = a.linkedinUrl ? accounts.filter(account => norm(account.linkedinUrl) === norm(a.linkedinUrl)) : [];
-      if (urlMatches.length === 1) return urlMatches[0];
-      if (urlMatches.length > 1) return undefined;
-      const emailMatches = accounts.filter(account => account.personalEmail?.toLowerCase() === a.email.toLowerCase());
-      return emailMatches.length === 1 ? emailMatches[0] : undefined;
-    };
     const enriched = applications.map(a => {
-      const acct = accountFor(a);
+      const acct = resolveAccountForApplication(a, accounts);
       return {
       accountId: acct?.id || null,
       accountNotes: acct?.notes || null,
@@ -47,6 +39,9 @@ export async function GET() {
       accountPermanentlyRestricted: acct?.permanentlyRestricted || false,
       accountStatus: acct?.status || null,
       ...a,
+      // Canonical LinkedIn URL: the live account's once linked (reflects profile-build
+      // renames), else what the applicant submitted. Keeps pipeline in step with payouts.
+      linkedinUrl: canonicalLinkedinUrl(a, acct),
       contactNumber: contactMap.get(a.email) || a.contactNumber,
       call: a.scheduledMeeting ? { stage: a.scheduledMeeting.startsAt > new Date() ? "booked" : "done", scheduledAt: a.scheduledMeeting.startsAt.toISOString(), meetLink: null, channel: "Application contact", title: "30-minute onboarding call", cancelled: false } : pickCall(calls, { email: a.email, bookingEmail: a.bookingEmail, fullName: a.fullName }).call,
       };
