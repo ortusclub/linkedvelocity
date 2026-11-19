@@ -113,6 +113,10 @@ export async function GET(req: NextRequest) {
       restricted: a.status === "retired" || !!a.restrictedAt || a.permanentlyRestricted || a.linkedinAccountHealth === SUSPECTED_RESTRICTION,
       // LV Agent: profile not available from a healthy account. Off Profile Maturing.
       suspectedRestriction: a.linkedinAccountHealth === SUSPECTED_RESTRICTION,
+      // LV Agent recovery recheck candidate: a live (recoverable) restriction, not permanent, not
+      // retired, with a profile URL to load. The agent loads this URL from a healthy LV session and
+      // POSTs the result to /api/outreach/accounts/recovery-probe to flag likely recoveries.
+      recoveryRecheck: !!a.restrictedAt && !a.permanentlyRestricted && a.status !== "retired" && !!a.linkedinUrl,
       // Eligibility only: do not expose renters or rental details to Outreach.
       rented: a.status === "rented" || a.rentals.length > 0,
     }));

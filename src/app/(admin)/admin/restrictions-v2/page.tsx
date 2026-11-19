@@ -24,6 +24,7 @@ type Row = {
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   newReply: boolean; clearedToday: boolean;
   report: { type?: "qr_done" | "recovered"; at?: string } | null;
+  probe: { loaded: boolean; at?: string; from?: string | null } | null;
   lastTouchAt: number | null; lastTouchLabel: string;
   renterName: string | null; qrUrl: string | null; qrAt: string | null;
   sentAt: string | null; sentVia: string | null; outcome: string | null; history: Hist[];
@@ -629,10 +630,13 @@ export default function RestrictionsV2Page() {
   // that's still open — the team needs to verify it on LinkedIn and either mark it recovered or
   // keep working it. These don't otherwise change the case bucket, so surface them explicitly.
   const reported = (r: Row) => !!r.report && isOpenCase(r);
-  // Needs action = a new LinkedIn reply to handle, a fresh referrer report to verify, OR an
-  // action-bucket case we haven't cleared today.
+  // The LV Agent loaded this restricted account's profile from a healthy session and it rendered —
+  // likely back online. Like a referrer report, it needs a human to verify on LinkedIn and recover.
+  const probed = (r: Row) => !!r.probe?.loaded && isOpenCase(r);
+  // Needs action = a new LinkedIn reply to handle, a fresh referrer report OR agent recovery signal
+  // to verify, OR an action-bucket case we haven't cleared today.
   // Cases we acted on today drop to All open (clearedToday) and come back next day if still open.
-  const needsAction = (r: Row) => r.newReply || reported(r) || (r.bucket === "action" && !r.clearedToday);
+  const needsAction = (r: Row) => r.newReply || reported(r) || probed(r) || (r.bucket === "action" && !r.clearedToday);
   const pick: Record<string, (r: Row) => boolean> = {
     action: needsAction, open: isOpenCase, owner: (r) => r.bucket === "owner",
     linkedin: (r) => r.bucket === "linkedin", idfail: (r) => isOpenCase(r) && hasIdFail(r),
@@ -682,9 +686,9 @@ export default function RestrictionsV2Page() {
   const restDir: "asc" | "desc" | null = restSort;
   const restDur = (r: Row) => now - sinceMs(r); // ms since it was restricted (or resolved)
   const byRest = (a: Row, b: Row) => (restDir === "asc" ? restDur(a) - restDur(b) : restDur(b) - restDur(a));
-  // Referrer-reported open cases float above everything else that's open (but below closed, which
-  // stays at the bottom) so a "verify this" never gets buried.
-  const reportPr = (r: Row) => (reported(r) ? 0 : 1);
+  // Referrer-reported and agent-recovery-signalled open cases float above everything else that's
+  // open (but below closed, which stays at the bottom) so a "verify this" never gets buried.
+  const reportPr = (r: Row) => (reported(r) || probed(r) ? 0 : 1);
   const list = all.filter(pick[filter] || pick.all).filter(match).filter(matchPhase).filter(matchPoc).filter(matchRef).filter(matchMatrix)
     .sort((a, b) => restDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byRest(a, b))
       : touchDir ? (closed(a) - closed(b) || reportPr(a) - reportPr(b) || byTouch(a, b))
@@ -903,6 +907,7 @@ export default function RestrictionsV2Page() {
                         </span>
                         {r.referrerName && <span onClick={(e) => { e.stopPropagation(); setRefF(refF === r.referrerName ? "all" : r.referrerName!); }} title={refF === r.referrerName ? "Clear referrer filter" : `Filter by ${r.referrerName}`} style={{ font: `600 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: refF === r.referrerName ? "#4338ca" : "#eef2ff", color: refF === r.referrerName ? "#fff" : "#4338ca", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170, cursor: "pointer" }}>Ref: {r.referrerName}</span>}
                         {r.report && <span title={`Referrer reported ${r.report.type === "recovered" ? "the account is unrestricted" : "the QR/ID check is done"}${r.report.at ? ` on ${fmt(r.report.at).split(",")[0]}` : ""} — verify on LinkedIn, then Mark recovered`} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#fef9c3", color: "#854d0e", whiteSpace: "nowrap" }}>📣 Referrer: {r.report.type === "recovered" ? "unrestricted" : "QR done"}</span>}
+                        {r.probe?.loaded && <span title={`LV Agent loaded this profile from a healthy LV session${r.probe.at ? ` on ${fmt(r.probe.at).split(",")[0]}` : ""} and it rendered — likely back online. Verify on LinkedIn, then Mark recovered.`} style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534", whiteSpace: "nowrap" }}>🤖 Agent: profile loads</span>}
                         <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: st[1], color: st[2], whiteSpace: "nowrap" }}>P{r.phase.pr} · {st[0]}</span>
                         {r.lostOutcome && <span style={{ font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: LOST[r.lostOutcome][1], color: LOST[r.lostOutcome][2], whiteSpace: "nowrap" }}>{LOST[r.lostOutcome][0]}</span>}
                       </div>
