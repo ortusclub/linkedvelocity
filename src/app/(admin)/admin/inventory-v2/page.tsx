@@ -1543,7 +1543,12 @@ function ExpandedDetail({ r, tab, setTab, busy, price, setState, recheck, hold, 
     if (r.ownerSetupPaidAt) ev.push({ at: r.ownerSetupPaidAt, t: "Onboarded (setup fee paid)", dot: GREEN });
     if (r.ownerOnboardedAt) ev.push({ at: r.ownerOnboardedAt, t: "Signed up", dot: BLUE });
     for (const e of restr) ev.push({ at: e.at, t: e.event === "restricted" ? "Restricted" : "Recovered", s: e.note || (e.creditedDays ? `+${e.creditedDays}d credit` : undefined), dot: e.event === "restricted" ? RED : GREEN });
-    for (const p of (r.connectionHistory || [])) if (p.note) ev.push({ at: p.at, t: p.note === "rented" ? "Rented out" : "Returned", s: `${p.count} connections`, dot: p.note === "rented" ? BLUE : MUT });
+    // Only surface real rental lifecycle markers here. Other noted points (e.g. "auto (maturing)"
+    // connection snapshots) feed the connections chart and must NOT be shown as "Returned".
+    for (const p of (r.connectionHistory || [])) {
+      if (p.note === "rented") ev.push({ at: p.at, t: "Rented out", s: `${p.count} connections`, dot: BLUE });
+      else if (p.note === "returned") ev.push({ at: p.at, t: "Returned", s: `${p.count} connections`, dot: MUT });
+    }
     return ev.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
   }, [r, restr]);
 
