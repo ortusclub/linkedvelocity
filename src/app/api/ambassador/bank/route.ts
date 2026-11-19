@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
+import { diffPayout, nextPayoutChange, AMBASSADOR_PAYOUT_FIELDS } from "@/lib/payout-change";
+import type { Prisma } from "@/generated/prisma/client";
 
 const bankSchema = z.object({
   applicationId: z.string().min(1),
@@ -44,19 +46,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Application is not approved" }, { status: 400 });
     }
 
+    const next = {
+      paymentMethod: data.paymentMethod,
+      bankName: data.bankName,
+      bankAccountName: data.bankAccountName,
+      bankAccountNumber: data.bankAccountNumber,
+      bankRoutingNumber: data.bankRoutingNumber,
+      bankSortCode: data.bankSortCode,
+      usdcWalletAddress: data.usdcWalletAddress,
+      usdcNetwork: data.usdcNetwork,
+      paypalEmail: data.paypalEmail,
+      wiseEmail: data.wiseEmail,
+    };
+    // Flag a self-serve payout change so the payouts console verifies before paying. Fields
+    // omitted from the payload (undefined) are left unchanged, so compare against current.
+    const effective = Object.fromEntries(
+      AMBASSADOR_PAYOUT_FIELDS.map((f) => [f, next[f] !== undefined ? next[f] : (application as Record<string, unknown>)[f]]),
+    );
+    const changed = diffPayout(application, effective, AMBASSADOR_PAYOUT_FIELDS);
+
     await prisma.ambassadorApplication.update({
       where: { id: data.applicationId },
       data: {
-        paymentMethod: data.paymentMethod,
-        bankName: data.bankName,
-        bankAccountName: data.bankAccountName,
-        bankAccountNumber: data.bankAccountNumber,
-        bankRoutingNumber: data.bankRoutingNumber,
-        bankSortCode: data.bankSortCode,
-        usdcWalletAddress: data.usdcWalletAddress,
-        usdcNetwork: data.usdcNetwork,
-        paypalEmail: data.paypalEmail,
-        wiseEmail: data.wiseEmail,
+        ...next,
+        ...(changed ? { payoutChange: nextPayoutChange(application.payoutChange, changed, "owner") as unknown as Prisma.InputJsonValue } : {}),
         // Saving payout details does NOT change the onboarding stage — that only moves
         // when the team moves it on the board (Accepted -> Onboarding -> Onboarded, where
         // Onboarded means we've logged in). Leave status untouched.

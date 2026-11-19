@@ -5,6 +5,8 @@ import { currencyConfig } from "@/lib/referral-currency";
 import { monthlyDueDate, setupPaidDate } from "@/lib/payment-schedule";
 import { deleteApplicationCascade } from "@/lib/application-delete";
 import { appIssueIsRestricted } from "@/lib/restriction";
+import { diffPayout, nextPayoutChange, REFERRER_PAYOUT_FIELDS } from "@/lib/payout-change";
+import type { Prisma } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -460,14 +462,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ token:
     return NextResponse.json({ ok: true });
   }
 
+  const nextPayout = {
+    paymentMethod: typeof body.paymentMethod === "string" ? body.paymentMethod : me.paymentMethod,
+    paymentDetails: typeof body.paymentDetails === "string" ? body.paymentDetails : me.paymentDetails,
+    paymentName: typeof body.paymentName === "string" ? body.paymentName.trim() : me.paymentName,
+  };
+  // Flag a self-serve payout change so the payouts console can verify before paying.
+  const changed = diffPayout(me, nextPayout, REFERRER_PAYOUT_FIELDS);
   const updated = await prisma.referrer.update({
     where: { id: me.id },
     data: {
       contactMethod: typeof body.contactMethod === "string" ? body.contactMethod : me.contactMethod,
       contactHandle: typeof body.contactHandle === "string" ? body.contactHandle : me.contactHandle,
-      paymentMethod: typeof body.paymentMethod === "string" ? body.paymentMethod : me.paymentMethod,
-      paymentDetails: typeof body.paymentDetails === "string" ? body.paymentDetails : me.paymentDetails,
-      paymentName: typeof body.paymentName === "string" ? body.paymentName.trim() : me.paymentName,
+      ...nextPayout,
+      ...(changed ? { payoutChange: nextPayoutChange(me.payoutChange, changed, "referrer") as unknown as Prisma.InputJsonValue } : {}),
     },
   });
   return NextResponse.json({
