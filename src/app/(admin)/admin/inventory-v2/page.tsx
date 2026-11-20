@@ -151,8 +151,8 @@ const STATUS_OPTS: [string, string][] = [["available", "Available"], ["unavailab
 // attention" filter. KEEP IN SYNC with the row flag block in the render loop (search "Flag
 // conditions"): the same booleans, so filtering by a flag shows exactly the rows wearing that pill.
 // Only actionable flags live here (benign markers like +SN / shadow / warm-up are not filterable).
-type AttnKey = "unverified" | "mail" | "incident" | "overdue" | "rotate" | "2fa" | "restricted" | "incomplete" | "held";
-const ATTN_ACTIONABLE: AttnKey[] = ["incident", "overdue", "rotate", "2fa", "restricted", "unverified", "mail", "incomplete"];
+type AttnKey = "unverified" | "mail" | "incident" | "overdue" | "rotate" | "2fa" | "restricted" | "incomplete" | "held" | "needsLogin";
+const ATTN_ACTIONABLE: AttnKey[] = ["incident", "overdue", "rotate", "2fa", "restricted", "unverified", "mail", "incomplete", "needsLogin"];
 function attention(a: Account): Set<AttnKey> {
   const f = new Set<AttnKey>();
   const now = Date.now();
@@ -169,6 +169,9 @@ function attention(a: Account): Set<AttnKey> {
   if (a.mailNeedsReview > 0) f.add("mail");
   if (a.restrictedAt && !retired) f.add("restricted");
   if (!retired && !isDummy(a) && (((!a.profilePhotoUrl && !a.profileScreenshotUrl)) || !a.location || !a.linkedinHeadline || !a.industry)) f.add("incomplete");
+  // 🔑 LV Agent found the account signed out of LinkedIn during maturing — it needs a login.
+  // Matches the 🔑 row flag (maturingLoginIcons → requiresLogin).
+  if (a.maturingLogin?.requiresLogin) f.add("needsLogin");
   return f;
 }
 // Label + short tip per filter option; counts are appended live in the <select>.
@@ -181,6 +184,7 @@ const ATTN_OPTS: { key: AttnKey | "attention"; label: string }[] = [
   { key: "rotate", label: "Rotate 2FA" },
   { key: "2fa", label: "No 2FA on file" },
   { key: "restricted", label: "Restricted" },
+  { key: "needsLogin", label: "🔑 Needs login" },
   { key: "incomplete", label: "Incomplete catalogue" },
 ];
 
