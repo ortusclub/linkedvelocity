@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { createAccountCodeLink } from "@/lib/account-code-link";
+import { createAccountCodeLink, RECOVERY_LINK_TTL } from "@/lib/account-code-link";
 import { formatName } from "@/lib/utils";
 
 // Admin: mint the private /recover link for MANUAL sharing (Copy / WhatsApp / Telegram / Viber),
@@ -25,7 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!account) return NextResponse.json({ error: "Account not found" }, { status: 404 });
     if (!account.recoveryQrUrl) return NextResponse.json({ error: "Attach a QR first — there's nothing to share yet." }, { status: 400 });
 
-    const link = (await createAccountCodeLink(id)).replace("/c#", "/recover#");
+    const link = (await createAccountCodeLink(id, Date.now(), RECOVERY_LINK_TTL)).replace("/c#", "/recover#");
 
     // A one-tap app send (not a bare copy) is a real hand-off — record it so the tracker reflects it.
     if (via && via !== "copy") {
