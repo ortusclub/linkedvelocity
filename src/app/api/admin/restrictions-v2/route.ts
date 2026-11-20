@@ -118,10 +118,13 @@ export async function GET(req: Request) {
     }
 
     // Captured LinkedIn appeal / ID / recovery emails (AccountMailEvent) — seed chain steps with
-    // their real dates and power the email-log panel.
+    // their real dates and power the email-log panel. email_verify + password_changed are included
+    // too: the "here's your PIN / enter this code to complete the reset" and password-reset mails are
+    // what the team needs during step 4 (log in + reset) to actually get back into a recovered
+    // account. They carry no chain step (mailDerivedSteps ignores those types), only the panel row.
     const mailRows = ids.length
       ? await prisma.accountMailEvent.findMany({
-          where: { linkedinAccountId: { in: ids }, type: { in: ["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction"] } },
+          where: { linkedinAccountId: { in: ids }, type: { in: ["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction", "email_verify", "password_changed"] } },
           select: { id: true, linkedinAccountId: true, type: true, receivedAt: true, subject: true, bodyText: true, severity: true, status: true },
           orderBy: { receivedAt: "asc" },
         })
