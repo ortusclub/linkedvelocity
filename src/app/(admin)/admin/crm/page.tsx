@@ -20,7 +20,7 @@ type Person = {
   pocOwner: "Ardi" | "Milee" | "Sam" | null; followUp: string | null;
   leadStage: "hot" | "warm" | "cold" | null; statusOverride: "renting" | "dormant" | null;
   nextStep: string | null; interest: string | null; dealValue: number | null; direction: "in" | "out" | null;
-  routedAmbassador: boolean; routedReferrer: boolean; routedCrm: boolean;
+  routedAmbassador: boolean; routedReferrer: boolean; routedCrm: boolean; isAmbassador: boolean;
   vetting: string; paymentMethod: "Card" | "Crypto Wallet" | null; paymentFailed: boolean;
   isTest: boolean; notes: string | null;
   liveRentals: number; totalRentals: number; autoRenewOn: number; mrr: number;
@@ -131,6 +131,12 @@ export default function CrmPage() {
   // Sales lens: drop test rows and leads triaged purely to Ambassador/Referrer.
   const base = useMemo(() => people.filter((p) => {
     if (p.isTest) return false;
+    // "Has ever rented" → keep as a Client/Past even if they're also an ambassador/referrer.
+    const everRented = p.liveRentals > 0 || p.totalRentals > 0 || p.statusOverride === "renting" || p.statusOverride === "dormant";
+    if (everRented) return true;
+    // Non-renters: drop ambassador recruits and anyone triaged purely to Ambassador/Referrer —
+    // they belong to the recruiting pipeline, not the sales CRM.
+    if (p.isAmbassador) return false;
     if (p.kind === "lead" && !p.userId && (p.routedAmbassador || p.routedReferrer) && !p.routedCrm) return false;
     return true;
   }), [people]);
