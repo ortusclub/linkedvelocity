@@ -23,9 +23,14 @@ test('three programmes have consecutive stages and recent restrictions override 
   stages.slice(1).forEach((s,i)=>assert.equal(s.fromDay,stages[i].toDay+1));
   assert.ok(stages.some(s=>s.coldDaily>0));
  }
- assert.ok(programStages('construction')[0].warmDaily>programStages('pipeline')[0].warmDaily);
- assert.ok(programStages('available')[0].warmDaily>programStages('construction')[0].warmDaily);
- assert.deepEqual(programStages('available',true),programStages('pipeline'));
+ // Weed-out (pipeline, pre-payout) is the HOTTEST ramp — a restriction there is intended,
+ // before we pay. Paid stages are gentler (a loss once paid), and recovered is the gentlest
+ // of all: warm-only to start, lowest volume, to avoid re-burning a fragile account.
+ const day1 = (k, rec=false) => { const s = programStages(k, rec)[0]; return s.warmDaily + s.coldDaily; };
+ assert.ok(day1('pipeline') > day1('construction'));
+ assert.ok(day1('construction') > day1('available'));
+ assert.equal(programStages('construction', true)[0].coldDaily, 0); // recovered: warm-only start
+ assert.ok(day1('construction', true) < day1('available'));          // recovered is the gentlest ramp
 });
 
 test('an account can belong to Pipeline and Construction at once; status alone never implies pipeline',()=>{

@@ -106,10 +106,12 @@ const stage=(id,fromDay,toDay,warmDaily,coldDaily)=>({id,name:id,fromDay,toDay,w
  * @param {number|null} [connections]
  */
 export function programStages(category, recovered=false, connections=null) {
- // Recovered: fragile. Re-warm gently and warm-heavy (~80:20) to rebuild trust
- // signals before any real cold, ramping back toward a normal mix over ~2 weeks.
- // A re-restriction here is the expensive loss.
- if(recovered)return [stage('Re-warm',1,7,2,0),stage('Re-warm ramp',8,21,3,1)];
+ // Recovered: fragile. A re-restriction here is the expensive loss, and the data shows
+ // recovered accounts re-burn fast (median 17d between restrictions, ~half within 14d),
+ // so reintroduce SLOWLY: warm-only for the first 2 weeks (our own LV network, high
+ // accept, rebuilds trust signals with no cold risk), then a thin cold trickle. Pairs
+ // with the post-recovery REST gate in auto-start (no maturing for ~21d after recovery).
+ if(recovered)return [stage('Re-warm',1,14,2,0),stage('Re-warm ramp',15,35,3,1)];
  // Pre-payout (Level 4, pre-onboarding): go hard from day 1 — 10/day flat, 50:50 —
  // the weed-out, ~1-2 weeks until the setup fee is paid. A 0-connection account has
  // no real network to warm into yet, so it starts cold-only.
@@ -132,7 +134,7 @@ export function programStages(category, recovered=false, connections=null) {
  * @param {number|null} [connections]
  */
 export function programLabel(category, recovered=false, connections=null) {
- if(recovered) return 'gentle re-warm — recovering account, rebuilding trust slowly (2→3/day, warm-heavy)';
+ if(recovered) return 'gentle re-warm — recovering account, warm-only for 2 weeks then a thin cold trickle (2→3/day)';
  if(category==='pipeline') return connections===0
   ? 'pre-payout weed-out — cold-only start (0-connection account, ~10/day)'
   : 'pre-payout weed-out — the pre-pay stress test (10/day, 50:50 warm+cold)';
