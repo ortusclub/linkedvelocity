@@ -261,7 +261,15 @@ export default function CrmPage() {
               </button>
             );
           })}
-          <span style={{ width: 1, height: 22, background: "var(--divider)", margin: "0 2px" }} />
+          <div style={{ flex: 1 }} />
+          <div style={{ display: "flex", background: "var(--seg-bg)", border: "1px solid var(--seg-border)", borderRadius: 10, padding: 3, gap: 2 }}>
+            {(["list", "table"] as const).map((v) => (
+              <button key={v} onClick={() => { setView(v); setDrawer(false); }} style={{ border: "none", cursor: "pointer", borderRadius: 7, padding: "6px 12px", font: `700 12.5px ${F}`, background: view === v ? "var(--accent)" : "transparent", color: view === v ? "#fff" : "var(--muted)" }}>{v === "list" ? "List + detail" : "Table"}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: "1px solid var(--divider)", paddingTop: 10 }}>
+          <span style={{ ...micro, marginRight: 2 }}>Temp</span>
           {(["Hot", "Warm", "Cold"] as const).map((k) => {
             const active = temp === k; const c = tempChip(k);
             return (
@@ -271,12 +279,6 @@ export default function CrmPage() {
               </button>
             );
           })}
-          <div style={{ flex: 1 }} />
-          <div style={{ display: "flex", background: "var(--seg-bg)", border: "1px solid var(--seg-border)", borderRadius: 10, padding: 3, gap: 2 }}>
-            {(["list", "table"] as const).map((v) => (
-              <button key={v} onClick={() => { setView(v); setDrawer(false); }} style={{ border: "none", cursor: "pointer", borderRadius: 7, padding: "6px 12px", font: `700 12.5px ${F}`, background: view === v ? "var(--accent)" : "transparent", color: view === v ? "#fff" : "var(--muted)" }}>{v === "list" ? "List + detail" : "Table"}</button>
-            ))}
-          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: "1px solid var(--divider)", paddingTop: 10 }}>
           <span style={{ ...micro, marginRight: 2 }}>PoC</span>
