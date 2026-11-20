@@ -161,7 +161,9 @@ export interface ReferralDue {
 // Human label for the onboarding tier that drives the referral commission amount — mirrors the
 // branches in referralCommissionAmount so the console can show why a commission is priced as it is.
 export function referralTierLabel(a: { referralSource: string | null; onboardingMethod: string | null; onboardingVerified: boolean | null }): string {
-  if (a.referralSource !== "self-service" || a.onboardingMethod === "team_meeting") return "Standard referral";
+  // DIY premium only when the referrer actually did a guided sign-in (onboardingMethod recorded).
+  // No method = the team finished the onboarding → a standard referral (matches the pipeline Form type).
+  if (a.referralSource !== "self-service" || (a.onboardingMethod !== "phone" && a.onboardingMethod !== "computer")) return "Standard referral";
   const method = a.onboardingMethod === "phone" ? "phone" : "computer";
   return `DIY · ${method}${a.onboardingVerified ? " · verified" : ""}`;
 }
