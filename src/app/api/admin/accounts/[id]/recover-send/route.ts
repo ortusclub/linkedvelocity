@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { createAccountCodeLink } from "@/lib/account-code-link";
+import { createAccountCodeLink, RECOVERY_LINK_TTL } from "@/lib/account-code-link";
 import { onboardingMailRequest } from "@/services/onboarding-mail";
 import { parseStoredCase } from "@/lib/recovery-case";
 import { formatName } from "@/lib/utils";
@@ -22,8 +22,8 @@ const RECOVER_BASE = "https://linkedvelocity.com/recover";
 function message(name: string, recipient: "ambassador" | "referrer", link: string) {
   const subject = `Scan this to get ${name}'s LinkedIn back online`;
   const text = recipient === "referrer"
-    ? `Hi,\n\nLinkedIn needs a quick identity check to get ${name}'s account back online, and it has to be done on a phone. Please send ${name} this private link and ask them to open it on their phone:\n\n${link}\n\nIt shows a QR code to scan with the LinkedIn app (and a 6-digit code option if LinkedIn asks for one instead). It's private and expires in 24 hours. Reply here if anything's unclear and we'll help.\n\nThanks,\nThe LinkedVelocity team`
-    : `Hi ${name},\n\nYour LinkedIn account needs a quick identity check to get back online, and it has to be done on your phone. Open this private link on your phone and follow the steps:\n\n${link}\n\nIt shows a QR code to scan with the LinkedIn app (and a 6-digit code option if LinkedIn asks for one instead). It's private and expires in 24 hours. Reply here if you get stuck and we'll help you verify another way.\n\nThanks,\nThe LinkedVelocity team`;
+    ? `Hi,\n\nLinkedIn needs a quick identity check to get ${name}'s account back online, and it has to be done on a phone. Please send ${name} this private link and ask them to open it on their phone:\n\n${link}\n\nIt shows a QR code to scan with the LinkedIn app (and a 6-digit code option if LinkedIn asks for one instead). It's a private link just for them. Reply here if anything's unclear and we'll help.\n\nThanks,\nThe LinkedVelocity team`
+    : `Hi ${name},\n\nYour LinkedIn account needs a quick identity check to get back online, and it has to be done on your phone. Open this private link on your phone and follow the steps:\n\n${link}\n\nIt shows a QR code to scan with the LinkedIn app (and a 6-digit code option if LinkedIn asks for one instead). It's a private link just for you. Reply here if you get stuck and we'll help you verify another way.\n\nThanks,\nThe LinkedVelocity team`;
   return { subject, text };
 }
 
@@ -52,7 +52,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const referrerEmail = ref?.email || refContacts.find(c => c.method?.toLowerCase() === "email")?.handle || "";
 
     const name = formatName(account.linkedinName) || formatName(app.fullName) || "your account";
-    const codeLink = await createAccountCodeLink(id).catch(() => "");
+    const codeLink = await createAccountCodeLink(id, Date.now(), RECOVERY_LINK_TTL).catch(() => "");
     const link = codeLink ? codeLink.replace("/c#", "/recover#") : RECOVER_BASE;
     const stamp = new Date().toISOString(); // unique per click: each send carries a fresh one-time link, so the idempotency key must change too (a stable key + changing body => Resend 409).
 

@@ -3,7 +3,7 @@ import { put } from "@vercel/blob";
 import { v4 as uuid } from "uuid";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-import { createAccountCodeLink } from "@/lib/account-code-link";
+import { createAccountCodeLink, RECOVERY_LINK_TTL } from "@/lib/account-code-link";
 
 export const runtime = "nodejs";
 
@@ -30,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const blob = await put(`recovery-qr-${uuid()}.${ext}`, buf, { access: "public", contentType });
     await prisma.linkedInAccount.update({ where: { id }, data: { recoveryQrUrl: blob.url, recoveryQrAt: new Date() } });
 
-    const ownerLink = await createAccountCodeLink(id).catch(() => "");
+    const ownerLink = await createAccountCodeLink(id, Date.now(), RECOVERY_LINK_TTL).catch(() => "");
     return NextResponse.json({ qrUrl: blob.url, ownerLink: ownerLink.replace("/c#", "/recover#") });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "error";
