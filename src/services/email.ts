@@ -182,7 +182,7 @@ export async function sendReferralOutreachEmail(to: string, subject: string, bod
 }
 
 // Pings the team when someone signs up as a referrer via /become-a-referrer, so the
-// team knows (they also appear at the top of /admin/referrals).
+// team knows (they also appear at the top of /admin/referrals-v2).
 export async function sendReferrerSignupNotification(name: string, email: string, slug: string) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://linkedvelocity.com";
   const to = process.env.TEAM_NOTIFY_EMAIL || "info@linkedvelocity.com";
@@ -192,7 +192,7 @@ export async function sendReferrerSignupNotification(name: string, email: string
     html: brandWrap(`
       <p style="font-size:15px;color:#374151;margin:0 0 10px;"><strong>${name}</strong> just signed up as a referrer.</p>
       <p style="font-size:14px;color:#536471;line-height:1.7;margin:0 0 16px;">Email: ${email}<br>Code: ${slug}<br>Link: <a href="${appUrl}/r/${slug}" style="color:#0A66C2;">${appUrl}/r/${slug}</a></p>
-      <a href="${appUrl}/admin/referrals?ref=${encodeURIComponent(slug)}" style="display:inline-block;background:#0A66C2;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:10px;">Open in admin →</a>
+      <a href="${appUrl}/admin/referrals-v2?ref=${encodeURIComponent(slug)}" style="display:inline-block;background:#0A66C2;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:10px;">Open in admin →</a>
     `),
   });
 }

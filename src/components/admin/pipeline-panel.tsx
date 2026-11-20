@@ -819,8 +819,8 @@ export function CardDetail({ r, h }: { r: Row; h: Handlers }) {
             {r.referredBy && r.referralSource === "self-service" && r.onboardingMethod !== "team_meeting" && !onboarded && (
               <button style={btnSec} disabled={busy} title="The referrer stops here and LV finishes the onboarding; their commission reverts to the base referral tier (not the DIY tier)." onClick={() => transferToLv(r)}>🔄 Transfer onboarding to LV (fee → base tier)</button>
             )}
-            {r.referredBy && <a href={`/admin/referrals?ref=${encodeURIComponent(r.referredBy)}`} style={{ font: `700 12px ${F_SANS}`, color: "var(--link,#0a66c2)", textDecoration: "none" }}>View referrer →</a>}
-            {r.asReferrer && <div style={{ marginTop: 8, font: `600 11.5px ${F_SANS}`, color: "var(--muted,#647189)" }}>Also a referrer · <a href={`/admin/referrals?ref=${encodeURIComponent(r.asReferrer.slug)}`} style={{ color: "var(--link,#0a66c2)", textDecoration: "none" }}>{r.asReferrer.slug} →</a><span title="Contact and payout details are shared with this referrer record"> · linked payout</span></div>}
+            {r.referredBy && <a href={`/admin/referrals-v2?ref=${encodeURIComponent(r.referredBy)}`} style={{ font: `700 12px ${F_SANS}`, color: "var(--link,#0a66c2)", textDecoration: "none" }}>View referrer →</a>}
+            {r.asReferrer && <div style={{ marginTop: 8, font: `600 11.5px ${F_SANS}`, color: "var(--muted,#647189)" }}>Also a referrer · <a href={`/admin/referrals-v2?ref=${encodeURIComponent(r.asReferrer.slug)}`} style={{ color: "var(--link,#0a66c2)", textDecoration: "none" }}>{r.asReferrer.slug} →</a><span title="Contact and payout details are shared with this referrer record"> · linked payout</span></div>}
           </PanelCard>
 
           {r.accountId && (

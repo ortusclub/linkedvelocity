@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     if (kind === "referral") {
       // A consolidated referrer row covers several referrals (body.apps); a single-referral
       // row falls back to the one id. Record one attributed commission payout per referral
-      // (mirrors /admin/referrals — no amount-netting), then email the referrer once for the
+      // (mirrors /admin/referrals-v2 — no amount-netting), then email the referrer once for the
       // combined total. Already-paid referrals are skipped so re-recording never double-pays.
       const apps: { applicationId: string; amount: number }[] = Array.isArray(body.apps) && body.apps.length
         ? body.apps

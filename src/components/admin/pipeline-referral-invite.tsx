@@ -37,7 +37,7 @@ export function PipelineReferralInvite({ id, ambassadorName, referrerName, ambas
     <small style={{ color: "var(--muted,#647189)" }}>₱500 per referral · up to ₱1,000 if they onboard it themselves.</small>
     {([
       { key: "ambassador" as InviteRecipient, name: ambassadorName, role: ambassadorPortalUrl
-        ? <>Ambassador · already a referrer{ambassadorReferrerSlug && <> · <a href={`/admin/referrals?ref=${encodeURIComponent(ambassadorReferrerSlug)}`} style={{ color: "var(--link,#0a66c2)", textDecoration: "none" }}>{ambassadorReferrerSlug} →</a></>}</>
+        ? <>Ambassador · already a referrer{ambassadorReferrerSlug && <> · <a href={`/admin/referrals-v2?ref=${encodeURIComponent(ambassadorReferrerSlug)}`} style={{ color: "var(--link,#0a66c2)", textDecoration: "none" }}>{ambassadorReferrerSlug} →</a></>}</>
         : "Ambassador · invite to refer", contact: ambassador },
       ...(referrer ? [{ key: "referrer" as InviteRecipient, name: referrerName || "Referrer", role: "Referrer · nudge for more", contact: referrer }] : []),
     ]).map(row => {

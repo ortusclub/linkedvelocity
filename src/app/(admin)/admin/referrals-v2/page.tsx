@@ -18,7 +18,8 @@ const ini = (s: string) => (s || "?").replace(/\(.*\)/, "").trim().split(/\s+/).
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
 const avc = (s: string) => AV[hash(s) % AV.length];
 
-type Referrer = { id: string; slug: string; name: string; type: string; email: string | null; paymentMethod: string | null; paymentDetails: string | null; paymentName: string | null; createdAt: string };
+type Contact = { method?: string; handle?: string; preferred?: boolean };
+type Referrer = { id: string; slug: string; token: string; name: string; type: string; email: string | null; contactMethod: string | null; contactHandle: string | null; contacts: Contact[] | null; paymentMethod: string | null; paymentDetails: string | null; paymentName: string | null; createdAt: string };
 type App = {
   id: string; fullName: string; referredBy: string | null; status: string; createdAt: string;
   verifiedAt: string | null; accountIssue: string | null; onboardedAt: string | null; paidAt: string | null;
@@ -70,10 +71,21 @@ function spark(w: number[], width: number, height: number) {
 }
 
 type Row = {
-  id: string; slug: string; name: string; team: string; cur: Currency; sym: string;
+  id: string; slug: string; token: string; name: string; team: string; cur: Currency; sym: string;
+  email: string | null; contacts: Contact[]; paymentMethod: string | null; paymentDetails: string | null; paymentName: string | null;
   sign: number; onb: number; res: number; ver: number; earned: number; ready: number; held: number; paid: number; owed: number;
   w: number[]; lastDays: number; trend: ReturnType<typeof trendOf>; apps: App[];
 };
+
+// Normalise a referrer's contact(s) into a list, preferred first. Falls back to the
+// mirrored contactMethod/contactHandle when the contacts array isn't populated.
+function contactsOf(r: Referrer): Contact[] {
+  const list = Array.isArray(r.contacts)
+    ? r.contacts.filter(c => c && (c.handle || "").trim())
+    : [];
+  if (!list.length && r.contactHandle?.trim()) list.push({ method: r.contactMethod || "WhatsApp", handle: r.contactHandle, preferred: true });
+  return [...list].sort((a, b) => (b.preferred ? 1 : 0) - (a.preferred ? 1 : 0));
+}
 
 export default function ReferralsV2Page() {
   const [refs, setRefs] = useState<Referrer[] | null>(null);
@@ -87,10 +99,12 @@ export default function ReferralsV2Page() {
   const [sort, setSort] = useState("onb");
   const [sel, setSel] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [np, setNp] = useState({ who: "", type: "Commission", method: "GCash", amount: "", desc: "" });
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ name: "", type: "marketer", channel: "" });
+  const [deepApplied, setDeepApplied] = useState(false);
 
   const load = () => Promise.all([
     fetch("/api/admin/referrers", { cache: "no-store" }).then(r => r.json()),
@@ -101,6 +115,17 @@ export default function ReferralsV2Page() {
     setRefs(r.referrers || []); setApps(a.applications || []); setPays(p.payouts || []);
   });
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
+
+  // Deep-link: /admin/referrals-v2?ref=<slug> (from pipeline "View referrer →", the
+  // signup email, balances) opens that referrer's drawer once the registry has loaded.
+  useEffect(() => {
+    if (deepApplied || !refs) return;
+    setDeepApplied(true);
+    const slug = new URLSearchParams(window.location.search).get("ref");
+    if (!slug) return;
+    const m = refs.find(r => norm(r.slug) === norm(slug) || norm(r.name) === norm(slug));
+    if (m) setSel(m.id);
+  }, [refs, deepApplied]);
 
   const now = Date.now();
 
@@ -134,7 +159,17 @@ export default function ReferralsV2Page() {
       const paid = paidByRef.get(r.id) || 0;
       const owed = Math.max(0, ready - paid);
       const { w, lastDays } = weekly(group, now);
-      out.push({ id: r.id, slug: r.slug, name: r.name, team: teamOf(r.type), cur, sym: cfg.symbol, sign: group.length, onb, res, ver, earned, ready, held, paid, owed, w, lastDays, trend: trendOf(w, lastDays), apps: group });
+      out.push({ id: r.id, slug: r.slug, token: r.token, name: r.name, team: teamOf(r.type), cur, sym: cfg.symbol, email: r.email, contacts: contactsOf(r), paymentMethod: r.paymentMethod, paymentDetails: r.paymentDetails, paymentName: r.paymentName, sign: group.length, onb, res, ver, earned, ready, held, paid, owed, w, lastDays, trend: trendOf(w, lastDays), apps: group });
+    }
+    // Include every registered referrer, even those with no signups yet — otherwise a
+    // freshly-added referrer is invisible and unmanageable (can't copy their link, edit
+    // contacts, or see them at all). Zero rows carry empty stats but full profile fields.
+    const seen = new Set(out.map(r => r.id));
+    for (const rf of refs) {
+      if (seen.has(rf.id)) continue;
+      const cur = referralCurrency(rf.slug);
+      const { w, lastDays } = weekly([], now);
+      out.push({ id: rf.id, slug: rf.slug, token: rf.token, name: rf.name, team: teamOf(rf.type), cur, sym: CURRENCY_CONFIG[cur].symbol, email: rf.email, contacts: contactsOf(rf), paymentMethod: rf.paymentMethod, paymentDetails: rf.paymentDetails, paymentName: rf.paymentName, sign: 0, onb: 0, res: 0, ver: 0, earned: 0, ready: 0, held: 0, paid: paidByRef.get(rf.id) || 0, owed: 0, w, lastDays, trend: trendOf(w, lastDays), apps: [] });
     }
     return out;
   }, [refs, apps, pays, now]);
@@ -229,6 +264,32 @@ export default function ReferralsV2Page() {
     } catch (e) { setMsg(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
   };
 
+  const addReferrer = async () => {
+    if (!addForm.name.trim()) { setMsg("Name is required."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch("/api/admin/referrers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(addForm) });
+      const d = await res.json(); if (!res.ok) throw new Error(d.error);
+      setShowAdd(false); setAddForm({ name: "", type: "marketer", channel: "" });
+      await load(); setMsg(`Added ${d.referrer.name} · ref ${d.referrer.slug}.`); setSel(d.referrer.id);
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Could not add referrer."); } finally { setBusy(false); }
+  };
+  const saveReferrer = async (id: string, payload: Record<string, unknown>): Promise<boolean> => {
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch(`/api/admin/referrers/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error((await res.json()).error); await load(); setMsg("Saved."); return true;
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Could not save."); return false; } finally { setBusy(false); }
+  };
+  const deleteReferrer = async (id: string, name: string) => {
+    if (!window.confirm(`Delete ${name}?\n\nThis is a HARD delete: it permanently removes the referrer AND all their logged payouts, their /r/ and /m/ links stop working, and their signups lose attribution. This cannot be undone.`)) return;
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch(`/api/admin/referrers/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error); setSel(null); await load(); setMsg(`${name} deleted.`);
+    } catch (e) { setMsg(e instanceof Error ? e.message : "Could not delete."); } finally { setBusy(false); }
+  };
+
   const sel_ = sel ? rows.find(r => r.id === sel) || null : null;
   const refName = (p: Payout) => p.referrer?.name || refs?.find(r => r.id === p.referrerId)?.name || "—";
   const pill: React.CSSProperties = { border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 10, padding: "8px 12px", font: `600 12.5px ${F}`, cursor: "pointer", whiteSpace: "nowrap" };
@@ -241,10 +302,11 @@ export default function ReferralsV2Page() {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
           <div style={{ maxWidth: 700 }}>
-            <h1 style={{ font: `700 30px ${FN}`, color: "#0b1220", margin: "0 0 4px", letterSpacing: "-.01em" }}>Referrals <span style={{ font: `600 12px ${F}`, color: "#8a93a3" }}>v2 · read-only</span></h1>
-            <p style={{ font: `500 14px/1.5 ${F}`, color: "#5b6779", margin: 0 }}>Who brings in ambassadors, how many onboard, how many get restricted, who&apos;s slowing down, and what we owe. To record a payment, use <a href="/admin/referrals" style={{ color: "#2563eb" }}>Referrals</a>.</p>
+            <h1 style={{ font: `700 30px ${FN}`, color: "#0b1220", margin: "0 0 4px", letterSpacing: "-.01em" }}>Referrals</h1>
+            <p style={{ font: `500 14px/1.5 ${F}`, color: "#5b6779", margin: 0 }}>Who brings in ambassadors, how many onboard, how many get restricted, who&apos;s slowing down, and what we owe. Record payments in the <button onClick={() => setTab("pay")} style={{ border: "none", background: "none", padding: 0, font: "inherit", color: "#2563eb", cursor: "pointer", textDecoration: "underline" }}>Payments</button> tab.</p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => setShowAdd(true)} style={{ ...pill, background: "#0b1220", color: "#fff", border: "none" }}>+ Add referrer</button>
             <button onClick={exportCsv} style={pill}>Export CSV</button>
           </div>
         </div>
@@ -266,7 +328,7 @@ export default function ReferralsV2Page() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "#eef4ff", border: "1px solid #d3e0fb", borderRadius: 12, padding: "10px 14px" }}>
             <span style={{ flex: "none", width: 8, height: 8, borderRadius: "50%", background: "#2563eb" }} />
             <span style={{ flex: 1, minWidth: 240, font: `500 13px/1.45 ${F}`, color: "#1e3a8a" }}><b>Referral payouts run after account owners are paid.</b> {money("PHP", sum("owed", php))} ready to pay across {php.filter(r => r.owed > 0).length} referrers · {money("PHP", sum("held", php))} still in hold.</span>
-            <a href="/admin/referrals" style={{ border: "none", background: "#2563eb", color: "#fff", borderRadius: 9, padding: "7px 12px", font: `700 12.5px ${F}`, cursor: "pointer", textDecoration: "none" }}>Pay in Referrals →</a>
+            <button onClick={() => setTab("pay")} style={{ border: "none", background: "#2563eb", color: "#fff", borderRadius: 9, padding: "7px 12px", font: `700 12.5px ${F}`, cursor: "pointer" }}>Pay now →</button>
           </div>
 
           <div style={{ display: "flex", background: "#fff", border: "1px solid #e3e6ec", borderRadius: 11, padding: 3, gap: 2, alignSelf: "flex-start" }}>
@@ -311,7 +373,7 @@ export default function ReferralsV2Page() {
                 {visible.map((r, i) => {
                   const total = r.onb + r.ver || 1;
                   const edge = isRisk(r) ? "#dc2626" : r.trend.k === "down" ? "#f59e0b" : "transparent";
-                  return <div key={r.id} onClick={() => { setSel(r.id); setCopied(false); }} style={{ display: "grid", gridTemplateColumns: "36px minmax(210px,1.7fr) 150px 72px 100px 104px 96px 128px 130px", gap: 14, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid #eef0f4", boxShadow: `inset 3px 0 0 ${edge}`, cursor: "pointer", background: "#fff" }}>
+                  return <div key={r.id} onClick={() => { setSel(r.id); }} style={{ display: "grid", gridTemplateColumns: "36px minmax(210px,1.7fr) 150px 72px 100px 104px 96px 128px 130px", gap: 14, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid #eef0f4", boxShadow: `inset 3px 0 0 ${edge}`, cursor: "pointer", background: "#fff" }}>
                     <span style={{ font: `700 14px ${FN}`, color: "#8a93a3" }}>{i + 1}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                       <span style={{ flex: "none", width: 32, height: 32, borderRadius: "50%", background: avc(r.slug), color: "#fff", display: "grid", placeItems: "center", font: `700 11px ${F}` }}>{ini(r.name)}</span>
@@ -397,19 +459,82 @@ export default function ReferralsV2Page() {
         </>}
       </div>
 
-      {sel_ && <Drawer r={sel_} pays={pays} copied={copied} setCopied={setCopied} onClose={() => setSel(null)} onPay={payAmbassador} busy={busy} />}
+      {sel_ && <Drawer r={sel_} pays={pays} onClose={() => setSel(null)} onPay={payAmbassador} onSave={saveReferrer} onDelete={deleteReferrer} busy={busy} />}
+
+      {showAdd && (
+        <>
+          <div onClick={() => setShowAdd(false)} style={{ position: "fixed", inset: 0, background: "rgba(11,18,32,.28)", zIndex: 50 }} />
+          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "min(440px,92vw)", background: "#fff", borderRadius: 16, zIndex: 51, boxShadow: "0 20px 60px rgba(11,18,32,.25)", padding: "22px 22px 20px", font: `400 13px ${F}`, color: "#0b1220" }}>
+            <div style={{ font: `700 18px ${FN}`, marginBottom: 4 }}>Add referrer</div>
+            <p style={{ font: `500 12.5px/1.5 ${F}`, color: "#5b6779", margin: "0 0 16px" }}>Creates a ref code + share/portal links. Add contact &amp; payout details after, from their drawer.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ font: `700 10.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#8a93a3" }}>Name</span>
+                <input autoFocus value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} placeholder="Full name" style={{ border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "10px 12px", font: `500 13.5px ${F}`, color: "#0b1220", outline: "none" }} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ font: `700 10.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#8a93a3" }}>Type</span>
+                <select value={addForm.type} onChange={e => setAddForm({ ...addForm, type: e.target.value })} style={{ border: "1px solid #dde1e8", background: "#fff", borderRadius: 10, padding: "10px 12px", font: `600 13px ${F}`, color: "#0b1220" }}>
+                  <option value="marketer">Marketer</option><option value="ambassador">Ambassador</option><option value="ortus">Ortus</option><option value="apex">Apex</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ font: `700 10.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#8a93a3" }}>Channel <span style={{ textTransform: "none", letterSpacing: 0, color: "#b4bccb" }}>(optional)</span></span>
+                <input value={addForm.channel} onChange={e => setAddForm({ ...addForm, channel: e.target.value })} placeholder="e.g. FB outreach, ambassador, field day" style={{ border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "10px 12px", font: `500 13.5px ${F}`, color: "#0b1220", outline: "none" }} />
+              </label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button onClick={() => setShowAdd(false)} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 10, padding: "9px 15px", font: `700 12.5px ${F}`, cursor: "pointer" }}>Cancel</button>
+              <button onClick={addReferrer} disabled={busy || !addForm.name.trim()} style={{ border: "none", background: busy || !addForm.name.trim() ? "#9aa7bd" : "#0f7a3d", color: "#fff", borderRadius: 10, padding: "9px 16px", font: `700 12.5px ${F}`, cursor: busy || !addForm.name.trim() ? "default" : "pointer" }}>{busy ? "Adding…" : "Add referrer"}</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function Drawer({ r, pays, copied, setCopied, onClose, onPay, busy }: { r: Row; pays: Payout[]; copied: boolean; setCopied: (v: boolean) => void; onClose: () => void; onPay: (id: string, name: string) => void; busy: boolean }) {
+function CopyRow({ label, value, k, copiedKey, onCopy }: { label: string; value: string; k: string; copiedKey: string; onCopy: (t: string, k: string) => void }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "8px 10px" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ font: `700 9.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#9aa0a6", marginBottom: 2 }}>{label}</div>
+        <div style={{ font: `500 12.5px ${F}`, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+      </div>
+      <button onClick={() => onCopy(value, k)} style={{ flex: "none", border: "none", background: "#0b1220", color: "#fff", borderRadius: 7, padding: "5px 10px", font: `700 11.5px ${F}`, cursor: "pointer" }}>{copiedKey === k ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+const PAY_METHODS = ["GCash", "Maya", "Maribank", "GoTyme", "Bank", "Cash", "Wise", "PayPal"];
+type EditForm = { email: string; contacts: Contact[]; preferred: number; paymentMethod: string; paymentDetails: string; paymentName: string };
+
+function Drawer({ r, pays, onClose, onPay, onSave, onDelete, busy }: { r: Row; pays: Payout[]; onClose: () => void; onPay: (id: string, name: string) => void; onSave: (id: string, payload: Record<string, unknown>) => Promise<boolean>; onDelete: (id: string, name: string) => void; busy: boolean }) {
+  const [copiedKey, setCopiedKey] = useState("");
+  const [editing, setEditing] = useState(false);
+  const seed = (): EditForm => {
+    const contacts = r.contacts.length ? r.contacts.map(c => ({ method: c.method || "WhatsApp", handle: c.handle || "", preferred: !!c.preferred })) : [{ method: "WhatsApp", handle: "", preferred: true }];
+    let preferred = contacts.findIndex(c => c.preferred); if (preferred < 0) preferred = 0;
+    return { email: r.email || "", contacts, preferred, paymentMethod: r.paymentMethod || "GCash", paymentDetails: r.paymentDetails || "", paymentName: r.paymentName || "" };
+  };
+  const [form, setForm] = useState<EditForm>(seed);
+  const startEdit = () => { setForm(seed()); setEditing(true); };
+  const save = async () => {
+    const contacts = form.contacts.map((c, i) => ({ method: c.method || "WhatsApp", handle: (c.handle || "").trim(), preferred: i === form.preferred })).filter(c => c.handle);
+    if (contacts.length && !contacts.some(c => c.preferred)) contacts[0].preferred = true;
+    const pref = contacts.find(c => c.preferred) || contacts[0] || null;
+    const ok = await onSave(r.id, { email: form.email.trim() || null, contacts, contactMethod: pref?.method ?? null, contactHandle: pref?.handle ?? null, paymentMethod: form.paymentMethod, paymentDetails: form.paymentDetails, paymentName: form.paymentName.trim() });
+    if (ok) setEditing(false);
+  };
+  const copy = (text: string, key: string) => { navigator.clipboard?.writeText(text).then(() => { setCopiedKey(key); setTimeout(() => setCopiedKey(k => (k === key ? "" : k)), 1500); }).catch(() => {}); };
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { if (editing) setEditing(false); else onClose(); } };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+  }, [onClose, editing]);
   const paidApp = new Set(pays.filter(p => p.type === "commission" && p.paidAt && p.ambassadorApplicationId).map(p => p.ambassadorApplicationId!));
   const tiers = CURRENCY_CONFIG[r.cur].referralTiers;
-  const link = `https://linkedvelocity.com/r/${r.slug}`;
+  const portalLink = r.token ? `https://linkedvelocity.com/m/${r.token}` : "";
+  const shareLink = `https://linkedvelocity.com/r/${r.slug}`;
   const best = r.w.reduce((b, v, i) => (v > r.w[b] ? i : b), 0);
   const stats = [
     { l: "Signups", v: String(r.sign), fg: "#0b1220" as string, sub: "" },
@@ -475,11 +600,68 @@ function Drawer({ r, pays, copied, setCopied, onClose, onPay, busy }: { r: Row; 
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <span style={{ font: `700 11px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Portal · ref {r.slug}</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #dde1e8", background: "#f8f9fb", borderRadius: 10, padding: "8px 10px" }}>
-            <span style={{ flex: 1, minWidth: 0, font: `500 12.5px ${F}`, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{link}</span>
-            <button onClick={() => { navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); }} style={{ flex: "none", border: "none", background: "#0b1220", color: "#fff", borderRadius: 7, padding: "5px 10px", font: `700 11.5px ${F}`, cursor: "pointer" }}>{copied ? "Copied" : "Copy"}</button>
+          <span style={{ font: `700 11px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Links · ref {r.slug}</span>
+          {portalLink && <CopyRow label="Portal (private · their login)" value={portalLink} k="portal" copiedKey={copiedKey} onCopy={copy} />}
+          <CopyRow label="Share link (public · for signups)" value={shareLink} k="share" copiedKey={copiedKey} onCopy={copy} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, font: `700 11px ${F}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>Contact &amp; payout</span>
+            {!editing && <button onClick={startEdit} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 7, padding: "4px 10px", font: `700 11.5px ${F}`, cursor: "pointer" }}>Edit</button>}
           </div>
+
+          {!editing && <>
+            {r.contacts.map((c, i) => (
+              <CopyRow key={`c${i}`} label={`${c.method || "Contact"}${c.preferred ? " · preferred" : ""}`} value={c.handle || ""} k={`c${i}`} copiedKey={copiedKey} onCopy={copy} />
+            ))}
+            {r.email && <CopyRow label="Email" value={r.email} k="email" copiedKey={copiedKey} onCopy={copy} />}
+            {r.paymentDetails && <CopyRow label={`Pay via ${r.paymentMethod || ""}`.trim()} value={`${r.paymentDetails}${r.paymentName ? ` · ${r.paymentName}` : ""}`} k="pay" copiedKey={copiedKey} onCopy={copy} />}
+            {!r.contacts.length && !r.email && !r.paymentDetails && <div style={{ font: `500 12.5px ${F}`, color: "#8a93a3", border: "1px dashed #dde1e8", borderRadius: 10, padding: "10px 12px" }}>No contact or payout details yet. Tap Edit to add them.</div>}
+          </>}
+
+          {editing && (() => {
+            const inp: React.CSSProperties = { border: "1px solid #dde1e8", background: "#fff", borderRadius: 9, padding: "8px 10px", font: `500 12.5px ${F}`, color: "#0b1220", outline: "none" };
+            const lbl: React.CSSProperties = { font: `700 9.5px ${F}`, letterSpacing: ".06em", textTransform: "uppercase", color: "#9aa0a6", marginBottom: 4 };
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, border: "1px solid #dde1e8", borderRadius: 12, padding: "12px 12px 14px", background: "#f8f9fb" }}>
+                <div>
+                  <div style={lbl}>Contacts · tick the preferred one</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {form.contacts.map((c, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <input type="radio" name="pref" checked={form.preferred === i} onChange={() => setForm({ ...form, preferred: i })} title="Preferred" style={{ flex: "none", cursor: "pointer" }} />
+                        <select value={c.method} onChange={e => setForm({ ...form, contacts: form.contacts.map((x, j) => j === i ? { ...x, method: e.target.value } : x) })} style={{ ...inp, flex: "none", width: 118 }}>
+                          {["WhatsApp", "Telegram", "Viber", "Messenger", "SMS", "Email"].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <input value={c.handle} onChange={e => setForm({ ...form, contacts: form.contacts.map((x, j) => j === i ? { ...x, handle: e.target.value } : x) })} placeholder="number or @handle" style={{ ...inp, flex: 1, minWidth: 0 }} />
+                        {form.contacts.length > 1 && <button onClick={() => { const next = form.contacts.filter((_, j) => j !== i); setForm({ ...form, contacts: next, preferred: Math.max(0, form.preferred >= i ? form.preferred - 1 : form.preferred) }); }} style={{ flex: "none", border: "none", background: "none", color: "#dc2626", font: `700 15px ${F}`, cursor: "pointer", padding: "0 4px" }}>✕</button>}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setForm({ ...form, contacts: [...form.contacts, { method: "WhatsApp", handle: "", preferred: false }] })} style={{ marginTop: 7, border: "none", background: "none", color: "#2563eb", font: `700 12px ${F}`, cursor: "pointer", padding: 0 }}>+ Add another number</button>
+                </div>
+                <div><div style={lbl}>Email</div><input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="email address" style={{ ...inp, width: "100%" }} /></div>
+                <div>
+                  <div style={lbl}>Pay via</div>
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                    <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={{ ...inp, flex: "none", width: 130 }}>
+                      {PAY_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <input value={form.paymentDetails} onChange={e => setForm({ ...form, paymentDetails: e.target.value })} placeholder="account number" style={{ ...inp, flex: 1, minWidth: 120 }} />
+                  </div>
+                  <input value={form.paymentName} onChange={e => setForm({ ...form, paymentName: e.target.value })} placeholder="account name (registered)" style={{ ...inp, width: "100%", marginTop: 7 }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2 }}>
+                  <button onClick={() => onDelete(r.id, r.name)} disabled={busy} style={{ border: "1px solid #f5c2c2", background: "#fff", color: "#dc2626", borderRadius: 9, padding: "8px 12px", font: `700 12px ${F}`, cursor: busy ? "default" : "pointer" }}>Delete referrer</button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setEditing(false)} disabled={busy} style={{ border: "1px solid #dde1e8", background: "#fff", color: "#0b1220", borderRadius: 9, padding: "8px 14px", font: `700 12px ${F}`, cursor: busy ? "default" : "pointer" }}>Cancel</button>
+                    <button onClick={save} disabled={busy} style={{ border: "none", background: busy ? "#9aa7bd" : "#0f7a3d", color: "#fff", borderRadius: 9, padding: "8px 16px", font: `700 12px ${F}`, cursor: busy ? "default" : "pointer" }}>{busy ? "Saving…" : "Save"}</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
