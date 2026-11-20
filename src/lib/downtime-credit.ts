@@ -8,9 +8,11 @@
 // for weeks — or a permanently-restricted one, which skips the recovery-hold gate — would push the
 // next-payment date out day-for-day while the renter isn't paying.
 //
-//   daysActive = (restrictedAt − rentalStart) mod 30d   — how far into its current cycle the
-//                account was when it got restricted, counted from the rental's start date
-//   credit     = min(elapsed downtime, 30d − daysActive)
+//   windowStart = max(restrictedAt, rentalStart)   — downtime before the rental began is never
+//                 credited (a renter can't be owed for time they weren't paying for)
+//   daysActive  = (restrictedAt − rentalStart) mod 30d   — how far into its current cycle the
+//                 account was when it got restricted, counted from the rental's start date
+//   credit      = min(now − windowStart, 30d − daysActive)
 //
 // IMPORTANT: daysActive is anchored on `rentalStart` (the rental's startDate), NOT on
 // currentPeriodEnd. currentPeriodEnd drifts forward with every renewal and credit, so after an
@@ -29,9 +31,15 @@ export function cappedDowntimeMs(
 ): number {
   const restrictedMs = new Date(restrictedAt).getTime();
   if (!Number.isFinite(restrictedMs)) return 0;
-  const downtimeMs = Math.max(0, Date.now() - restrictedMs);
   const startMs = rentalStart == null ? NaN : new Date(rentalStart).getTime();
-  // No usable start, or restricted at/before it: nothing to subtract, cap at a full cycle.
+  // Credit only the downtime the renter was actually exposed to: measure from the LATER of the
+  // restriction and the rental's own start. A renter who picked up an account that was already
+  // restricted (restriction at/before their start) must not be credited for downtime that
+  // predates their rental — that over-credits them day-for-day for a period they never paid.
+  const windowStartMs = Number.isFinite(startMs) ? Math.max(restrictedMs, startMs) : restrictedMs;
+  const downtimeMs = Math.max(0, Date.now() - windowStartMs);
+  // No usable start, or restricted at/before it: nothing to subtract from the cycle, cap at a full
+  // cycle (downtimeMs is already clamped to the rental start above when one exists).
   if (!Number.isFinite(startMs) || restrictedMs <= startMs) return Math.min(downtimeMs, CYCLE_MS);
   const activeMs = (restrictedMs - startMs) % CYCLE_MS; // position within the restriction's cycle
   return Math.min(downtimeMs, CYCLE_MS - activeMs);
