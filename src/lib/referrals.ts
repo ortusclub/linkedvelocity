@@ -118,10 +118,13 @@ export function isReferralReadyToPay(a: ReferralGate, now: Date = new Date()): b
 //   computer (referrer did the guided sign-in)  → computer.base / computer.verified
 // `verified` is the snapshot taken AT onboarding (onboardingVerified), so the amount is
 // locked then — verifying the account afterwards does NOT change what the referrer earns.
-// Self-service rows without a recorded method (only pre-tier rows, since new onboardings
-// always stamp it) fall back to the computer tier so the amount is never understated.
+// The DIY premium is only earned when the referrer actually did a guided sign-in, which is
+// the ONLY thing that stamps onboardingMethod (phone/computer — see self-service-onboarding.ts).
+// A self-service row with NO method means the referrer started the wizard but the team finished
+// the onboarding, so it's a plain referral, not DIY — pay the standard rate, don't default it
+// to the (higher) computer tier. This keeps the payout in step with the pipeline's "Form" type.
 export function referralCommissionAmount(a: ReferralGate, tiers: ReferralTiers): number {
-  if (a.referralSource !== "self-service" || a.onboardingMethod === "team_meeting") return tiers.referral;
+  if (a.referralSource !== "self-service" || (a.onboardingMethod !== "phone" && a.onboardingMethod !== "computer")) return tiers.referral;
   const verified = !!a.onboardingVerified;
   const band = a.onboardingMethod === "phone" ? tiers.phone : tiers.computer;
   return verified ? band.verified : band.base;
