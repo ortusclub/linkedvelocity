@@ -290,6 +290,13 @@ model LinkedInAccount {
   // derived from the recovery* fields above, not stored here. Cleared on recover (archived into
   // the restrictionLog "recovered" event). Shape: { reason?: string, steps: [{ k, o, at, err?, note? }] }.
   recoveryCase          Json?         @map("recovery_case")
+  // LV Agent (droplet lv-agent): automated recovery recheck of a RESTRICTED account — the agent
+  // loads the account's own linkedinUrl from a healthy LV session and reports whether the profile
+  // still renders. { loaded: boolean, at: ISO, from?: string }. loaded=true (while restrictedAt is
+  // still set and not permanent) surfaces a "🤖 Agent: profile loads — verify" flag on Restrictions
+  // v2 so a human confirms and recovers. NEVER auto-clears restrictedAt. Reset when a new
+  // restriction is set; left stale (and ignored, gated on restrictedAt) once the account recovers.
+  recoveryProbe         Json?         @map("recovery_probe")
   trialEndsAt           DateTime?     @map("trial_ends_at")   // set when status=trial: a 3-day inventory hold; past this = "trial expired", awaiting admin mark-back
   // Short-term reservation: while heldUntil is in the future the account is hidden from every
   // catalogue (public + unlisted) and the normal checkout, so it can't be snagged. Status stays

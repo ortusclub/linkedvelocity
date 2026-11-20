@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { buildCase, deriveCase, buildWorkflow, matchApp, notesSaysPerma, parseStoredCase, PHASE, type CaseAccount } from "@/lib/recovery-case";
 import { mailTypeLabel } from "@/lib/account-mail";
 import type { RestrictionEvent } from "@/lib/restriction";
+import { probeSuggestsRecovery } from "@/lib/recovery-probe";
 
 export const dynamic = "force-dynamic";
 
@@ -52,9 +53,9 @@ export async function GET(req: Request) {
       select: {
         id: true, linkedinName: true, loginEmail: true, status: true, linkedinVerified: true, poc: true,
         linkedinUrl: true, notes: true,
-        restrictedAt: true, restrictionLog: true,
+        restrictedAt: true, restrictionLog: true, permanentlyRestricted: true,
         recoveryQrUrl: true, recoveryQrAt: true, recoverySentAt: true, recoverySentVia: true,
-        recoveryOutcome: true, recoveryOutcomeAt: true, recoveryCase: true,
+        recoveryOutcome: true, recoveryOutcomeAt: true, recoveryCase: true, recoveryProbe: true,
       },
       orderBy: { restrictedAt: "desc" },
     });
@@ -260,6 +261,11 @@ export async function GET(req: Request) {
         // The referrer's self-report from the portal ("it's unrestricted" / "QR check done").
         // Surfaced so the page can float these to the top for an admin to verify + close.
         report: acct.restrictionReport,
+        // LV Agent recovery recheck: it loaded this restricted account's profile from a healthy
+        // session and it rendered — likely back online. Floated to the top to verify, like a
+        // referrer report. Gated on the account still being restricted (and not permanent), so a
+        // recovered account's stale probe drops off automatically.
+        probe: (() => { const p = probeSuggestsRecovery(a.recoveryProbe, !!a.restrictedAt && !permaFromSignals(a), permaFromSignals(a)); return p ? { loaded: true, at: p.at, from: p.from || null } : null; })(),
         qrUrl: a.recoveryQrUrl, qrAt: a.recoveryQrAt, sentAt: a.recoverySentAt, sentVia: a.recoverySentVia,
         outcome: a.recoveryOutcome, history,
       };

@@ -104,7 +104,7 @@ export async function restrictionUpdate(
   restrict: boolean,
   note?: string,
   applyCredit = true,
-): Promise<{ restrictedAt: Date | null; restrictionLog?: RestrictionEvent[]; creditedDays?: number }> {
+): Promise<{ restrictedAt: Date | null; restrictionLog?: RestrictionEvent[]; creditedDays?: number; recoveryProbe?: null }> {
   const log: RestrictionEvent[] = Array.isArray(account.restrictionLog)
     ? (account.restrictionLog as RestrictionEvent[])
     : [];
@@ -121,6 +121,9 @@ export async function restrictionUpdate(
         ...log,
         { at: at.toISOString(), event: "restricted", ...(trimmed ? { note: trimmed } : {}), ...snap },
       ],
+      // A fresh restriction wipes any recovery probe from a previous episode so a stale "profile
+      // loads" reading can't immediately flag the new restriction as recovered.
+      recoveryProbe: null,
     };
   }
 
