@@ -159,6 +159,23 @@ export async function GET(req: Request) {
       const d = deriveCase(acct, built, { now, staleDays, ownerSilentHours, cooldownDays });
       const wf = buildWorkflow(acct, built, { now, cooldownDays });
 
+      // LinkedIn's latest VERDICT — the one thing that decides "can we log in now (recovered)" vs
+      // "mark it perm". Derived from the case's own LinkedIn/ID/appeal steps (classified from the
+      // captured emails in recovery-case.ts, single source of truth), NOT from the raw newest email —
+      // so a benign PIN / password-reset mail never masks LinkedIn's actual answer. Keys: reinstated
+      // (can log in), rejected (still restricted → perm/re-appeal), info (ID / more info needed),
+      // mismatch (won't act unless emailed from the on-file .co.uk we can't send from → appeal), or
+      // awaiting (replied but no decision yet).
+      const vStep = [...built.steps].filter((s) => s.k === "li" || s.k === "id" || s.k === "form").sort((x, y) => Date.parse(x.at) - Date.parse(y.at)).pop();
+      let verdict: { key: "reinstated" | "rejected" | "info" | "mismatch" | "awaiting"; at: string; note: string } | null = null;
+      if (vStep) {
+        const txt = `${vStep.note || ""} ${vStep.err || ""}`.trim();
+        const key = vStep.o === "ok" ? "reinstated"
+          : vStep.o === "fail" ? (vStep.k === "li" && /on-file address|registered (email|address)/i.test(txt) ? "mismatch" : vStep.k === "id" ? "info" : "rejected")
+          : /more info|additional information|asked for/i.test(txt) ? "info" : "awaiting";
+        verdict = { key, at: vStep.at, note: txt };
+      }
+
       // Restriction history: pair restricted→recovered events from the log (newest first).
       const log = asLog(a.restrictionLog);
       const history: Array<{ reason: string; days: number; at: string; how: string; open: boolean }> = [];
@@ -214,6 +231,9 @@ export async function GET(req: Request) {
       const terminal = d.bucket === "lost" || d.bucket === "done";
       const unactedReplies = (mailByAccount.get(a.id) || []).filter((m) =>
         m.status === "needs_review" && m.receivedAt.getTime() > lastActionMs &&
+        // Access-code mail (PIN / password-reset) is shown on the card but is NOT a LinkedIn reply to
+        // our appeals, so it must never raise the "📧 LinkedIn replied" Needs-action flag.
+        m.type !== "email_verify" && m.type !== "password_changed" &&
         (!terminal || REOPEN_RE.test(`${m.subject || ""} ${m.bodyText || ""}`)));
       const newReply = unactedReplies.length > 0;
       // Age of the newest unacted reply so an old response is distinguishable from a fresh one on the
@@ -257,7 +277,7 @@ export async function GET(req: Request) {
         restrictedAt: a.restrictedAt, reason: built.reason, steps: built.steps,
         next: d.next, urgent: d.urgent, bucket: d.bucket, cnt: d.cnt, restrictedMs: d.restrictedMs,
         resolvedAt: d.resolvedAt, closedAt: d.closedAt, lostOutcome: d.lostOutcome, lastErr: d.lastErr, flags, chain: d.chain,
-        newReply, clearedToday,
+        newReply, clearedToday, verdict,
         wf: wf.cards, wfNext: wf.next, wfLevel: wf.level, wfCurrent: wf.current,
         emails: (mailByAccount.get(a.id) || []).map((m) => ({ id: m.id, status: m.status, type: m.type, typeLabel: mailTypeLabel(m.type), at: m.receivedAt.toISOString(), subject: m.subject, severity: m.severity, body: (m.bodyText || "").slice(0, 1500) })),
         renterName: renterByAccount.get(a.id) || null,

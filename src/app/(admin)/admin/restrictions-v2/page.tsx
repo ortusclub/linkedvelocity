@@ -23,6 +23,7 @@ type Row = {
   next: string; urgent: boolean; bucket: string; cnt: number; restrictedMs: number;
   resolvedAt: number | null; closedAt: number | null; lostOutcome: "perma" | "nocontact" | null; lastErr: string; flags: Flag[]; chain: Chain[];
   newReply: boolean; clearedToday: boolean;
+  verdict: { key: "reinstated" | "rejected" | "info" | "mismatch" | "awaiting"; at: string; note: string } | null;
   report: { type?: "qr_done" | "recovered"; at?: string } | null;
   probe: { loaded: boolean; at?: string; from?: string | null } | null;
   lastTouchAt: number | null; lastTouchLabel: string;
@@ -363,9 +364,22 @@ function WorkflowPanel({ r, post }: { r: Row; post: (body: unknown) => void }) {
 }
 
 const MAIL_SEV: Record<string, [string, string]> = { benign: ["#f1f5f9", "#475569"], review: ["#eff6ff", "#1d4ed8"], danger: ["#fef2f2", "#b91c1c"] };
+// LinkedIn verdict → [label, text colour, background]. The one-glance answer to "can we log in now
+// (recovered)" vs "mark it perm". Driven by Row.verdict (derived server-side from the case steps).
+const VERDICT: Record<string, [string, string, string]> = {
+  reinstated: ["✅ Reinstated · can log in", "#0f7a3d", "#eaf7ef"],
+  rejected: ["⛔ Still restricted · rejected", "#b91c1c", "#fef2f2"],
+  info: ["📋 Asked for more info / ID", "#b45309", "#fff7ed"],
+  mismatch: ["✉️ Email-mismatch dead end · appeal", "#6d28d9", "#f5f3ff"],
+  awaiting: ["⏳ Awaiting LinkedIn", "#475569", "#f1f5f9"],
+};
+// Captured-mail types that are LinkedIn's VERDICTS (appeal/ID/recovery replies) vs ACCESS CODES
+// (PIN / password-reset). The panel groups by this so codes never crowd the verdicts.
+const VERDICT_TYPES = new Set(["appeal_update", "id_verification", "recovery_appeal", "appeal_intake", "restriction"]);
+const isCodeMail = (t: string) => t === "email_verify" || t === "password_changed";
 // Captured LinkedIn appeal / ID / recovery emails for this account (auto-recorded with their real dates).
-function EmailLog({ emails, accountId, onChange }: { emails: MailEvt[]; accountId: string; onChange: () => void }) {
-  const [open, setOpen] = useState<Record<number, boolean>>({});
+function EmailLog({ emails, verdict, accountId, onChange }: { emails: MailEvt[]; verdict: Row["verdict"]; accountId: string; onChange: () => void }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   // Clear a reply's "needs review" (and the 📧 Needs-action badge) once it's been dealt with, e.g.
   // after replying off-platform. Replying via a logged workflow step clears it automatically.
@@ -374,25 +388,41 @@ function EmailLog({ emails, accountId, onChange }: { emails: MailEvt[]; accountI
     try { await fetch(`/api/admin/accounts/${accountId}/mail`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventId, action: "we_know" }) }); onChange(); }
     catch { /* best-effort */ } finally { setBusy(false); }
   };
+  // Verdicts (appeal/ID/recovery replies) separated from access codes (PIN / password-reset) so the
+  // decision mail reads cleanly in time order and the codes don't crowd it. Both newest-first.
+  const verdicts = emails.filter((m) => VERDICT_TYPES.has(m.type)).slice().reverse();
+  const codes = emails.filter((m) => isCodeMail(m.type)).slice().reverse();
+  const v = verdict ? VERDICT[verdict.key] : null;
+  const label = (t: string) => <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>{t}</span>;
+  const row = (m: MailEvt) => {
+    const sev = MAIL_SEV[m.severity] || MAIL_SEV.review; const o = !!open[m.id];
+    return (
+      <div key={m.id} onClick={() => setOpen((s) => ({ ...s, [m.id]: !o }))} style={{ border: "1px solid #eef0f4", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", background: o ? "#fafbfc" : "#fff" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, color: "#5b6779", whiteSpace: "nowrap" }}>↓ LinkedIn</span>
+          <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
+          {m.status === "needs_review" && <button onClick={(e) => { e.stopPropagation(); markHandled(m.id); }} disabled={busy} title="Mark this reply handled — clears it from Needs action" style={{ flex: "none", border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 7, padding: "2px 8px", font: `700 10.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>Mark handled</button>}
+          <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
+        </div>
+        <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{fmt(m.at)}</span>
+        {o && <div style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.55, color: "#334155", borderTop: "1px solid #eef0f4", paddingTop: 8, whiteSpace: "pre-wrap" }}>{m.body}</div>}
+      </div>
+    );
+  };
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e6ec", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-      <span style={{ font: `700 10.5px ${F_SANS}`, letterSpacing: ".07em", textTransform: "uppercase", color: "#8a93a3" }}>LinkedIn emails · {emails.length}</span>
-      {!emails.length && <span style={{ font: `500 12.5px ${F_SANS}`, color: "#8a93a3" }}>No LinkedIn appeal / ID emails captured for this account.</span>}
-      {emails.slice().reverse().map((m, i) => {
-        const sev = MAIL_SEV[m.severity] || MAIL_SEV.review; const o = !!open[i];
-        return (
-          <div key={i} onClick={() => setOpen((s) => ({ ...s, [i]: !o }))} style={{ border: "1px solid #eef0f4", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", background: o ? "#fafbfc" : "#fff" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, color: "#5b6779", whiteSpace: "nowrap" }}>↓ LinkedIn</span>
-              <span style={{ flex: 1, minWidth: 0, font: `600 12.5px ${F_SANS}`, color: "#0b1220", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
-              {m.status === "needs_review" && <button onClick={(e) => { e.stopPropagation(); markHandled(m.id); }} disabled={busy} title="Mark this reply handled — clears it from Needs action" style={{ flex: "none", border: "1px solid #cdebd9", background: "#f4fbf7", color: "#0f7a3d", borderRadius: 7, padding: "2px 8px", font: `700 10.5px ${F_SANS}`, cursor: "pointer", whiteSpace: "nowrap" }}>Mark handled</button>}
-              <span style={{ flex: "none", font: `700 10.5px ${F_SANS}`, padding: "2px 8px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
-            </div>
-            <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3" }}>{fmt(m.at)}</span>
-            {o && <div style={{ font: `500 12px ${F_SANS}`, lineHeight: 1.55, color: "#334155", borderTop: "1px solid #eef0f4", paddingTop: 8, whiteSpace: "pre-wrap" }}>{m.body}</div>}
-          </div>
-        );
-      })}
+      {v && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: v[2], border: `1px solid ${v[1]}33`, borderRadius: 10, padding: "9px 12px" }}>
+        <span style={{ font: `800 13px ${F_SANS}`, color: v[1] }}>{v[0]}</span>
+        <span style={{ font: `600 11px ${F_SANS}`, color: "#8a93a3" }}>Latest LinkedIn verdict · {fmt(verdict!.at)}</span>
+      </div>}
+      {label(`LinkedIn verdicts · ${verdicts.length}`)}
+      {!verdicts.length && <span style={{ font: `500 12.5px ${F_SANS}`, color: "#8a93a3" }}>No appeal / ID / recovery replies captured yet.</span>}
+      {verdicts.map(row)}
+      {codes.length > 0 && <>
+        {label(`Access codes · ${codes.length}`)}
+        <span style={{ font: `500 11px ${F_SANS}`, color: "#8a93a3", marginTop: -4 }}>PIN / password-reset mail — the codes to log in during step 4. Not LinkedIn verdicts.</span>
+        {codes.map(row)}
+      </>}
     </div>
   );
 }
@@ -560,7 +590,7 @@ function CaseDetail({ r, reload, now }: { r: Row; reload: () => void; now: numbe
         </div>
 
         {/* LinkedIn email log (captured appeal / ID / recovery emails) */}
-        <EmailLog emails={r.emails} accountId={r.id} onChange={reload} />
+        <EmailLog emails={r.emails} verdict={r.verdict} accountId={r.id} onChange={reload} />
 
         {/* Appeal mailbox + QR recovery + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -936,16 +966,18 @@ export default function RestrictionsV2Page() {
                     </div>
                     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                       {(() => {
-                        const m = r.emails[r.emails.length - 1];
-                        if (!m) return <span style={{ font: `500 12px ${F_SANS}`, color: "#b4bccb" }}>—</span>;
-                        const sev = MAIL_SEV[m.severity] || MAIL_SEV.review;
+                        // Latest LinkedIn VERDICT email (not PIN / password mail) + the plain-language
+                        // verdict chip — the at-a-glance "recovered vs perm" signal.
+                        const m = r.emails.filter((e) => VERDICT_TYPES.has(e.type)).at(-1);
+                        const v = r.verdict ? VERDICT[r.verdict.key] : null;
+                        if (!m && !v) return <span style={{ font: `500 12px ${F_SANS}`, color: "#b4bccb" }}>—</span>;
                         return (<>
                           <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                             {r.newReply && <span title="New LinkedIn reply to handle" style={{ font: `700 9px ${F_SANS}`, padding: "1px 6px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8" }}>NEW</span>}
-                            <span style={{ font: `700 9.5px ${F_SANS}`, padding: "1px 7px", borderRadius: 999, background: sev[0], color: sev[1], whiteSpace: "nowrap" }}>{m.typeLabel}</span>
+                            {v && <span style={{ font: `700 9.5px ${F_SANS}`, padding: "1px 7px", borderRadius: 999, background: v[2], color: v[1], whiteSpace: "nowrap" }}>{v[0]}</span>}
                           </span>
-                          <span style={{ font: `600 12px ${F_SANS}`, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>
-                          <span style={{ font: `500 10.5px ${F_SANS}`, color: "#8a93a3" }}>{rel(m.at, now)}</span>
+                          {m && <span style={{ font: `600 12px ${F_SANS}`, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.subject}</span>}
+                          <span style={{ font: `500 10.5px ${F_SANS}`, color: "#8a93a3" }}>{rel((r.verdict?.at || m?.at) ?? null, now)}</span>
                         </>);
                       })()}
                     </div>
