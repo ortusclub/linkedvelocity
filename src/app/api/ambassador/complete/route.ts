@@ -5,9 +5,10 @@ import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { sendAmbassadorWelcomeEmail } from "@/services/email";
 import { headers } from "next/headers";
+import { formatName } from "@/lib/format-name";
 
 const completeSchema = z.object({
-  fullName: z.string().min(1),
+  fullName: z.string().min(1).transform(formatName),
   email: z.string().email(),
   ownerEmail: z.string().email().optional(),
   linkedinUrl: z.string().optional(),

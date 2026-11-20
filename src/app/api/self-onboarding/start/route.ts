@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { selfServiceInput } from "@/lib/self-service-input";
+import { formatName } from "@/lib/format-name";
 import { OnboardingError, reserveOnboarding, mintSelfToken, onboardingSummary, DIY_REFERRER_SLUG } from "@/lib/self-service-onboarding";
 import { createSession, getSession } from "@/lib/auth";
 import { isLikelyTestEmail } from "@/lib/test-mode";
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
     const raw = await req.json();
     const permit = typeof raw?.permit === "string" ? raw.permit : "";
     const tier: DiyTier | null = DIY_TIERS.includes(raw?.tier) ? raw.tier : null;
-    const parsed = selfServiceInput.safeParse(raw);
+    const parsed = selfServiceInput.safeParse(raw && typeof raw === "object" && typeof raw.fullName === "string" ? { ...raw, fullName: formatName(raw.fullName) } : raw);
     if (!parsed.success) return json({ error: parsed.error.issues[0]?.message || "Please check your details." }, 400);
     if (!verifyPermit(permit, parsed.data.email)) return json({ error: "Please verify your email first." }, 403);
 

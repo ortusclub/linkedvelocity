@@ -7,9 +7,10 @@ import { z } from "zod";
 import { assessFromApplication } from "@/services/profile-assessor";
 import { sendAmbassadorApplicationLead } from "@/services/email";
 import { refFromCookieHeader } from "@/lib/referral-cookie";
+import { formatName } from "@/lib/format-name";
 
 const applySchema = z.object({
-  fullName: z.string().min(1),
+  fullName: z.string().min(1).transform(formatName),
   email: z.string().email(),
   linkedinEmail: z.string().email().optional(),
   contactNumber: z.string().optional(),

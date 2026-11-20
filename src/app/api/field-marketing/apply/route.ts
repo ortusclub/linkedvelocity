@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sendFieldMarketingLead } from "@/services/email";
+import { formatName } from "@/lib/format-name";
 
 const applySchema = z.object({
-  fullName: z.string().min(1),
+  fullName: z.string().min(1).transform(formatName),
   email: z.string().email(),
   contactNumber: z.string().min(1),
   comfortApproaching: z.string().optional(),

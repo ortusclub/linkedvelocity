@@ -11,7 +11,7 @@ test('duplicate checks include normalized account email and precise profile iden
 });
 test('public onboarding starts a scoped wizard after email verification',async()=>{
  let reserved;
- const route=load('src/app/api/self-onboarding/start/route.ts',{
+ const route=load('src/app/api/self-onboarding/start/route.ts',{'@/lib/format-name':load('src/lib/format-name.ts'),
   '@/lib/application-duplicates':{existingApplicationAccount:async()=>null},
  '@/lib/prisma':{prisma:{referrer:{findUnique:async()=>({id:'diy-id',slug:'diy'})},selfServiceOnboarding:{findUnique:async()=>({applicationId:'new-app'})},ambassadorApplication:{update:async()=>{}}}},
   '@/lib/self-service-input':load('src/lib/self-service-input.ts'),

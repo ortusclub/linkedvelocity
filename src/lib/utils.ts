@@ -5,20 +5,9 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// Display a person's name tidily even when it was entered in ALL CAPS
-// (e.g. "AIZA MAE PULAO BARIATA" → "Aiza Mae Pulao Bariata"). Only fully-uppercase
-// words are title-cased; already-mixed-case names are left alone so "McKay",
-// "De Leon", "Hanna-Jen", and initials like "N." survive untouched.
-export function formatName(name: string | null | undefined): string {
-  if (!name) return "";
-  return name.trim().split(/\s+/).map((word) =>
-    word.split("-").map((part) =>
-      part.length > 1 && /[A-Z]/.test(part) && part === part.toUpperCase()
-        ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
-        : part
-    ).join("-")
-  ).join(" ");
-}
+// Name tidying lives in its own dependency-free module so API routes and tests can
+// import it without pulling in clsx/tailwind-merge.
+export { formatName } from "@/lib/format-name";
 
 // Renter-facing display name: tidy the casing (via formatName) AND drop middle initials so
 // long names fit in email tables. "Marian V. Araos" → "Marian Araos"; "AIRA FEJ ENCINARES" →
