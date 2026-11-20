@@ -196,7 +196,15 @@ function warmPresetSection() {
   for (const [key,preset] of Object.entries(WARM_PRESETS)) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'mature-preset'; button.setAttribute('aria-pressed', String(plan.warmRamp?.preset === key));
     const label = document.createElement('strong'); label.textContent = preset.label;
-    const detail = document.createElement('span'); detail.textContent = `Start ${preset.initialDaily}/day · +${preset.increaseBy} every ${preset.everyDays} days · maximum ${preset.maximumDaily}/day · stop after ${preset.stopAfterDays} days${key === 'moderate' ? ' · Cold: 5/day from day 1, 10/day on days 18–60' : ''}`;
+    const warmNote = Number(preset.increaseBy) === 0
+      ? `Warm: ${preset.initialDaily}/day flat for ${preset.stopAfterDays} days`
+      : `Warm: start ${preset.initialDaily}/day · +${preset.increaseBy} every ${preset.everyDays} days · max ${preset.maximumDaily}/day · stop after ${preset.stopAfterDays} days`;
+    const coldNote = key === 'moderate'
+      ? ' · Cold: 5/day from day 1, 10/day on days 18–60'
+      : Array.isArray(preset.cold) && preset.cold.length
+        ? ' · Cold: ' + preset.cold.map(s => `${s.daily}/day${preset.cold.length > 1 ? ` days ${s.fromDay}–${s.toDay}` : ''}`).join(', ')
+        : '';
+    const detail = document.createElement('span'); detail.textContent = `${warmNote}${coldNote}`;
     button.append(label,detail); button.onclick = () => { applyWarmPreset(plan, key); changed(); renderMaturePlan(); }; buttons.append(button);
   }
   box.append(title,help,buttons); return box;
