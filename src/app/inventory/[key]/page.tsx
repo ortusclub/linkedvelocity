@@ -45,6 +45,26 @@ const WILL_CFG: CatalogueConfig = {
   snAddon: 70,
 };
 
+// Account Flow (Marvin) — reseller, treated like Will Cura: browse-only full-pipeline catalogue
+// (available now + warm-up/construction "coming soon"), real per-account tier price + SN add-on.
+// They reply with picks and we provision manually (lockedPrice + SN) so direct checkout can't underprice.
+const AF_SLUG = "iv-acctflow-7p3k9xq2mw";
+const AF_PASSWORD = "AccountFlow-LV2026";
+const afPrice = (a: PriceInput) => tierPricing(a.connectionCount, a.accountAgeMonths, false, a.linkedinVerified).monthly;
+const AF_CFG: CatalogueConfig = {
+  forLabel: "Account Flow",
+  storageKey: "accountflow",
+  heroBlurb: "Aged, warmed LinkedIn profiles, plus everything currently in warm-up and construction. Each account is priced by tier (connections and age), starting at $45/mo, with +$10 if verified. Sales Navigator is an optional +$70 per account, which we set up for you. Open any profile to review it, then reply with the ones you'd like and we'll get you set up.",
+  legend: [
+    { cls: "u", label: "By tier", value: "from $45/mo" },
+    { cls: "v", label: "✓ Verified", value: "+$10/mo" },
+    { cls: "v", label: "Sales Navigator", value: "+$70/mo" },
+  ],
+  showRent: false,
+  showAge: true,
+  snAddon: 70,
+};
+
 // Yaron Been — same full-pipeline browse-only catalogue (he replies with picks, we provision
 // manually at his agreed rate). Real per-account tier price (connections + age, +$10 verified),
 // NO Sales Navigator add-on: he runs his own Sales Navigator independently on the accounts.
@@ -261,6 +281,12 @@ export default async function PartnerInventoryPage({ params }: { params: Promise
   if (key === MARTIN_SLUG) {
     const rows = await pipelineRows(martinPrice);
     return <Agent360Catalogue rows={rows} password={MARTIN_PASSWORD} cfg={MARTIN_CFG} />;
+  }
+
+  // Account Flow: browse-only full-pipeline catalogue (reseller; picks -> manual provision).
+  if (key === AF_SLUG) {
+    const rows = await pipelineRows(afPrice);
+    return <Agent360Catalogue rows={rows} password={AF_PASSWORD} cfg={AF_CFG} />;
   }
 
   if (key !== SLUG) notFound();
