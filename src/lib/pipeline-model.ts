@@ -152,7 +152,13 @@ export function maturingLoginIcons(m: MaturingLogin | null | undefined): { icon:
   return out;
 }
 export const levelOf = (r: Row): 0 | 0.5 | 1 | 2 | 3 | 4 | 5 => {
-  if (r.setupInProgress && !["rejected", "unreachable", "onboarded"].includes(r.status)) return 0.5;
+  // Level 0.5 means "started the self-service wizard, saved details, not yet submitted". It must
+  // only show while nothing downstream has actually happened. Once the account has had its email
+  // set primary, been logged in, QC-verified or onboarded, the wizard is effectively complete even
+  // if its session row was never flipped to "confirmed" — so a stale open session must not pin an
+  // already-progressed account back to 0.5 (this was hiding QC'd Level 4 accounts).
+  const hasProgressed = !!r.emailPrimaryAt || !!r.onboardedAt || !!r.verifiedAt;
+  if (r.setupInProgress && !hasProgressed && !["rejected", "unreachable", "onboarded"].includes(r.status)) return 0.5;
   if (!isApplicationReceived(r)) return 0;
   if (r.status === "onboarded") return 5;
   const feePaidLevel = !!r.paidAt || !!r.setupPaidAt || (r.monthlyPayouts || []).some((p) => p.kind === "setup");
