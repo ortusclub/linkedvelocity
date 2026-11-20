@@ -5,6 +5,7 @@ import { currencyConfig } from "@/lib/referral-currency";
 import { monthlyDueDate, setupPaidDate } from "@/lib/payment-schedule";
 import { deleteApplicationCascade } from "@/lib/application-delete";
 import { appIssueIsRestricted } from "@/lib/restriction";
+import { restrictionPayHold } from "@/lib/restriction-hold";
 import { diffPayout, nextPayoutChange, REFERRER_PAYOUT_FIELDS, AMBASSADOR_PORTAL_PAYOUT_FIELDS } from "@/lib/payout-change";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -251,21 +252,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       // "setup fee is due now" the instant an account recovers — the wrong impression for a
       // signup that genuinely can't be paid yet. The latest restriction event decides it:
       // still-restricted (unpaired) holds; a recovery holds for a week until it re-stabilises.
-      const restrEvents = (Array.isArray(acct?.restrictionLog) ? (acct!.restrictionLog as { at?: string; event?: string }[]) : [])
-        .filter((e) => e?.at && (e.event === "restricted" || e.event === "recovered"))
-        .sort((x, y) => new Date(x.at!).getTime() - new Date(y.at!).getTime());
-      const RESTR_STABILISE_MS = 7 * 86400000;
-      const lastRestr = restrEvents[restrEvents.length - 1];
-      // When the hold is because the account recovered but hasn't re-stabilised, we KNOW the exact
-      // date it resumes: the recovery date + the 7-day stabilisation window. (A still-restricted
-      // hold — the recover→re-flag sync-gap case — has no known resume date; it waits on clearance.)
-      const restrictionResumeAt = lastRestr?.event === "recovered"
-        ? new Date(new Date(lastRestr.at!).getTime() + RESTR_STABILISE_MS)
-        : null;
-      const restrictionHold = !!lastRestr && (
-        lastRestr.event === "restricted" ||
-        (lastRestr.event === "recovered" && Date.now() < (restrictionResumeAt as Date).getTime())
-      );
+      // The post-restriction payout hold, from the ONE shared helper the pipeline, payouts console
+      // and the mark-paid write paths all use — so a recovered account can never read "payable"
+      // on one surface while "on hold" on another. `restrictionResumeAt` is the date it resumes
+      // (recovery + stabilisation window); null for a still-restricted sync-gap case (no known date).
+      const payHold = restrictionPayHold({ restrictedAt: acct?.restrictedAt, restrictionLog: acct?.restrictionLog });
+      const restrictionHold = !!payHold;
+      const restrictionResumeAt = payHold?.resumeAt ? new Date(payHold.resumeAt) : null;
       let pay: { text: string; sub?: string } | null = null;
       if (accountEnded) {
         pay = { text: "No payout — this account was retired", sub: "a permanently restricted / retired account doesn't pay out" };

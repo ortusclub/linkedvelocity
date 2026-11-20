@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { currencyConfigFor, currencyConfig } from "@/lib/referral-currency";
 import { sendSetupFeePaidEmail, sendMonthlyPayoutEmail, sendReferralPayoutEmail } from "@/services/email";
+import { restrictionHoldForApplication } from "@/lib/restriction-hold-db";
+import { restrictionHoldMessage } from "@/lib/restriction-hold";
 
 // Record a payout made manually in Wise, from the unified console: append it to the ledger,
 // attach the Wise receipt, and email the payee (the receipt notification). One action for all
@@ -24,6 +26,9 @@ export async function POST(req: Request) {
     if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "A positive amount is required." }, { status: 400 });
     const by = admin.fullName || admin.email || "admin";
     const nowISO = new Date().toISOString();
+    // Hard block: a payout can't be recorded for an account that is restricted or still inside its
+    // post-recovery stability window, unless the admin explicitly releases the hold.
+    const release = body.releaseRestrictionHold === true;
 
     if (kind === "referral") {
       // A consolidated referrer row covers several referrals (body.apps); a single-referral
@@ -38,13 +43,20 @@ export async function POST(req: Request) {
 
       let referrer: { id: string; slug: string; name: string | null; email: string | null } | null = null;
       const paidNames: string[] = [];
+      const heldNames: string[] = [];
       let total = 0;
       for (const a of apps) {
         const app = await prisma.ambassadorApplication.findUnique({
           where: { id: a.applicationId },
-          select: { fullName: true, referredBy: true },
+          select: { fullName: true, referredBy: true, email: true, linkedinUrl: true },
         });
         if (!app) continue;
+        // Don't pay a referrer's commission for someone whose account is restricted / just
+        // recovered — the conversion isn't stable yet. Skip and report unless released.
+        if (!release) {
+          const hold = await restrictionHoldForApplication({ email: app.email, linkedinUrl: app.linkedinUrl, selfServiceOnboarding: null });
+          if (hold) { heldNames.push(app.fullName || "referral"); continue; }
+        }
         if (!referrer) {
           const slug = (app.referredBy || "").trim();
           referrer = slug ? await prisma.referrer.findFirst({
@@ -67,6 +79,9 @@ export async function POST(req: Request) {
         });
         paidNames.push(app.fullName || "referral"); total += a.amount;
       }
+      if (paidNames.length === 0 && heldNames.length > 0) {
+        return NextResponse.json({ error: `On hold — ${heldNames.join(", ")} recently recovered from a restriction (or is still restricted). Verify the account, then release to pay.`, held: heldNames, restrictionHeld: true }, { status: 409 });
+      }
       if (!referrer) return NextResponse.json({ error: "Referral application not found." }, { status: 404 });
       if (paidNames.length === 0) return NextResponse.json({ ok: true, alreadyPaid: true });
       const cur = currencyConfig(referrer.slug).currency;
@@ -74,7 +89,7 @@ export async function POST(req: Request) {
         try { await sendReferralPayoutEmail(referrer.email, referrer.name || referrer.slug, total, receiptUrl, paidNames.join(", "), paidNames.length, cur); }
         catch (e) { console.error("[mark-paid] referral email failed", e); }
       }
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, ...(heldNames.length ? { held: heldNames } : {}) });
     }
 
     // Ambassador setup / monthly — append to the owner application's monthlyPayouts ledger.
@@ -82,9 +97,16 @@ export async function POST(req: Request) {
     const app = await prisma.ambassadorApplication.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
       orderBy: { onboardedAt: "desc" },
-      select: { id: true, email: true, fullName: true, monthlyPayouts: true, paidAt: true, payoutCurrency: true, referredBy: true, diyTier: true },
+      select: { id: true, email: true, fullName: true, linkedinUrl: true, monthlyPayouts: true, paidAt: true, payoutCurrency: true, referredBy: true, diyTier: true },
     });
     if (!app) return NextResponse.json({ error: "No ambassador application for this payee." }, { status: 404 });
+
+    // Hard block: don't record a setup/monthly payout for a restricted or still-stabilising
+    // account unless the admin explicitly releases the hold.
+    if (!release) {
+      const hold = await restrictionHoldForApplication({ email: app.email, linkedinUrl: app.linkedinUrl, selfServiceOnboarding: null });
+      if (hold) return NextResponse.json({ error: restrictionHoldMessage(hold), restrictionHold: hold }, { status: 409 });
+    }
 
     const entries = Array.isArray(app.monthlyPayouts) ? [...(app.monthlyPayouts as unknown[])] : [];
     entries.push({ kind, amount, paidAt: nowISO, proofUrl: receiptUrl, by, notified: true, notifiedAt: nowISO });

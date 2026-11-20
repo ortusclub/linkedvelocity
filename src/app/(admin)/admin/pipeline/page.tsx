@@ -330,13 +330,27 @@ export default function PipelineNewPage() {
       if (res.ok) { const d = await res.json(); if (d.application?.outreachLog) setRows((prev) => (prev ? prev.map((r) => (r.id === id ? { ...r, outreachLog: d.application.outreachLog } : r)) : prev)); }
     } catch {} finally { setBusy(null); }
   };
-  const logPayment = async (r: Row, kind: "setup" | "monthly") => {
+  const logPayment = async (r: Row, kind: "setup" | "monthly", release = false) => {
     const cfg = cfgOf(r); const amount = kind === "setup" ? cfg.setupAmount : monthlyAmt(r);
     const payout: Record<string, unknown> = { amount, kind, method: r.paymentMethod || undefined };
     if (kind === "setup" && r.accountId) payout.accountId = r.accountId;
-    const patch: Record<string, unknown> = { addMonthlyPayout: payout };
+    const patch: Record<string, unknown> = { addMonthlyPayout: payout, ...(release ? { releaseRestrictionHold: true } : {}) };
     if (kind === "setup") patch.paidAt = new Date().toISOString();
-    await workflow(r.id, patch);
+    setBusy(r.id);
+    let res: Response | null = null, d: { error?: string; restrictionHold?: unknown } = {};
+    try {
+      res = await fetch(`/api/admin/ambassadors/${r.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      d = await res.json().catch(() => ({}));
+    } catch { setBusy(null); flashSave(false, "Save failed — not saved. Please retry."); return; }
+    setBusy(null);
+    // Hard block: account restricted / still in its post-recovery stability window. Require an
+    // explicit verify-&-release before recording the payment.
+    if (res.status === 409 && d.restrictionHold && !release) {
+      if (confirm(`${d.error}\n\nVerify the account, then release the hold and record this payment anyway?`)) return logPayment(r, kind, true);
+      return;
+    }
+    if (!res.ok) { flashSave(false, typeof d.error === "string" ? d.error : `Save failed (${res.status})`); await load(); return; }
+    flashSave(true, "Saved ✓"); await load();
   };
   const updatePayout = async (r: Row, index: number, patch: { proofUrl?: string | null; notified?: boolean; acknowledged?: boolean }) => {
     await workflow(r.id, { updateMonthlyPayout: { index, ...patch } });

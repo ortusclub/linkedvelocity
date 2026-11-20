@@ -8,6 +8,8 @@ import { currencyConfigFor } from "@/lib/referral-currency";
 import { carryAppRestrictionToAccount, appIssueIsRestricted } from "@/lib/restriction";
 import { notifyRestrictionOwnerReferrer } from "@/lib/restrict-notify";
 import { deleteApplicationCascade } from "@/lib/application-delete";
+import { restrictionHoldForApplication } from "@/lib/restriction-hold-db";
+import { restrictionHoldMessage } from "@/lib/restriction-hold";
 
 const updateSchema = z.object({
   applicationReceived: z.boolean().optional(),
@@ -198,6 +200,18 @@ export async function PATCH(
       }
       if (addMonthlyPayout) {
         const payoutKind = addMonthlyPayout.kind || "monthly";
+        // Hard block: don't record a payout for an account that is restricted, or still inside
+        // its post-recovery stability window, unless the admin explicitly releases the hold
+        // (releaseRestrictionHold). Stops a just-recovered account being paid before it's stable.
+        if (body.releaseRestrictionHold !== true) {
+          const hold = await restrictionHoldForApplication(
+            { email: currentApp.email, linkedinUrl: currentApp.linkedinUrl, selfServiceOnboarding: null },
+            addMonthlyPayout.accountId || null,
+          );
+          if (hold) {
+            return NextResponse.json({ error: restrictionHoldMessage(hold), restrictionHold: hold }, { status: 409 });
+          }
+        }
         const nowIso = new Date().toISOString();
         const cleanProof = addMonthlyPayout.proofUrl?.trim() || null;
         payouts = [
