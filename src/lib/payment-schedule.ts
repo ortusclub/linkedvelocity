@@ -294,7 +294,7 @@ export async function computePaymentsDue(horizonDays = 7): Promise<PaymentsDue> 
   }
 
   // Marketer commissions ready to pay — NET of commission already paid, keyed to the
-  // referrer's display name (not the slug). Mirrors /admin/referrals so both agree.
+  // referrer's display name (not the slug). Mirrors /admin/referrals-v2 so both agree.
   // A referral is fully READY once its account has matured (passed its check window after
   // QC / verifiedAt — 3 days established / 1 week new) or is onboarded; while still maturing
   // it's UPCOMING, with a due date = maturation completion.

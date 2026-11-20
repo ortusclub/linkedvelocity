@@ -84,7 +84,7 @@ export interface UnifiedReadyPayout {
   secured?: boolean;
   // Consolidated referral rows only: the individual referrals this one payout covers (one
   // commission per referred ambassador). Paying the row records a payout per entry, mirroring
-  // /admin/referrals (attributed, no amount-netting), and sends the referrer one receipt email.
+  // /admin/referrals-v2 (attributed, no amount-netting), and sends the referrer one receipt email.
   refApps?: { applicationId: string; person: string; amount: number; type: string }[];
 }
 
@@ -388,7 +388,7 @@ export async function getUnifiedPayouts(horizonDays = 14): Promise<UnifiedPayout
     });
   };
   // Consolidate the READY referrals per referrer into a single payout — one row, one total,
-  // the referred people listed — mirroring /admin/referrals (a referrer is paid one combined
+  // the referred people listed — mirroring /admin/referrals-v2 (a referrer is paid one combined
   // amount per run). Held referrals stay as individual rows since each may be held for its own
   // reason. Grouped by referrer + currency so a referrer's rows never mix ₱ and $.
   const refGroups = new Map<string, ReferralDue[]>();
