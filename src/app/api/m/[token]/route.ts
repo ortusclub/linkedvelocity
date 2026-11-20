@@ -254,10 +254,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       const restrEvents = (Array.isArray(acct?.restrictionLog) ? (acct!.restrictionLog as { at?: string; event?: string }[]) : [])
         .filter((e) => e?.at && (e.event === "restricted" || e.event === "recovered"))
         .sort((x, y) => new Date(x.at!).getTime() - new Date(y.at!).getTime());
+      const RESTR_STABILISE_MS = 7 * 86400000;
       const lastRestr = restrEvents[restrEvents.length - 1];
+      // When the hold is because the account recovered but hasn't re-stabilised, we KNOW the exact
+      // date it resumes: the recovery date + the 7-day stabilisation window. (A still-restricted
+      // hold — the recover→re-flag sync-gap case — has no known resume date; it waits on clearance.)
+      const restrictionResumeAt = lastRestr?.event === "recovered"
+        ? new Date(new Date(lastRestr.at!).getTime() + RESTR_STABILISE_MS)
+        : null;
       const restrictionHold = !!lastRestr && (
         lastRestr.event === "restricted" ||
-        (lastRestr.event === "recovered" && Date.now() < new Date(lastRestr.at!).getTime() + 7 * 86400000)
+        (lastRestr.event === "recovered" && Date.now() < (restrictionResumeAt as Date).getTime())
       );
       let pay: { text: string; sub?: string } | null = null;
       if (accountEnded) {
@@ -269,7 +276,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
         const nm = monthlyDueDate(setupPaidDate(a.paidAt, a.monthlyPayouts), paidCount);
         pay = { text: "Setup fee paid ✓", sub: nm ? `next monthly around ${fmtDate(nm.toISOString())}` : "monthly payouts continue in the first few days of each month" };
       } else if (restrictionHold) {
-        pay = { text: "Payment on hold after a recent restriction", sub: "it resumes once the account is stable again" };
+        if (restrictionResumeAt) {
+          // Show the date it actually pays: the later of the stabilisation window ending and the
+          // normal QC+1wk maturation clock, so a referrer gets a real date, not just "when stable".
+          const matures = referralMaturesAt(a); // QC+1wk; null if not QC'd or already matured
+          const expected = matures && matures.getTime() > restrictionResumeAt.getTime() ? matures : restrictionResumeAt;
+          pay = { text: `Setup fee expected around ${fmtDate(expected.toISOString())}`, sub: "held for a short stability check after the recent restriction cleared; your commission follows" };
+        } else {
+          pay = { text: "Payment on hold after a recent restriction", sub: "it resumes once the account is stable again" };
+        }
       } else if (onboarded) {
         const ready = referralMaturesAt(a); // QC + 1 week; null when not QC'd yet or already matured
         if (!a.verifiedAt) {
