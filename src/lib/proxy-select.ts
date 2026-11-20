@@ -64,7 +64,9 @@ export async function pickAvailableProxy(opts: {
   exclude?: Set<string>; // host:port to skip entirely (e.g. the dead proxy we're swapping off)
 }): Promise<PickedProxy | null> {
   const rows = await getProxies();
-  const cap = CAP[opts.type.toLowerCase()] ?? 4;
+  // Default cap by tier; a proxy may override it with its own maxAccounts (the
+  // accounts-per-IP A/B/C test puts some IPs at 1, 2 or 3).
+  const defaultCap = CAP[opts.type.toLowerCase()] ?? 4;
   const wantCountry = canonCountry(opts.country);
   const claimed = opts.claimed ?? new Set<string>();
   const exclude = opts.exclude ?? new Set<string>();
@@ -97,6 +99,7 @@ export async function pickAvailableProxy(opts: {
     if (stockForCountry && canonCountry(r.country) !== wantCountry) return false;
     // Cap counts only ACTIVE (non-restricted) accounts: a restricted account keeps its
     // proxy for same-IP recovery but frees its slot so new accounts can use the IP.
+    const cap = r.maxAccounts ?? defaultCap;
     const used = r.activeAccountCount + (claimed.has(key) ? 1 : 0);
     return used < cap;
   });

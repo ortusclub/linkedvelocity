@@ -1,7 +1,7 @@
 import { countryCode } from "@/lib/countries";
 
 export const ACCOUNTS_PER_PROXY = 4;
-type PoolProxy = { id: string; host: string; port: number; username: string | null; password: string | null; country: string | null; type: string | null; status: string | null };
+type PoolProxy = { id: string; host: string; port: number; username: string | null; password: string | null; country: string | null; type: string | null; status: string | null; maxAccounts?: number | null };
 type PoolAccount = { id: string; proxyHost: string | null; proxyPort: number | null; proxyUsername: string | null; proxyPassword: string | null; proxyLocation: string | null; restrictedAt?: Date | null };
 type Reservation = { accountId: string; proxyId: string | null; proxySlot: number | null };
 
@@ -19,7 +19,10 @@ export function availableProxySlots(proxies: PoolProxy[], accounts: PoolAccount[
     // so only active (non-restricted) linked accounts count toward the per-proxy cap.
     const activeLinked = linked.filter((a) => !a.restrictedAt);
     const used = new Set([...activeLinked.map((a) => a.id), ...reserved.map((r) => r.accountId)]).size;
-    if (used >= ACCOUNTS_PER_PROXY) return [];
+    // Per-IP cap: a proxy may override the default (the accounts-per-IP A/B/C test puts
+    // some IPs at 1, 2 or 3). null = default of 4.
+    const cap = p.maxAccounts ?? ACCOUNTS_PER_PROXY;
+    if (used >= cap) return [];
     const country = countryCode(p.country) || countryCode(linked.find((a) => countryCode(a.proxyLocation))?.proxyLocation);
 
     const source = p.username && p.password ? p : linked.find((a) => a.proxyUsername && a.proxyPassword);
@@ -27,7 +30,7 @@ export function availableProxySlots(proxies: PoolProxy[], accounts: PoolAccount[
     const password = source && "password" in source ? source.password : source?.proxyPassword;
     // Onboarding runs on the owner's device, so use portable username/password auth.
     if (!username || !password) return [];
-    const slot = [1, 2, 3, 4].find((n) => !reserved.some((r) => r.proxySlot === n));
+    const slot = Array.from({ length: cap }, (_, i) => i + 1).find((n) => !reserved.some((r) => r.proxySlot === n));
     if (!slot) return [];
     return [{ ...p, username, password, country, slot, used }];
   // Fill available capacity before opening another proxy.

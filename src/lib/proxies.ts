@@ -36,6 +36,9 @@ export interface ProxyRow {
   // the assignment cap uses, so a restricted account stays attached to its proxy (same IP
   // for recovery) but no longer blocks a slot on that IP.
   activeAccountCount: number;
+  // Per-IP account cap override (null = default of 4). Set for the accounts-per-IP A/B/C
+  // test so some IPs hold 1, some 2, some 3 accounts.
+  maxAccounts: number | null;
 }
 
 // Country of a proxy's egress. proxyLocation may be "Germany" or richer like
@@ -152,6 +155,7 @@ export async function getProxies(): Promise<ProxyRow[]> {
       accounts: b.accounts,
       accountCount: b.accounts.length,
       activeAccountCount: b.activeCount,
+      maxAccounts: meta?.maxAccounts ?? null,
     });
   }
 
