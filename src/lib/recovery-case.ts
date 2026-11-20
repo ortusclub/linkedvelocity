@@ -275,12 +275,14 @@ export function deriveCase(
   // Recovered = LinkedIn restored it. The case STAYS OPEN through the post-recovery workflow
   // (secure → warm-up → relist/hand-back); stored.resolvedAt marks it even before the log is read.
   const resolvedRaw = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRecovered ? Date.parse(lastRecovered.at) : null);
-  // ...but if the account is restricted AGAIN after that recovery (openSince is newer than the
-  // resolved date), that recovery is stale: the post-recovery securing workflow is moot and this is
-  // a fresh restriction. Null it out so the next step restarts the restriction chain ("Send
-  // restriction email") instead of stalling on "Log in on GoLogin + reset password" with no current
-  // episode steps. buildCase already scopes the step list to the new episode the same way.
-  const resolvedAt = resolvedRaw != null && openSince != null && openSince > resolvedRaw ? null : resolvedRaw;
+  // ...but a resolved marker is only real if the restriction was actually lifted, and a genuine
+  // recovery CLEARS restrictedAt (the recover action nulls it). So whenever restrictedAt is still
+  // set (openSince != null) the account is still restricted — whatever a "removed restriction" reply
+  // email claimed — and the recovery is stale/premature: null it out so the case restarts the
+  // restriction chain instead of stalling on "Log in on GoLogin + reset password" / showing
+  // "Recovered". This covers both a fresh re-restriction AFTER the recovery and a LinkedIn "lifted"
+  // email that never stuck (restrictedAt left set). buildCase scopes the step list the same way.
+  const resolvedAt = resolvedRaw != null && openSince != null ? null : resolvedRaw;
   // An explicit admin mark wins; otherwise backtrack "permanently restricted" from the account
   // status (retired), the pipeline issue flag, or a note — unless the case was explicitly reopened.
   // Perma applies even with no open restrictedAt (a retired account may have had it cleared).
@@ -430,11 +432,12 @@ export function buildWorkflow(a: CaseAccount, built: { steps: Step[] }, opts: { 
   const openSince = a.restrictedAt ? Date.parse(iso(a.restrictedAt)!) : null;
   const lastRec = [...log].reverse().find((e) => e.event === "recovered");
   const resolvedRaw = stored.resolvedAt ? Date.parse(stored.resolvedAt) : (!openSince && lastRec ? Date.parse(lastRec.at) : null);
-  // Re-restricted after that recovery (openSince newer than the resolved date): the recovery is
-  // stale, so the post-recovery securing steps (GoLogin login / warm-up) no longer apply — this is a
-  // fresh restriction. Null it so the panel restarts the chain instead of showing "Log in + reset
-  // password" with no current-episode steps. Mirrors the same guard in deriveCase (#719).
-  const resolvedAt = resolvedRaw != null && openSince != null && openSince > resolvedRaw ? null : resolvedRaw;
+  // Still restricted (restrictedAt set at all): the recovery is stale/premature, so the post-recovery
+  // securing steps (GoLogin login / warm-up) don't apply — a genuine recovery clears restrictedAt, so
+  // a non-null one means the account is still restricted whatever a "removed restriction" email said.
+  // Null it so the panel restarts the chain instead of showing "Log in + reset password" / step 4.
+  // Mirrors the same guard in deriveCase.
+  const resolvedAt = resolvedRaw != null && openSince != null ? null : resolvedRaw;
   const rec = !!resolvedAt, lost = !!stored.outcome, rented = a.status === "rented";
   // Securing (GoLogin + password) + warm-up only apply to recoveries taken through this tab; a
   // recovery logged the old way is already handled, so those steps show as done, not "todo". Gated
