@@ -433,8 +433,20 @@ export default function PayoutsPage() {
       pause: (p) => void post("/api/admin/payouts/pause", p),
       resume: (payeeKey) => void post("/api/admin/payouts/resume", { payeeKey }),
       markPaid: async (p) => {
-        const res = await fetch("/api/admin/payouts/mark-paid", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).catch(() => null);
-        if (!res || !res.ok) return false;
+        const send = async (body: object) => {
+          const res = await fetch("/api/admin/payouts/mark-paid", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
+          const d = res ? await res.json().catch(() => ({})) : {};
+          return { res, d } as { res: Response | null; d: { error?: string; restrictionHold?: unknown; restrictionHeld?: boolean } };
+        };
+        let { res, d } = await send(p);
+        // Hard block: the account is restricted or still in its post-recovery stability window.
+        // Require an explicit verify-&-release before recording the payment.
+        if (res && res.status === 409 && (d.restrictionHold || d.restrictionHeld)) {
+          const msg = typeof d.error === "string" ? d.error : "This account is on a restriction hold.";
+          if (!confirm(`${msg}\n\nVerify the account, then release the hold and record this payment anyway?`)) return false;
+          ({ res, d } = await send({ ...p, releaseRestrictionHold: true }));
+        }
+        if (!res || !res.ok) { if (d && typeof d.error === "string") alert(d.error); return false; }
         await load();
         return true;
       },
