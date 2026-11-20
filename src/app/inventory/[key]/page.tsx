@@ -54,15 +54,14 @@ const afPrice = (a: PriceInput) => tierPricing(a.connectionCount, a.accountAgeMo
 const AF_CFG: CatalogueConfig = {
   forLabel: "Account Flow",
   storageKey: "accountflow",
-  heroBlurb: "Aged, warmed LinkedIn profiles, plus everything currently in warm-up and construction. Each account is priced by tier (connections and age), starting at $45/mo, with +$10 if verified. Sales Navigator is an optional +$70 per account, which we set up for you. Open any profile to review it, then reply with the ones you'd like and we'll get you set up.",
+  heroBlurb: "Aged, warmed LinkedIn profiles, plus everything currently in warm-up and construction. Each account is priced by tier (connections and age), starting at $45/mo, with +$10 if verified. Open any profile to review it, then reply with the ones you'd like and we'll get you set up.",
   legend: [
     { cls: "u", label: "By tier", value: "from $45/mo" },
     { cls: "v", label: "✓ Verified", value: "+$10/mo" },
-    { cls: "v", label: "Sales Navigator", value: "+$70/mo" },
   ],
   showRent: false,
   showAge: true,
-  snAddon: 70,
+  snAddon: null,
 };
 
 // Yaron Been — same full-pipeline browse-only catalogue (he replies with picks, we provision
