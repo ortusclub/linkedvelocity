@@ -49,16 +49,21 @@ export async function GET() {
 
     const userIds = people.map((p) => p.userId).filter((x): x is string => !!x);
     const leadIds = people.map((p) => p.inboundLeadId).filter((x): x is string => !!x);
+    const personEmails = people.map((p) => p.email).filter((x): x is string => !!x);
 
-    const [deposits, txns, leads, companiesRaw, dupeRows, bookings] = await Promise.all([
+    const [deposits, txns, leads, companiesRaw, dupeRows, bookings, ambApps] = await Promise.all([
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds }, type: "deposit" }, select: { userId: true, description: true } }) : Promise.resolve([]),
       userIds.length ? prisma.transaction.findMany({ where: { userId: { in: userIds } }, select: { userId: true, type: true, amount: true } }) : Promise.resolve([]),
-      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true, commsLog: true, addedToAmbassadorPipeline: true, addedToReferralPipeline: true, addedToClientCrm: true } }) : Promise.resolve([]),
+      leadIds.length ? prisma.inboundLead.findMany({ where: { id: { in: leadIds } }, select: { id: true, commsSummary: true, commsSummaryAt: true, lastContactAt: true, commsLog: true, addedToAmbassadorPipeline: true, addedToReferralPipeline: true, addedToClientCrm: true, ambassadorApplicationId: true, type: true } }) : Promise.resolve([]),
       prisma.company.findMany(),
       prisma.duplicateSuggestion.findMany({ where: { dismissedAt: null } }),
       // Calls/meetings for the CRM lens — booked via Google Calendar, keyed to the originating lead.
       leadIds.length ? prisma.inboundBooking.findMany({ where: { leadId: { in: leadIds } }, select: { key: true, leadId: true, scheduledAt: true, cancelled: true }, orderBy: { scheduledAt: "desc" } }) : Promise.resolve([]),
+      // Ambassador applicants (by email) — lets the CRM sales lens exclude recruits who
+      // aren't clients, even when their lead was never explicitly routed to the pipeline.
+      personEmails.length ? prisma.ambassadorApplication.findMany({ where: { email: { in: personEmails } }, select: { email: true } }) : Promise.resolve([]),
     ]);
+    const ambEmails = new Set(ambApps.map((a) => (a.email || "").toLowerCase()));
     const bookingsByLead = new Map<string, { key: string; scheduledAt: string; cancelled: boolean }[]>();
     for (const b of bookings) {
       const arr = bookingsByLead.get(b.leadId) || [];
@@ -133,6 +138,9 @@ export async function GET() {
         routedAmbassador: lead?.addedToAmbassadorPipeline ?? false,
         routedReferrer: lead?.addedToReferralPipeline ?? false,
         routedCrm: lead?.addedToClientCrm ?? false,
+        // Ambassador recruit? (lead's application link / routing / type, or a matching
+        // ambassador application by email). The CRM lens hides these unless they also rent.
+        isAmbassador: !!(lead?.ambassadorApplicationId || lead?.addedToAmbassadorPipeline || /ambassador/i.test(lead?.type || "") || (p.email ? ambEmails.has(p.email.toLowerCase()) : false)),
         // Booked calls / meetings (lead-linked), newest first.
         calls: (p.inboundLeadId ? bookingsByLead.get(p.inboundLeadId) : null) ?? [],
         vetting: u ? vettingLabel(u.vettingReview, u.vettedAt) : "Not vetted",
