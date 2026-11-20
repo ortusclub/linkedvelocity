@@ -88,7 +88,7 @@ export default function CrmPage() {
   const [temp, setTemp] = useState<"all" | Temp>("all");
   const [poc, setPoc] = useState<string>("all");
   const [dir, setDir] = useState<"all" | "in" | "out">("all");
-  const [due, setDue] = useState(false);
+  const [nextOnly, setNextOnly] = useState(false);
   const [q, setQ] = useState("");
   const [selId, setSelId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
@@ -127,6 +127,7 @@ export default function CrmPage() {
   };
   const dueDays = (p: Person) => (p.followUp ? Math.round((new Date(p.followUp).getTime() - Date.now()) / day) : null);
   const isDue = (p: Person) => !!p.nextStep && p.followUp != null && (dueDays(p) ?? 1) <= 0;
+  const hasNext = (p: Person) => !!p.nextStep;
 
   // Sales lens: drop test rows and leads triaged purely to Ambassador/Referrer.
   const base = useMemo(() => people.filter((p) => {
@@ -142,8 +143,8 @@ export default function CrmPage() {
   }), [people]);
 
   const counts = useMemo(() => {
-    const c = { all: base.length, lead: 0, client: 0, past: 0, Hot: 0, Warm: 0, Cold: 0, due: 0 } as Record<string, number>;
-    for (const p of base) { c[relationship(p)]++; c[temperature(p)]++; if (isDue(p)) c.due++; }
+    const c = { all: base.length, lead: 0, client: 0, past: 0, Hot: 0, Warm: 0, Cold: 0, next: 0, overdue: 0 } as Record<string, number>;
+    for (const p of base) { c[relationship(p)]++; c[temperature(p)]++; if (hasNext(p)) c.next++; if (isDue(p)) c.overdue++; }
     return c;
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [base]);
@@ -157,16 +158,24 @@ export default function CrmPage() {
         if (temp !== "all" && temperature(p) !== temp) return false;
         if (poc !== "all" && (p.pocOwner || "Unassigned") !== poc) return false;
         if (dir !== "all" && p.direction !== dir) return false;
-        if (due && !isDue(p)) return false;
+        if (nextOnly && !hasNext(p)) return false;
         if (needle) {
           const hay = `${p.name} ${p.email || ""} ${p.companyDomain || ""} ${p.contact || ""} ${p.interest || ""} ${p.nextStep || ""} ${p.conversations.map((e) => e.text).join(" ")}`.toLowerCase();
           if (!hay.includes(needle)) return false;
         }
         return true;
       })
-      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+      .sort((a, b) => {
+        // In the Next-actions view, lead with the most urgent action (overdue/soonest first;
+        // actions with no date come last). Otherwise most-recently-touched first.
+        if (nextOnly) {
+          const va = dueDays(a) ?? Infinity, vb = dueDays(b) ?? Infinity;
+          if (va !== vb) return va - vb;
+        }
+        return new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime();
+      });
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [base, rel, temp, poc, dir, due, q]);
+  }, [base, rel, temp, poc, dir, nextOnly, q]);
 
   useEffect(() => { if (!loading && (!selId || !rows.some((p) => p.id === selId))) setSelId(rows[0]?.id ?? null); }, [rows, loading, selId]);
   const cur = useMemo(() => people.find((p) => p.id === selId) || null, [people, selId]);
@@ -298,8 +307,8 @@ export default function CrmPage() {
             );
           })}
           <span style={{ width: 1, height: 22, background: "var(--divider)", margin: "0 2px" }} />
-          <button onClick={() => setDue((v) => !v)} style={{ ...pill(due), ...(due ? { background: "var(--danger)", borderColor: "var(--danger)" } : {}) }}>
-            Follow-up due<span style={{ font: `700 11px ${G}`, background: "var(--pri-p1-bg)", color: "var(--pri-p1-fg)", borderRadius: 999, padding: "1px 7px", marginLeft: 1 }}>{counts.due}</span>
+          <button onClick={() => setNextOnly((v) => !v)} title={counts.overdue ? `${counts.overdue} overdue` : "Contacts with a defined next step"} style={pill(nextOnly)}>
+            Next actions<span style={{ font: `700 11px ${G}`, background: counts.overdue ? "var(--pri-p1-bg)" : "var(--neutral-chip-bg)", color: counts.overdue ? "var(--pri-p1-fg)" : "var(--neutral-chip-text)", borderRadius: 999, padding: "1px 7px", marginLeft: 1 }}>{counts.next}</span>
           </button>
           <select aria-label="Direction" value={dir} onChange={(e) => setDir(e.target.value as typeof dir)} style={input}>
             <option value="all">Inbound + outbound</option><option value="in">Inbound only</option><option value="out">Outbound only</option>
